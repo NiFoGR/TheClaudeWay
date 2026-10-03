@@ -36,20 +36,28 @@ python -m goldbar_leads --trade roofer --town Leeds --db leads.db
 
 ## How the score works
 
-| Problem | Points |
-| --- | --- |
-| No website | 100 |
-| Only a Facebook / Checkatrade / Yell page | 95 |
-| Website down or broken | 90 |
-| Not mobile-friendly | 25 |
-| Looks outdated (copyright 3+ years old) | 20 |
-| Not secure (no HTTPS) | 15 |
-| Built on a DIY builder (Wix, GoDaddy…) | 15 |
-| Slow (> 3 s), no contact form, no page title | 10 each |
-| Town not in title, no description, no heading, not tap-to-call, no chat | 5 each |
+Score = how much GoldBar can help this business, out of 100 (rules in `goldbar_leads/scoring.py`, based on
+`docs/playbooks/local-seo-client-workflow.pdf`). Three parts, matching what we sell:
 
-Capped at 100. Ties are broken by Google rating, then review count: a well-reviewed business with a bad site
-is the best lead, because they're proven good at the work and losing customers online.
+| Part | Max | Points |
+| --- | --- | --- |
+| **Website** | 45 | Not mobile-friendly 14 · "Not secure" 8 · Outdated (copyright 4+ years) 6 · Old website technology 5 · Slow 4 (>3 s) / 6 (>6 s) · No contact form 4 · Phone not tap-to-call 2 |
+| **Local SEO** | 30 | No page title 11, else trade missing 6 + town missing 5 · No main heading 4 / heading without trade + town 2 · No schema 4 · Google's phone not on site 3 · Address not on site 2 · No Google map 2 · Under 10 pages 4 / under 30 pages 2 · No Google description 2 |
+| **Google Maps** | 25 | From the free 5×5 heatmap: not in top 20 anywhere 22 · top 20 in under half of town 18 · never top 3 12 · top 3 in under half of town 6 · reviews under half the top 3's +3 |
+
+No website, a Facebook/Checkatrade page only, or a broken site maxes Website + Local SEO (75). A site that blocks
+our checker scores 0 there (unknown, look yourself). "No chat" and "DIY builder" are listed but worth 0 points.
+Ties are broken by Google rating, then review count.
+
+## Map Rank (heatmap)
+
+Every scrape also runs a 5×5 grid (1 mile apart) of Google searches for the trade, each as if standing at that point,
+and records the top 20 at each. Grid searches request place IDs only: Google's free "Text Search Essentials (IDs Only)".
+Custom scans (3×3 to 13×13) run from the Control Room's Map Rank page (`.github/workflows/map-rank.yml`), or:
+
+```
+python -m goldbar_leads map-rank --keyword roofer --town Warrington --grid 7 --spacing 1600
+```
 
 ## Costs
 

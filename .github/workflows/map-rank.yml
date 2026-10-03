@@ -1,0 +1,63 @@
+name: Map rank scan
+
+# Started by the Control Room's Map Rank page. Free: grid searches ask Google for place IDs only.
+on:
+  workflow_dispatch:
+    inputs:
+      keyword:
+        description: 'What customers search, e.g. "roofer"'
+        required: true
+      town:
+        description: 'UK town, e.g. "Warrington"'
+        required: true
+      grid:
+        description: "Grid size (3, 5, 7, 9, 11 or 13)"
+        required: false
+        default: "7"
+      spacing:
+        description: "Metres between grid points"
+        required: false
+        default: "1600"
+      scan_id:
+        description: "Control Room scan id (filled in automatically)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: lead-manager
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: lead-manager/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Scan Google Maps rankings across the town
+        env:
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          KEYWORD: ${{ inputs.keyword }}
+          TOWN: ${{ inputs.town }}
+          GRID: ${{ inputs.grid }}
+          SPACING: ${{ inputs.spacing }}
+          SCAN_ID: ${{ inputs.scan_id }}
+        run: python -m goldbar_leads map-rank --keyword "$KEYWORD" --town "$TOWN" --grid "$GRID" --spacing "$SPACING" --scan-id "$SCAN_ID"
+      - name: Tell the Control Room the scan failed
+        if: failure() && inputs.scan_id != ''
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          SCAN_ID: ${{ inputs.scan_id }}
+        run: python -m goldbar_leads --fail-scan "$SCAN_ID" "The scan crashed. Open the run on GitHub (Actions tab) for details."

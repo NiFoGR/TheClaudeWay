@@ -6,38 +6,76 @@ import json
 import logging
 from pathlib import Path
 
+from collections.abc import Callable
+from dataclasses import dataclass
+
 import httpx
 
-from goldbar_leads import audit, companies_house, places, qualify
+from goldbar_leads import audit, companies_house, maprank, places, qualify
+from goldbar_leads.maprank import Scan
 from goldbar_leads.models import Lead
 
 log = logging.getLogger(__name__)
 AUDIT_CONCURRENCY = 8
 
 
-async def _audit_all(leads: list[Lead]) -> None:
+AUTO_SCAN_GRID = 5
+AUTO_SCAN_SPACING_M = 1600  # about a mile between points
+
+Progress = Callable[[str, int, int], None]  # (stage, done, total)
+
+
+def _quiet(stage: str, done: int, total: int) -> None:
+    log.info("%s %d/%d", stage, done, total)
+
+
+async def _audit_all(leads: list[Lead], progress: Progress) -> None:
     sem = asyncio.Semaphore(AUDIT_CONCURRENCY)
+    done = 0
     async with audit.make_client() as client:
 
         async def one(lead: Lead) -> None:
+            nonlocal done
             async with sem:
                 await audit.audit_lead(client, lead)
+            done += 1
+            progress("checking", done, len(leads))
 
         await asyncio.gather(*(one(l) for l in leads))
 
 
-def run(trade: str, town: str, places_key: str, companies_house_key: str = "", max_results: int = 60) -> list[Lead]:
+@dataclass
+class Result:
+    leads: list[Lead]
+    scan: Scan | None
+
+
+def run(trade: str, town: str, places_key: str, companies_house_key: str = "", max_results: int = 60,
+        progress: Progress = _quiet, map_scan: bool = True) -> Result:
+    """Scout → check websites → directors → Google Maps heatmap → score. progress() is called as it goes."""
     with httpx.Client(timeout=30) as client:
         leads = places.search(client, places_key, trade, town, max_results)
-        log.info("found %d businesses for %r in %r", len(leads), trade, town)
+        progress("scouting", len(leads), max_results)
         qualify.mark_exclusions(leads)
         keep = [l for l in leads if not l.excluded]
-        asyncio.run(_audit_all(keep))
+        progress("checking", 0, len(keep))
+        asyncio.run(_audit_all(keep, progress))
         if companies_house_key:
-            for lead in keep:
+            for i, lead in enumerate(keep, 1):
                 companies_house.find_director(client, companies_house_key, lead)
-    qualify.score(keep)
-    return sorted(leads, key=sort_key)
+                if i % 5 == 0 or i == len(keep):
+                    progress("directors", i, len(keep))
+        scan = None
+        if map_scan:  # free (IDs-only searches); a failure here only means no Maps part in the score
+            progress("maps", 0, AUTO_SCAN_GRID ** 2)
+            known = {l.place_id: {"name": l.name, "rating": l.rating, "review_count": l.review_count} for l in leads}
+            try:
+                scan = maprank.run(places_key, trade, town, AUTO_SCAN_GRID, AUTO_SCAN_SPACING_M, known=known, client=client)
+            except (places.PlacesError, KeyError, httpx.HTTPError) as e:
+                log.warning("map rank scan skipped: %s", e)
+            progress("maps", AUTO_SCAN_GRID ** 2, AUTO_SCAN_GRID ** 2)
+    qualify.score(keep, scan)
+    return Result(sorted(leads, key=sort_key), scan)
 
 
 def sort_key(lead: Lead) -> tuple:
@@ -47,6 +85,11 @@ def sort_key(lead: Lead) -> tuple:
 
 CSV_COLUMNS = [
     ("Quality score", lambda l: l.quality_score),
+    ("Website /45", lambda l: l.score_parts.get("website", "")),
+    ("Local SEO /30", lambda l: l.score_parts.get("seo", "")),
+    ("Google Maps /25", lambda l: l.score_parts.get("maps", "")),
+    ("Maps avg rank", lambda l: l.map_rank.get("avg_rank", "")),
+    ("Maps top-3 %", lambda l: l.map_rank.get("top3_pct", "")),
     ("Business", lambda l: l.name),
     ("Director", lambda l: l.director_name),
     ("Phone", lambda l: l.phone),
@@ -92,9 +135,16 @@ def write_outputs(out_dir: Path, trade: str, town: str, leads: list[Lead]) -> di
     return paths
 
 
+NO_SITE_KEYS = {"no_website", "profile_only", "site_down", "site_broken", "bad_certificate"}
+
+
+def has_no_working_site(lead: Lead) -> bool:
+    return bool(NO_SITE_KEYS & set(lead.findings))
+
+
 def summary(leads: list[Lead]) -> str:
     pitchable = [l for l in leads if not l.excluded]
-    no_site = sum(1 for l in pitchable if l.quality_score >= 90)
+    no_site = sum(1 for l in pitchable if has_no_working_site(l))
     with_email = sum(1 for l in pitchable if l.email)
     lines = [
         f"{len(leads)} businesses found, {len(pitchable)} worth pitching, {len(leads) - len(pitchable)} excluded",

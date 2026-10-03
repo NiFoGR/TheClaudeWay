@@ -36,7 +36,19 @@ export function leadRow(row) {
       out[c] = c === "socials" || c === "audit" ? {} : [];
     }
   }
+  // findings, score breakdown and map rank ride inside the audit JSON
+  out.findings = out.audit.findings || [];
+  out.score_parts = out.audit.score || {};
+  out.map_rank = out.audit.map_rank || {};
   return out;
+}
+
+export function parseJson(value, fallback) {
+  try {
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 export const LEAD_STATUSES = ["new", "contacted", "replied", "call booked", "won", "lost", "not interested"];

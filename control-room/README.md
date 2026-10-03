@@ -1,8 +1,8 @@
 # GoldBar Control Room
 
 The website you log into to run everything. Today it has **Lead Scraper** (type a niche, a town and how many
-leads, press *Find leads*), **All Leads** (every lead, with status and notes) and **Setup** (green ticks show
-what's connected). Demos, Outreach and Clients come next.
+leads, press *Find leads*), **All Leads** (every lead, with status and notes), **Map Rank** (LeadSnap-style Google Maps
+heatmaps) and **Setup** (green ticks show what's connected). Demos, Outreach and Clients come next.
 
 It runs entirely online and free, so your PC can be off:
 
@@ -11,6 +11,8 @@ It runs entirely online and free, so your PC can be off:
 | The website + its small API (`public/`, `functions/`) | Cloudflare Pages |
 | The database (leads, runs) | Cloudflare D1 |
 | The heavy scraping (Google, website checks, Companies House) | GitHub Actions (`.github/workflows/scrape-leads.yml`) |
+| Map Rank heatmap scans | GitHub Actions (`.github/workflows/map-rank.yml`) |
+| The street map behind the heatmap | Leaflet + OpenStreetMap (free) |
 
 Pressing *Find leads* records a run and starts the GitHub workflow. The page fills in by itself when it's done, usually in 2–6 minutes.
 

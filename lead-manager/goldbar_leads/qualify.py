@@ -3,7 +3,9 @@
 import re
 from collections import Counter
 
+from goldbar_leads import maprank, scoring
 from goldbar_leads.audit import host_of, is_real_website
+from goldbar_leads.maprank import Scan
 from goldbar_leads.models import Lead
 
 # Front-desk / gatekeeper businesses: the owner won't read our email.
@@ -24,29 +26,6 @@ CHAINS = re.compile(
     r"pendragon)\b",
     re.I,
 )
-
-# Issue weights: how much each problem means we can help. "No website" maxes out on its own.
-WEIGHTS = [
-    ("No website", 100),
-    ("No proper website", 95),
-    ("Website is down", 90),
-    ("Website is broken", 90),
-    ("security warning", 60),
-    ("Couldn't check", 0),
-    ("Not mobile-friendly", 25),
-    ('"Not secure"', 15),
-    ("Looks outdated", 20),
-    ("Built on a DIY builder", 15),
-    ("Slow to load", 10),
-    ("No contact or quote form", 10),
-    ("tap-to-call", 5),
-    ("No chat", 5),
-    ("No page title", 10),
-    ("not in the page title", 5),
-    ("No Google description", 5),
-    ("No main heading", 5),
-]
-
 
 def _phone_key(phone: str) -> str:
     digits = re.sub(r"\D", "", phone)
@@ -93,13 +72,21 @@ def mark_exclusions(leads: list[Lead]) -> None:
         lead.excluded, lead.exclude_reason = bool(reason), reason
 
 
-def quality_score(issues: list[str]) -> int:
-    total = 0
-    for issue in issues:
-        total += next((w for key, w in WEIGHTS if key in issue), 0)
-    return min(total, 100)
-
-
-def score(leads: list[Lead]) -> None:
+def score(leads: list[Lead], scan: "Scan | None" = None) -> None:
+    """Add Google Maps findings from the scan (if any), then score every lead (scoring.py)."""
+    by_id = {b.place_id: b for b in scan.businesses} if scan else {}
+    leaders = [b.review_count for b in (scan.businesses[:3] if scan else []) if b.review_count]
     for lead in leads:
-        lead.quality_score = quality_score(lead.issues)
+        extra: list[tuple[str, str]] = []
+        if scan:
+            b = by_id.get(lead.place_id)
+            avg, top3, found = (b.avg_rank, b.top3_pct, b.found_pct) if b else (float(maprank.NOT_FOUND), 0, 0)
+            lead.map_rank = {"avg_rank": avg, "top3_pct": top3, "found_pct": found, "scan_town": scan.town}
+            extra += scoring.maps_findings(avg, top3, found, scan.town)
+            extra += scoring.reviews_finding(lead.review_count, leaders)
+        for key, text in extra:
+            if key not in lead.findings:
+                lead.findings.append(key)
+                lead.issues.append(text)
+        result = scoring.score(lead.findings)
+        lead.quality_score, lead.score_parts = result.total, result.as_dict()

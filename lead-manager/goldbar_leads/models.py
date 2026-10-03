@@ -25,7 +25,8 @@ class Lead:
     email: str = ""
     emails: list[str] = field(default_factory=list)
     socials: dict[str, str] = field(default_factory=dict)
-    issues: list[str] = field(default_factory=list)  # plain-English problems with their online presence
+    findings: list[str] = field(default_factory=list)  # finding keys (see scoring.RULES)
+    issues: list[str] = field(default_factory=list)  # plain-English line per finding, quotable in outreach
     audit: dict = field(default_factory=dict)  # raw audit facts
     director_first_name: str = ""
     director_name: str = ""
@@ -34,4 +35,6 @@ class Lead:
     # qualification
     excluded: bool = False
     exclude_reason: str = ""
-    quality_score: int = 0  # 0-100, how much we can help: higher = worse site = better lead
+    quality_score: int = 0  # 0-100, how much we can help: higher = better lead (see scoring.py)
+    score_parts: dict = field(default_factory=dict)  # {"website": .., "seo": .., "maps": ..}
+    map_rank: dict = field(default_factory=dict)  # {"avg_rank", "top3_pct", "found_pct"} from the Map Rank scan

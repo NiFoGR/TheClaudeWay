@@ -37,7 +37,8 @@ businesses (dentists, clinics, solicitors) or chains.
 | `control-room/` | The website the owner logs into (Cloudflare Pages + Functions + D1). Plain JS, no build step. Setup guide in its README. |
 | `lead-manager/` | Python engine: Google Places search → website audit → Companies House director → filter → quality score. Runs in GitHub Actions. |
 | `lead-manager/schema.sql` | Single source of truth for the database. After changing it run `python scripts/sync_schema.py` (a test fails if you forget). |
-| `.github/workflows/scrape-leads.yml` | Started by the Control Room's "Find leads" button; reports run status back to D1. |
+| `.github/workflows/scrape-leads.yml` | Started by the Control Room's "Find leads" button; reports progress and status back to D1. |
+| `.github/workflows/map-rank.yml` | Started by the Map Rank page's "Run scan" button. |
 | `docs/` | Business playbooks (above). |
 
 ## Running things
@@ -68,4 +69,5 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
 - Discuss decisions step by step before building big things; build only what's needed to get to cash.
 - No filler, no sugar-coating, plain English, short answers. Push back when something's wrong, once, then go with their call.
 - Don't overcomplicate: prefer free, simple setups (Cloudflare + GitHub free tiers). Budget for leads + mailboxes: £100/month.
-- Built so far: Control Room (Lead Scraper, All Leads, Setup). Next: map-rank heatmap + SEO checks from the playbook, then Demos, Outreach, Clients.
+- Built so far: Control Room (Lead Scraper with live progress, All Leads, Map Rank heatmaps, Setup); lead score
+  = Website 45 + Local SEO 30 + Google Maps 25 (`lead-manager/goldbar_leads/scoring.py`). Next: Demos, Outreach, Clients.

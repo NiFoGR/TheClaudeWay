@@ -48,3 +48,61 @@ CREATE TABLE IF NOT EXISTS jobs (
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL
 );
+
+-- Map Rank: one row per heatmap scan (started from the Control Room, or automatically after a lead scrape).
+CREATE TABLE IF NOT EXISTS scans (
+  id          TEXT PRIMARY KEY,
+  keyword     TEXT NOT NULL,
+  town        TEXT NOT NULL,
+  grid        INTEGER NOT NULL,             -- 5 = 5x5 points
+  spacing_m   INTEGER NOT NULL,             -- metres between points
+  center_lat  REAL,
+  center_lng  REAL,
+  source      TEXT NOT NULL DEFAULT 'manual', -- manual | scrape
+  status      TEXT NOT NULL DEFAULT 'queued', -- queued → running → done / failed
+  error       TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS scan_points (
+  scan_id  TEXT NOT NULL,
+  idx      INTEGER NOT NULL,
+  row      INTEGER NOT NULL,
+  col      INTEGER NOT NULL,
+  lat      REAL NOT NULL,
+  lng      REAL NOT NULL,
+  ranking  TEXT NOT NULL,  -- JSON array of place ids, best first (top 20)
+  PRIMARY KEY (scan_id, idx)
+);
+CREATE TABLE IF NOT EXISTS scan_businesses (
+  scan_id      TEXT NOT NULL,
+  place_id     TEXT NOT NULL,
+  name         TEXT,
+  rating       REAL,
+  review_count INTEGER,
+  avg_rank     REAL NOT NULL,   -- 21 = never in the top 20
+  top3_pct     INTEGER NOT NULL,
+  found_pct    INTEGER NOT NULL,
+  ranks        TEXT NOT NULL,   -- JSON array, one rank per point (null = not in top 20)
+  PRIMARY KEY (scan_id, place_id)
+);
+-- Latest map rank per business, shown on each lead.
+CREATE TABLE IF NOT EXISTS lead_map_rank (
+  place_id   TEXT PRIMARY KEY,
+  scan_id    TEXT NOT NULL,
+  keyword    TEXT NOT NULL,
+  town       TEXT NOT NULL,
+  avg_rank   REAL NOT NULL,
+  top3_pct   INTEGER NOT NULL,
+  found_pct  INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+);
+-- Live progress of a Lead Scraper run, for the progress bar. stage: scouting → checking → directors → maps → saving
+CREATE TABLE IF NOT EXISTS job_progress (
+  job_id     TEXT PRIMARY KEY,
+  stage      TEXT NOT NULL,
+  done       INTEGER NOT NULL,
+  total      INTEGER NOT NULL,
+  scouted    INTEGER NOT NULL DEFAULT 0,  -- businesses found so far, shown as "Scouted: N"
+  updated_at TEXT NOT NULL
+);
