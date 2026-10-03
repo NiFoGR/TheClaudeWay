@@ -106,3 +106,44 @@ CREATE TABLE IF NOT EXISTS job_progress (
   scouted    INTEGER NOT NULL DEFAULT 0,  -- businesses found so far, shown as "Scouted: N"
   updated_at TEXT NOT NULL
 );
+
+-- Money page. Paid Google calls per run; the Control Room turns them into pounds from Google's price list.
+CREATE TABLE IF NOT EXISTS api_usage (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_kind   TEXT NOT NULL,  -- scrape | scan
+  run_id     TEXT,
+  sku        TEXT NOT NULL,  -- see lead-manager/goldbar_leads/usage.py
+  calls      INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS api_usage_date ON api_usage (created_at);
+-- Paying clients. Retainer income is worked out from these: monthly_pence a month once free_days have passed.
+CREATE TABLE IF NOT EXISTS clients (
+  id              TEXT PRIMARY KEY,
+  name            TEXT NOT NULL,
+  place_id        TEXT,            -- the lead they came from, if any
+  package         TEXT NOT NULL,   -- full | weekend | website
+  build_fee_pence INTEGER NOT NULL,
+  monthly_pence   INTEGER NOT NULL,
+  free_days       INTEGER NOT NULL,
+  paid_on         TEXT NOT NULL,   -- YYYY-MM-DD the build fee was paid
+  cancelled_on    TEXT,            -- YYYY-MM-DD they stopped the monthly
+  notes           TEXT NOT NULL DEFAULT '',
+  created_at      TEXT NOT NULL
+);
+-- Everything else in and out: mailboxes, domains, tools, one-off income. monthly = 1 repeats every month.
+CREATE TABLE IF NOT EXISTS money (
+  id           TEXT PRIMARY KEY,
+  kind         TEXT NOT NULL,   -- in | out
+  category     TEXT NOT NULL,
+  label        TEXT NOT NULL,
+  amount_pence INTEGER NOT NULL,
+  on_date      TEXT NOT NULL,   -- YYYY-MM-DD (first payment, if monthly)
+  monthly      INTEGER NOT NULL DEFAULT 0,
+  ended_on     TEXT,            -- YYYY-MM-DD a monthly cost was cancelled
+  created_at   TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);

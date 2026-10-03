@@ -34,7 +34,7 @@ businesses (dentists, clinics, solicitors) or chains.
 
 | Path | What |
 | --- | --- |
-| `control-room/` | The website the owner logs into (Cloudflare Pages + Functions + D1). Plain JS, no build step. Setup guide in its README. |
+| `control-room/` | The website the owner logs into (Cloudflare Pages + Functions + D1). Plain JS, no build step: one file per page in `public/js/`, one look in `public/style.css`. Setup guide in its README. |
 | `lead-manager/` | Python engine: Google Places search → website audit → Companies House director → filter → quality score. Runs in GitHub Actions. |
 | `lead-manager/schema.sql` | Single source of truth for the database. After changing it run `python scripts/sync_schema.py` (a test fails if you forget). |
 | `.github/workflows/scrape-leads.yml` | Started by the Control Room's "Find leads" button; reports progress and status back to D1. |
@@ -45,7 +45,8 @@ businesses (dentists, clinics, solicitors) or chains.
 
 ```
 cd lead-manager && pip install -r requirements-dev.txt && python -m pytest -q   # tests (must pass before pushing)
-node --check control-room/public/app.js                                          # JS syntax
+node --test control-room/tests/money.test.mjs                                    # Money page maths
+for f in control-room/public/js/*.js; do node --check "$f"; done                   # JS syntax
 ```
 Local Control Room: `npx wrangler pages dev` in `control-room/` with a `wrangler.toml` binding a local D1 as `DB`
 and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is configured in the Cloudflare dashboard).
@@ -69,5 +70,9 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
 - Discuss decisions step by step before building big things; build only what's needed to get to cash.
 - No filler, no sugar-coating, plain English, short answers. Push back when something's wrong, once, then go with their call.
 - Don't overcomplicate: prefer free, simple setups (Cloudflare + GitHub free tiers). Budget for leads + mailboxes: £100/month.
-- Built so far: Control Room (Lead Scraper with live progress, All Leads, Map Rank heatmaps, Setup); lead score
-  = Website 45 + Local SEO 30 + Google Maps 25 (`lead-manager/goldbar_leads/scoring.py`). Next: Demos, Outreach, Clients.
+- Built so far: Control Room (Home, Lead Scraper with live progress, Map Rank heatmaps, Leads with a details drawer,
+  Money, Setup); lead score = Website 45 + Local SEO 30 + Google Maps 25 (`lead-manager/goldbar_leads/scoring.py`);
+  email finding in `lead-manager/goldbar_leads/contacts.py`. Next: Demos, Outreach, Onboarding.
+- Money page: clients (build fee + retainer after the free days), costs you add, and Google API cost estimated from
+  calls logged per run (`goldbar_leads/usage.py` → `api_usage` table; prices and free allowances in
+  `control-room/functions/_lib/money.js`). Forecasts count only what's committed.

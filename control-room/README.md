@@ -1,15 +1,24 @@
 # GoldBar Control Room
 
-The website you log into to run everything. Today it has **Lead Scraper** (type a niche, a town and how many
-leads, press *Find leads*), **All Leads** (every lead, with status and notes), **Map Rank** (LeadSnap-style Google Maps
-heatmaps) and **Setup** (green ticks show what's connected). Demos, Outreach and Clients come next.
+The website you log into to run everything:
+
+| Page | What it's for |
+| --- | --- |
+| **Home** | The numbers that matter today, your pipeline, and the best leads to contact next |
+| **Lead Scraper** | Type a niche, a town and how many leads, press *Find leads*, watch it work |
+| **Map Rank** | LeadSnap-style Google Maps heatmaps |
+| **Leads** | Every lead; click one for everything we know (score breakdown, problems, emails, socials, notes) |
+| **Money** | Profit, monthly recurring income, clients, costs (Google tracked automatically), 6-month forecast |
+| **Setup** | Green ticks show what's connected |
+
+Demos, Outreach and Onboarding come next.
 
 It runs entirely online and free, so your PC can be off:
 
 | Part | Runs on |
 | --- | --- |
 | The website + its small API (`public/`, `functions/`) | Cloudflare Pages |
-| The database (leads, runs) | Cloudflare D1 |
+| The database (leads, runs, clients, money) | Cloudflare D1 |
 | The heavy scraping (Google, website checks, Companies House) | GitHub Actions (`.github/workflows/scrape-leads.yml`) |
 | Map Rank heatmap scans | GitHub Actions (`.github/workflows/map-rank.yml`) |
 | The street map behind the heatmap | Leaflet + OpenStreetMap (free) |

@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from goldbar_leads import usage
 from goldbar_leads.places import SEARCH_URL, PlacesError
 
 NOT_FOUND = 21  # rank used for averages when a business isn't in the top 20 at a point
@@ -63,6 +64,7 @@ def locate_town(client: httpx.Client, api_key: str, town: str) -> tuple[float, f
         json={"textQuery": f"{town}, UK", "regionCode": "GB", "pageSize": 1},
         headers={"X-Goog-Api-Key": api_key, "X-Goog-FieldMask": "places.location"},
     )
+    usage.count(usage.TEXT_SEARCH_PRO)
     if resp.status_code != 200:
         raise PlacesError(f"Places API {resp.status_code}: {resp.text[:300]}")
     places = resp.json().get("places", [])
@@ -101,6 +103,7 @@ def ranking_at(client: httpx.Client, api_key: str, keyword: str, lat: float, lng
         },
         headers={"X-Goog-Api-Key": api_key, "X-Goog-FieldMask": "places.id"},  # IDs only = free
     )
+    usage.count(usage.TEXT_SEARCH_IDS)
     if resp.status_code != 200:
         raise PlacesError(f"Places API {resp.status_code}: {resp.text[:300]}")
     return [p["id"] for p in resp.json().get("places", [])][:MAX_RANK]
@@ -136,6 +139,7 @@ def fill_names(client: httpx.Client, api_key: str, businesses: list[BusinessResu
                 DETAILS_URL.format(id=b.place_id),
                 headers={"X-Goog-Api-Key": api_key, "X-Goog-FieldMask": "displayName,rating,userRatingCount"},
             )
+            usage.count(usage.PLACE_DETAILS_ENTERPRISE)
             if resp.status_code == 200:
                 data = resp.json()
                 b.name = data.get("displayName", {}).get("text", "")

@@ -18,7 +18,7 @@ import time
 import uuid
 from pathlib import Path
 
-from goldbar_leads import maprank, pipeline, store
+from goldbar_leads import maprank, pipeline, store, usage
 from goldbar_leads.places import PlacesError
 
 PROGRESS_EVERY_S = 2.0  # how often to push the progress bar to the Control Room
@@ -67,6 +67,16 @@ def run_scan(d1, api_key: str, scan_id: str, keyword: str, town: str, grid: int,
     return 0
 
 
+def save_usage(d1, run_kind: str, run_id: str) -> None:
+    """Record the run's paid Google calls (even if it failed half way: Google still bills them)."""
+    print("Google calls:", dict(usage.calls) or "none", flush=True)
+    if d1 and usage.calls:
+        try:
+            d1.save_usage(run_kind, run_id, dict(usage.calls))
+        except RuntimeError as e:
+            print(f"Couldn't record Google usage: {e}", file=sys.stderr)
+
+
 def map_rank_main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="goldbar_leads map-rank", description="Map Rank heatmap scan")
     p.add_argument("--keyword", required=True)
@@ -87,7 +97,11 @@ def map_rank_main(argv: list[str]) -> int:
     if d1:
         d1.ensure_schema()
         d1.create_scan(scan_id, args.keyword, args.town, args.grid, args.spacing, "manual")
-    return run_scan(d1, api_key, scan_id, args.keyword, args.town, args.grid, args.spacing)
+    usage.reset()
+    try:
+        return run_scan(d1, api_key, scan_id, args.keyword, args.town, args.grid, args.spacing)
+    finally:
+        save_usage(d1, "scan", scan_id)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -130,6 +144,14 @@ def main(argv: list[str] | None = None) -> int:
     places_key = os.environ.get("GOOGLE_PLACES_API_KEY", "")
     if not places_key:
         return fail("Google key missing: add GOOGLE_PLACES_API_KEY in GitHub → Settings → Secrets and variables → Actions.")
+    usage.reset()
+    try:
+        return scrape(args, d1, places_key, fail)
+    finally:
+        save_usage(d1, "scrape", args.job_id)
+
+
+def scrape(args, d1, places_key: str, fail) -> int:
     target = max(1, min(args.max, 300))
     progress = progress_reporter(d1, args.job_id)
     progress("scouting", 0, target)

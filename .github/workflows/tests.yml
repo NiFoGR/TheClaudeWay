@@ -20,3 +20,13 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements-dev.txt
       - run: python -m pytest -q
+
+  control-room:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: for f in control-room/public/js/*.js control-room/functions/_lib/*.js; do node --check "$f"; done
+      - run: node --test control-room/tests/money.test.mjs

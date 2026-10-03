@@ -7,6 +7,7 @@ Results come back in Google's relevance order, which we record as the business's
 
 import httpx
 
+from goldbar_leads import usage
 from goldbar_leads.models import Lead
 
 SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
@@ -85,6 +86,7 @@ def _query(client: httpx.Client, api_key: str, text_query: str) -> list[dict]:
     found: list[dict] = []
     while len(found) < MAX_PER_QUERY:
         resp = client.post(SEARCH_URL, json=body, headers=headers)
+        usage.count(usage.TEXT_SEARCH_ENTERPRISE)
         if resp.status_code != 200:
             raise PlacesError(f"Places API {resp.status_code}: {resp.text[:300]}")
         data = resp.json()

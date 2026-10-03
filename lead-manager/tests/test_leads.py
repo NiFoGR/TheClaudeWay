@@ -7,7 +7,7 @@ import httpx
 import respx
 
 from conftest import FIXTURES
-from goldbar_leads import audit, companies_house, maprank, pipeline, places, qualify, scoring, store
+from goldbar_leads import audit, companies_house, maprank, pipeline, places, qualify, scoring, store, usage
 from goldbar_leads.models import Lead
 
 OLD = (FIXTURES / "old_site.html").read_text()
@@ -312,6 +312,13 @@ def test_map_rank_scan_uses_free_ids_only_searches():
 
 
 @respx.mock
+def test_paid_google_calls_are_counted_per_sku():
+    usage.reset()
+    test_map_rank_scan_uses_free_ids_only_searches()
+    assert dict(usage.calls) == {"text_search_pro": 1, "text_search_ids": 9, "place_details_enterprise": 1}
+
+
+@respx.mock
 def test_companies_house_match_gets_director_first_name():
     respx.get(f"{companies_house.BASE}/search/companies").mock(
         return_value=httpx.Response(200, json={"items": [
@@ -361,7 +368,7 @@ def test_sqlite_upsert_keeps_outreach_state(tmp_path):
 
 def test_d1_schema_statements_are_clean():
     stmts = store.schema_statements()
-    assert len(stmts) == 10 and all("--" not in s for s in stmts)
+    assert len(stmts) == 15 and all("--" not in s for s in stmts)
 
 
 @respx.mock
@@ -468,8 +475,11 @@ def test_cli_reports_clear_failures_to_the_control_room(monkeypatch, tmp_path):
     monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "bad")
     respx.post(places.SEARCH_URL).mock(return_value=httpx.Response(403, text="API not enabled"))
     assert main(["--trade", "roofer", "--town", "Leeds", "--job-id", "j1", "--out", str(tmp_path)]) == 2
-    last = json.loads(d1.calls[-1].request.content)
-    assert "Google refused the search" in last["params"][3]
+    sent = [json.loads(c.request.content) for c in d1.calls]
+    failed = [q for q in sent if q["sql"].startswith("UPDATE jobs") and q["params"][0] == "failed"][-1]
+    assert "Google refused the search" in failed["params"][3]
+    # the refused call is still recorded for the Money page: Google may bill it
+    assert "INTO api_usage" in sent[-1]["sql"] and sent[-1]["params"][:4] == ["scrape", "j1", "text_search_enterprise", 1]
 
 
 # ---------------------------------------------------------------- fixes from the first real run (Warrington roofers)

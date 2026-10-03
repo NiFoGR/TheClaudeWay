@@ -73,8 +73,9 @@ python -m goldbar_leads map-rank --keyword roofer --town Warrington --grid 7 --s
 ## Costs
 
 - Google Places: each search returns up to 20 businesses per request (about 60 per trade + town in 3 requests).
-  These fields are billed at Google's "Enterprise" rate; check the current free monthly allowance on
-  Google's pricing page before running in bulk.
+  These are "Text Search Enterprise" calls: the first 1,000 a month are free, then about $35 per 1,000.
+  Heatmap grid searches ask for IDs only, which is free. Every run logs its calls (`goldbar_leads/usage.py`)
+  and the Control Room's Money page shows the cost.
 - Companies House: free (600 requests per 5 minutes).
 - GitHub Actions: free.
 

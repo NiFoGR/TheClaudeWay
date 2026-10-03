@@ -120,7 +120,6 @@ class D1:
             [status, found, pitchable, error[:500], _now(), job_id],
         )
 
-
     def insert_many(self, table: str, columns: list[str], rows: list[list]) -> None:
         per = max(1, D1_MAX_PARAMS // len(columns))
         for i in range(0, len(rows), per):
@@ -152,6 +151,12 @@ class D1:
             "INSERT OR REPLACE INTO job_progress (job_id, stage, done, total, scouted, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
             [job_id, stage, done, total, scouted, _now()],
         )
+
+    def save_usage(self, run_kind: str, run_id: str, calls: dict[str, int]) -> None:
+        """Paid Google calls made by one run, for the Money page."""
+        rows = [[run_kind, run_id, sku, n, _now()] for sku, n in calls.items() if n]
+        if rows:
+            self.insert_many("api_usage", ["run_kind", "run_id", "sku", "calls", "created_at"], rows)
 
     def fail_job_if_unexplained(self, job_id: str, error: str) -> None:
         """Mark a run failed unless the scraper already recorded a clearer reason."""
