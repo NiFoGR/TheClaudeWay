@@ -4,7 +4,9 @@ Automation for GoldBar Websites: find local UK businesses with weak websites, sh
 
 | Part | Status |
 | --- | --- |
-| [Lead manager](lead-manager/): find, audit, qualify and score leads | Built |
-| Control Room dashboard (Cloudflare Pages + D1) | Next |
-| Demo sites and order page | Later |
+| [Control Room](control-room/): the website you log into (Lead Scraper, All Leads) | Built |
+| [Lead manager](lead-manager/): the engine that finds, audits, qualifies and scores leads | Built |
+| Demo sites and order page | Next |
 | Outreach and auto-replies | Later |
+
+Setup steps: [control-room/README.md](control-room/README.md).

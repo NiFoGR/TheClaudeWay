@@ -42,33 +42,60 @@ def lead(**over) -> Lead:
 # ---------------------------------------------------------------- discovery
 
 
+def places_api(pages_by_query: dict[str, list[dict]]):
+    """respx side effect: serve pages per textQuery, following pageToken like Google does."""
+
+    def handler(request):
+        body = json.loads(request.content)
+        pages = pages_by_query.get(body["textQuery"], [{"places": []}])
+        page = pages[int(body.get("pageToken", 0))]
+        return httpx.Response(200, json=page)
+
+    return handler
+
+
 @respx.mock
 def test_places_paginates_ranks_and_includes_service_area_businesses():
-    route = respx.post(places.SEARCH_URL).mock(
-        side_effect=[
-            httpx.Response(200, json={"places": [place(1), place(2)], "nextPageToken": "t2"}),
-            httpx.Response(200, json={"places": [place(3, websiteUri="https://r3.co.uk")]}),
-        ]
-    )
+    route = respx.post(places.SEARCH_URL).mock(side_effect=places_api({
+        "roofer in Leeds": [
+            {"places": [place(1), place(2)], "nextPageToken": "1"},
+            {"places": [place(3, websiteUri="https://r3.co.uk")]},
+        ],
+    }))
     with httpx.Client() as c:
         leads = places.search(c, "KEY", "roofer", "Leeds")
     assert [l.rank for l in leads] == [1, 2, 3]
     assert leads[0].town == "Leeds" and leads[0].postcode == "LS1 1AA"
     assert leads[2].website == "https://r3.co.uk"
-    first, second = (json.loads(call.request.content) for call in route.calls)
+    first, second = (json.loads(call.request.content) for call in route.calls[:2])
     assert first["includePureServiceAreaBusinesses"] is True
     assert first["textQuery"] == "roofer in Leeds"
-    assert second["pageToken"] == "t2"
+    assert second["pageToken"] == "1"
     assert route.calls[0].request.headers["X-Goog-Api-Key"] == "KEY"
 
 
 @respx.mock
 def test_places_respects_max_results():
-    respx.post(places.SEARCH_URL).mock(
-        return_value=httpx.Response(200, json={"places": [place(i) for i in range(20)], "nextPageToken": "more"})
-    )
+    respx.post(places.SEARCH_URL).mock(side_effect=places_api({
+        "roofer in Leeds": [{"places": [place(i) for i in range(20)], "nextPageToken": "1"},
+                            {"places": [place(i) for i in range(20, 40)]}],
+    }))
     with httpx.Client() as c:
         assert len(places.search(c, "KEY", "roofer", "Leeds", max_results=25)) == 25
+
+
+@respx.mock
+def test_places_goes_past_60_with_variations_and_dedupes():
+    main = [{"places": [place(i) for i in range(p * 20, p * 20 + 20)], **({"nextPageToken": str(p + 1)} if p < 2 else {})}
+            for p in range(3)]
+    respx.post(places.SEARCH_URL).mock(side_effect=places_api({
+        "roofer in Leeds": main,
+        "roofer near Leeds": [{"places": [place(5), place(100), place(101)]}],  # p5 is a duplicate
+    }))
+    with httpx.Client() as c:
+        leads = places.search(c, "KEY", "roofer", "Leeds", max_results=200)
+    assert len(leads) == 62
+    assert leads[59].rank == 60 and leads[60].place_id == "p100" and leads[60].rank is None
 
 
 # ---------------------------------------------------------------- audit
@@ -208,18 +235,30 @@ def test_companies_house_weak_match_is_ignored():
 
 def test_sqlite_upsert_keeps_outreach_state(tmp_path):
     db = tmp_path / "leads.db"
-    store.save_sqlite(db, [lead(issues=["No website"], quality_score=100)])
+    store.save_sqlite(db, [lead(issues=["No website"], quality_score=100)], job_id="job1")
     with sqlite3.connect(db) as c:
         c.execute("UPDATE leads SET status = 'contacted', warmth_score = 30, first_seen_at = '2026-01-01T00:00:00Z'")
     store.save_sqlite(db, [lead(name="Smith Roofing Ltd", quality_score=40)])
     with sqlite3.connect(db) as c:
-        row = c.execute("SELECT name, quality_score, status, warmth_score, first_seen_at FROM leads").fetchone()
-    assert row == ("Smith Roofing Ltd", 40, "contacted", 30, "2026-01-01T00:00:00Z")
+        row = c.execute("SELECT name, quality_score, status, warmth_score, first_seen_at, last_job_id FROM leads").fetchone()
+    assert row == ("Smith Roofing Ltd", 40, "contacted", 30, "2026-01-01T00:00:00Z", None)
 
 
 def test_d1_schema_statements_are_clean():
     stmts = store.schema_statements()
-    assert len(stmts) == 3 and all("--" not in s for s in stmts)
+    assert len(stmts) == 5 and all("--" not in s for s in stmts)
+
+
+@respx.mock
+def test_d1_save_and_job_updates():
+    d1 = store.D1("acc", "db", "tok")
+    route = respx.post(d1.url).mock(return_value=httpx.Response(200, json={"success": True, "result": []}))
+    d1.save([lead(quality_score=100, issues=["No website"])], job_id="job9")
+    d1.set_job("job9", "done", found=1, pitchable=1)
+    sqls = [json.loads(c.request.content) for c in route.calls]
+    assert sqls[-2]["sql"].startswith("INSERT INTO leads") and "job9" in sqls[-2]["params"]
+    assert sqls[-1]["params"][:3] == ["done", 1, 1] and sqls[-1]["params"][-1] == "job9"
+    assert route.calls[0].request.headers["Authorization"] == "Bearer tok"
 
 
 # ---------------------------------------------------------------- end to end

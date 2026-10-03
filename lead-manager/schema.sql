@@ -26,8 +26,25 @@ CREATE TABLE IF NOT EXISTS leads (
   quality_score       INTEGER NOT NULL DEFAULT 0,
   warmth_score        INTEGER NOT NULL DEFAULT 0,  -- filled later by outreach (opens, demo views, replies)
   status              TEXT NOT NULL DEFAULT 'new', -- new → contacted → replied → won / lost
+  notes               TEXT NOT NULL DEFAULT '',
+  last_job_id         TEXT,  -- the Lead Scraper run that last found this lead
   first_seen_at       TEXT NOT NULL,
   updated_at          TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS leads_trade_town ON leads (trade, search_town);
 CREATE INDEX IF NOT EXISTS leads_quality ON leads (excluded, quality_score DESC);
+CREATE INDEX IF NOT EXISTS leads_job ON leads (last_job_id);
+
+-- One row per Lead Scraper run started from the Control Room.
+CREATE TABLE IF NOT EXISTS jobs (
+  id          TEXT PRIMARY KEY,
+  trade       TEXT NOT NULL,
+  town        TEXT NOT NULL,
+  max_results INTEGER NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'queued', -- queued → running → done / failed
+  found       INTEGER,
+  pitchable   INTEGER,
+  error       TEXT,
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);

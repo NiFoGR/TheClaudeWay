@@ -1,7 +1,7 @@
 name: Scrape leads
 
-# Runs in GitHub's cloud, so your PC can be off. Start it from the Actions tab (or the GitHub app):
-# Actions → Scrape leads → Run workflow → type a trade and a town.
+# Runs in GitHub's cloud, so your PC can be off. Normally started by the Control Room's "Find leads" button;
+# can also be started by hand: Actions → Scrape leads → Run workflow.
 on:
   workflow_dispatch:
     inputs:
@@ -12,9 +12,13 @@ on:
         description: 'UK town, e.g. "Leeds"'
         required: true
       max:
-        description: "Max businesses (Google caps one search at about 60)"
+        description: "How many businesses to find (10-300)"
         required: false
         default: "60"
+      job_id:
+        description: "Control Room run id (filled in automatically)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -22,7 +26,7 @@ permissions:
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: lead-manager
@@ -44,13 +48,26 @@ jobs:
           TRADE: ${{ inputs.trade }}
           TOWN: ${{ inputs.town }}
           MAX: ${{ inputs.max }}
-        run: python -m goldbar_leads --trade "$TRADE" --town "$TOWN" --max "$MAX" --out output | tee output-summary.txt
+          JOB_ID: ${{ inputs.job_id }}
+        run: |
+          set -o pipefail
+          python -m goldbar_leads --trade "$TRADE" --town "$TOWN" --max "$MAX" --job-id "$JOB_ID" --out output | tee output-summary.txt
+      - name: Tell the Control Room the run failed
+        if: failure() && inputs.job_id != ''
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          JOB_ID: ${{ inputs.job_id }}
+        run: python -m goldbar_leads --fail-job "$JOB_ID" "The scraper crashed. Open the run on GitHub (Actions tab) for details."
       - name: Show summary on the run page
+        if: success()
         run: |
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           cat output-summary.txt >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
+        if: success()
         with:
           name: leads-${{ inputs.trade }}-${{ inputs.town }}
           path: lead-manager/output/

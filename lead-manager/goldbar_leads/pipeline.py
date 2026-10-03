@@ -42,7 +42,7 @@ def run(trade: str, town: str, places_key: str, companies_house_key: str = "", m
 
 def sort_key(lead: Lead) -> tuple:
     # pitchable first, then most-help-needed, then best reputation (proven good at the work)
-    return (lead.excluded, -lead.quality_score, -(lead.rating or 0), -lead.review_count, lead.rank)
+    return (lead.excluded, -lead.quality_score, -(lead.rating or 0), -lead.review_count, lead.rank or 999)
 
 
 CSV_COLUMNS = [
@@ -53,7 +53,7 @@ CSV_COLUMNS = [
     ("Email", lambda l: l.email),
     ("Website", lambda l: l.website),
     ("Problems", lambda l: "; ".join(l.issues)),
-    ("Google rank", lambda l: l.rank),
+    ("Google rank", lambda l: l.rank or ""),
     ("Rating", lambda l: l.rating if l.rating is not None else ""),
     ("Reviews", lambda l: l.review_count),
     ("Town", lambda l: l.town),

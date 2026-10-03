@@ -9,7 +9,7 @@ class Lead:
     name: str
     trade: str
     search_town: str
-    rank: int  # position in Google results for "<trade> in <town>", 1 = top
+    rank: int | None  # position in Google results for "<trade> in <town>", 1 = top; None = found via a wider search
     address: str = ""
     town: str = ""
     postcode: str = ""

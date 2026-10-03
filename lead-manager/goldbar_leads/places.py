@@ -40,7 +40,7 @@ def _component(place: dict, kind: str) -> str:
     return ""
 
 
-def to_lead(place: dict, trade: str, town: str, rank: int) -> Lead:
+def to_lead(place: dict, trade: str, town: str, rank: int | None) -> Lead:
     return Lead(
         place_id=place["id"],
         name=place.get("displayName", {}).get("text", ""),
@@ -60,10 +60,21 @@ def to_lead(place: dict, trade: str, town: str, rank: int) -> Lead:
     )
 
 
-def search(client: httpx.Client, api_key: str, trade: str, town: str, max_results: int = 60) -> list[Lead]:
-    """Return up to max_results businesses for '<trade> in <town>', in Google's order."""
+# Google caps one query at ~60 results, so bigger targets add these variations and de-duplicate.
+QUERY_VARIANTS = [
+    "{trade} in {town}",
+    "{trade} near {town}",
+    "{trade} services in {town}",
+    "local {trade} {town}",
+    "emergency {trade} {town}",
+    "best {trade} in {town}",
+]
+MAX_PER_QUERY = 60
+
+
+def _query(client: httpx.Client, api_key: str, text_query: str) -> list[dict]:
     body = {
-        "textQuery": f"{trade} in {town}",
+        "textQuery": text_query,
         "pageSize": 20,
         "regionCode": "GB",
         "languageCode": "en-GB",
@@ -71,16 +82,31 @@ def search(client: httpx.Client, api_key: str, trade: str, town: str, max_result
         "includePureServiceAreaBusinesses": True,
     }
     headers = {"X-Goog-Api-Key": api_key, "X-Goog-FieldMask": FIELDS}
-    leads: list[Lead] = []
-    while len(leads) < max_results:
+    found: list[dict] = []
+    while len(found) < MAX_PER_QUERY:
         resp = client.post(SEARCH_URL, json=body, headers=headers)
         if resp.status_code != 200:
             raise PlacesError(f"Places API {resp.status_code}: {resp.text[:300]}")
         data = resp.json()
-        for place in data.get("places", []):
-            leads.append(to_lead(place, trade, town, rank=len(leads) + 1))
+        found += data.get("places", [])
         token = data.get("nextPageToken")
         if not token:
             break
         body["pageToken"] = token
-    return leads[:max_results]
+    return found
+
+
+def search(client: httpx.Client, api_key: str, trade: str, town: str, max_results: int = 60) -> list[Lead]:
+    """Up to max_results distinct businesses. Rank = position in the main '<trade> in <town>' search
+    (what a customer sees); businesses only found by the extra variations get no rank."""
+    leads: list[Lead] = []
+    seen: set[str] = set()
+    for i, template in enumerate(QUERY_VARIANTS):
+        for pos, place in enumerate(_query(client, api_key, template.format(trade=trade, town=town)), start=1):
+            if place["id"] in seen:
+                continue
+            seen.add(place["id"])
+            leads.append(to_lead(place, trade, town, rank=pos if i == 0 else None))
+            if len(leads) >= max_results:
+                return leads
+    return leads

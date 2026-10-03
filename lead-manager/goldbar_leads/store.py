@@ -2,6 +2,7 @@
 status, warmth and first-seen date, so outreach history is never lost."""
 
 import json
+import os
 import re
 import sqlite3
 from datetime import datetime, timezone
@@ -17,7 +18,7 @@ COLUMNS = [
     "place_id", "name", "trade", "search_town", "rank", "address", "town", "postcode", "phone", "website",
     "maps_url", "rating", "review_count", "email", "emails", "socials", "issues", "audit",
     "director_first_name", "director_name", "company_number", "excluded", "exclude_reason", "quality_score",
-    "first_seen_at", "updated_at",
+    "last_job_id", "first_seen_at", "updated_at",
 ]
 _KEEP_ON_UPDATE = {"place_id", "first_seen_at"}
 UPSERT = (
@@ -32,7 +33,7 @@ def schema_statements() -> list[str]:
     return [s.strip() for s in no_comments.split(";") if s.strip()]
 
 
-def row(lead: Lead, now: str) -> list:
+def row(lead: Lead, now: str, job_id: str = "") -> list:
     values = {
         **{c: getattr(lead, c) for c in COLUMNS if hasattr(lead, c)},
         "emails": json.dumps(lead.emails),
@@ -40,6 +41,7 @@ def row(lead: Lead, now: str) -> list:
         "issues": json.dumps(lead.issues),
         "audit": json.dumps(lead.audit),
         "excluded": int(lead.excluded),
+        "last_job_id": job_id or None,
         "first_seen_at": now,
         "updated_at": now,
     }
@@ -50,11 +52,11 @@ def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def save_sqlite(path: str | Path, leads: list[Lead]) -> None:
+def save_sqlite(path: str | Path, leads: list[Lead], job_id: str = "") -> None:
     now = _now()
     with sqlite3.connect(path) as db:
         db.executescript(SCHEMA)
-        db.executemany(UPSERT, [row(l, now) for l in leads])
+        db.executemany(UPSERT, [row(l, now, job_id) for l in leads])
 
 
 class D1:
@@ -72,9 +74,24 @@ class D1:
             raise RuntimeError(f"D1 query failed ({resp.status_code}): {data.get('errors')}")
         return data
 
-    def save(self, leads: list[Lead]) -> None:
+    def ensure_schema(self) -> None:
         for statement in schema_statements():
             self.query(statement)
+
+    def save(self, leads: list[Lead], job_id: str = "") -> None:
+        self.ensure_schema()
         now = _now()
         for lead in leads:
-            self.query(UPSERT, row(lead, now))
+            self.query(UPSERT, row(lead, now, job_id))
+
+    def set_job(self, job_id: str, status: str, found: int | None = None, pitchable: int | None = None, error: str = "") -> None:
+        self.query(
+            "UPDATE jobs SET status = ?, found = COALESCE(?, found), pitchable = COALESCE(?, pitchable), "
+            "error = ?, updated_at = ? WHERE id = ?",
+            [status, found, pitchable, error[:500], _now(), job_id],
+        )
+
+
+def d1_from_env() -> "D1 | None":
+    env = [os.environ.get(k, "") for k in ("CLOUDFLARE_ACCOUNT_ID", "D1_DATABASE_ID", "CLOUDFLARE_API_TOKEN")]
+    return D1(*env) if all(env) else None

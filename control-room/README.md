@@ -1,0 +1,52 @@
+# GoldBar Control Room
+
+The website you log into to run everything. Today it has **Lead Scraper** (type a niche, a town and how many
+leads, press *Find leads*) and **All Leads** (every lead, with status and notes). Demos, Outreach and Clients come next.
+
+It runs entirely online and free, so your PC can be off:
+
+| Part | Runs on |
+| --- | --- |
+| The website + its small API (`public/`, `functions/`) | Cloudflare Pages |
+| The database (leads, runs) | Cloudflare D1 |
+| The heavy scraping (Google, website checks, Companies House) | GitHub Actions (`.github/workflows/scrape-leads.yml`) |
+
+Pressing *Find leads* records a run and starts the GitHub workflow. The page fills in by itself when it's done, usually in 2–6 minutes.
+
+## One-time setup (about 20 minutes)
+
+### 1. Cloudflare: database and website
+1. Create a free account at cloudflare.com.
+2. **Storage & Databases → D1 → Create** a database called `goldbar`. Copy its **Database ID**.
+3. **Workers & Pages → Create → Pages → Connect to Git**, pick `NiFoGR/TheClaudeWay`, then:
+   - Production branch: the branch this code is on
+   - Framework preset: *None*, build command: *empty*
+   - Root directory: `control-room`, build output directory: `public`
+4. In the new project: **Settings → Bindings → Add → D1 database**: variable name `DB`, database `goldbar`.
+5. **Settings → Variables and Secrets**, add:
+   - `CONTROL_ROOM_PASSWORD`: the password you'll log in with (type: Secret)
+   - `GITHUB_TOKEN`: see step 2 (type: Secret)
+   - `GITHUB_REPO`: `NiFoGR/TheClaudeWay`
+   - `GITHUB_REF`: the branch name from step 3
+6. **Deployments → Retry deployment** so the settings take effect. Your Control Room is at `https://<project>.pages.dev`.
+   You can point your own domain (e.g. `control.goldbarwebsites.co.uk`) at it later under *Custom domains*.
+
+### 2. GitHub token (lets the Control Room press "Run" for you)
+GitHub → your profile picture → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate**:
+repository access *Only select repositories → TheClaudeWay*, permission **Actions: Read and write**. Paste it as `GITHUB_TOKEN` above.
+
+### 3. Keys the scraper needs (GitHub repo → Settings → Secrets and variables → Actions)
+| Secret | Where to get it |
+| --- | --- |
+| `GOOGLE_PLACES_API_KEY` | Google Cloud console → enable **Places API (New)** → Credentials → API key |
+| `COMPANIES_HOUSE_API_KEY` (optional, free) | developer.company-information.service.gov.uk → register an application → REST key |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare dashboard, right-hand side of the account home page |
+| `D1_DATABASE_ID` | The Database ID from step 1.2 |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare → My Profile → API Tokens → Create token → *Custom*: permission **Account → D1 → Edit** |
+
+That's it: log in, type *roofer* / *Leeds* / *60*, press **Find leads**.
+
+## Developing locally
+From `control-room/`, run `npx wrangler pages dev` with a `wrangler.toml` that binds a local D1 database as `DB`
+and sets `CONTROL_ROOM_PASSWORD`. The database layout lives in `lead-manager/schema.sql`; after changing it,
+run `python scripts/sync_schema.py`.
