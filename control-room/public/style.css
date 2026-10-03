@@ -383,3 +383,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
   .clients-table, .entries-table { min-width: 560px; }
   .table-card:has(.clients-table) .table-wrap, .table-card:has(.entries-table) .table-wrap { overflow-x: auto; }
 }
+
+/* payment links */
+.link-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+.link-row:first-child { border-top: 0; padding-top: 0; }

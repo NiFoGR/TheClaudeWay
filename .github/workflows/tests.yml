@@ -29,4 +29,4 @@ jobs:
         with:
           node-version: "22"
       - run: for f in control-room/public/js/*.js control-room/functions/_lib/*.js; do node --check "$f"; done
-      - run: node --test control-room/tests/money.test.mjs
+      - run: node --test control-room/tests/money.test.mjs control-room/tests/stripe.test.mjs

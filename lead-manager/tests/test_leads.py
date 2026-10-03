@@ -368,7 +368,7 @@ def test_sqlite_upsert_keeps_outreach_state(tmp_path):
 
 def test_d1_schema_statements_are_clean():
     stmts = store.schema_statements()
-    assert len(stmts) == 15 and all("--" not in s for s in stmts)
+    assert len(stmts) == 17 and all("--" not in s for s in stmts)
 
 
 @respx.mock

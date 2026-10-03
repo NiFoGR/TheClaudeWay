@@ -1,5 +1,5 @@
 // Money page: profit, monthly recurring income, clients, costs (Google API tracked automatically), forecast.
-import { api, confetti, esc, fmtDate, icon, kpi, modal, money, monthName, pageHead, state, toast, today, view } from "./lib.js";
+import { api, confetti, esc, fmtDate, icon, kpi, modal, money, monthName, pageHead, safeUrl, state, toast, today, view } from "./lib.js";
 
 const PACKAGES = {
   full: { label: "Full Package", build: 1950, monthly: 249, freeDays: 60, note: "£1,950 + £249/mo, first 60 days free" },
@@ -9,10 +9,42 @@ const PACKAGES = {
 const COST_CATEGORIES = ["Mailboxes", "Domains", "Tools & software", "Ads", "Other"];
 const SERIES = { in: "var(--series-in)", out: "var(--series-out)", profit: "var(--series-profit)" };
 
+// ---------------------------------------------------------------- Stripe payment links (also shown on Setup)
+
+export function paymentLinks(links) {
+  return `<div class="cost-rows">${Object.entries(PACKAGES).filter(([k]) => links?.[k]).map(([k, p]) => `
+    <div class="link-row"><div><b>${esc(p.label)}</b><div class="sub-line">${esc(p.note)}</div></div>
+      <div class="actions"><button class="btn secondary sm" data-copy="${esc(links[k].url)}">Copy link</button>
+        <a class="icon-btn" href="${esc(safeUrl(links[k].url))}" target="_blank" rel="noopener noreferrer" aria-label="Open">${icon("external")}</a></div></div>`).join("")}</div>`;
+}
+
+export function bindCopy(root) {
+  root.querySelectorAll("[data-copy]").forEach((b) => b.onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(b.dataset.copy);
+      toast("Link copied. Paste it to the client.");
+    } catch {
+      prompt("Copy this link:", b.dataset.copy);
+    }
+  });
+}
+
+function linksCard(stripe) {
+  if (!stripe?.ready) {
+    return `<div class="card"><div class="card-head"><h2>Get paid by card</h2></div>
+      <p class="muted" style="margin:0">Connect Stripe on <a href="#/setup">Setup</a>: clients pay through a link and appear here by themselves.</p></div>`;
+  }
+  return `<div class="card"><div class="card-head"><h2>Payment links</h2>${stripe.mode === "live" ? "" : `<span class="badge warn">Test mode</span>`}</div>
+    ${paymentLinks(stripe.links)}<p class="hint">Send after the call. When they pay, they're added as a client automatically.</p></div>`;
+}
+
 // ---------------------------------------------------------------- page
 
 export async function moneyPage(fresh = true) {
-  if (fresh || !state.money) state.money = await api("/api/money");
+  if (fresh || !state.money) {
+    const [m, stripe] = await Promise.all([api("/api/money"), api("/api/stripe/setup").catch(() => null)]);
+    state.money = { ...m, stripe };
+  }
   const { summary: s, entries } = state.money;
   const m = s.thisMonth;
   const vsLast = m.profit - s.lastMonthProfit;
@@ -51,11 +83,13 @@ export async function moneyPage(fresh = true) {
     </div>
     <div class="grid-main" style="margin-top:16px">
       ${clientsCard(s)}
-      <div class="stack">${pipelineCard(s)}${costsCard(s, entries)}</div>
+      <div class="stack">${linksCard(state.money.stripe)}${pipelineCard(s)}${costsCard(s, entries)}</div>
     </div>
+    ${paymentsCard(state.money.payments || [])}
     ${entriesCard(entries)}`;
 
   drawChart(view.querySelector("#chart"), s.months);
+  bindCopy(view);
   countUp(view.querySelector("#hero-value"));
   bindMoney();
 }
@@ -93,7 +127,7 @@ function clientsCard(s) {
       free: () => `<span class="badge gold">Free until ${esc(fmtDate(c.firstCharge))}</span>`,
       stopped: () => `<span class="badge bad">Stopped ${esc(fmtDate(c.cancelled_on))}</span>`,
       "one-off": () => `<span class="badge plain">One-off</span>`,
-    }[c.key]();
+    }[c.key]() + (c.failed_on && c.key === "paying" ? ` <span class="badge bad">Payment failed ${esc(fmtDate(c.failed_on))}</span>` : "") + (c.stripe_customer ? ` <span class="badge plain">Card</span>` : "");
     return `<tr>
       <td><div class="client-name">${esc(c.name)}</div><div class="sub-line">${esc(PACKAGES[c.package]?.label || c.package)} · paid ${esc(fmtDate(c.paid_on, true))}</div></td>
       <td class="r num">${money(c.build_fee_pence)}</td>
@@ -135,6 +169,16 @@ function costsCard(s, entries) {
       : `<p class="muted" style="margin:0">Nothing yet this month.</p>`}
     <p class="hint">Google is tracked automatically: ${leadSearches.toLocaleString("en-GB")} of 1,000 free lead-search calls used this month (about 3 per 60 leads). Heatmap grid searches are free.</p>
   </div>`;
+}
+
+function paymentsCard(payments) {
+  if (!payments.length) return "";
+  const rows = payments.map((p) => `<tr>
+    <td class="num" style="white-space:nowrap">${esc(fmtDate(p.paid_on, true))}</td>
+    <td><div class="client-name">${esc(p.name)}</div><div class="sub-line">${esc(p.category)}${p.fee_pence ? ` · Stripe fee ${money(p.fee_pence, { exact: true })}` : ""}</div></td>
+    <td class="r num amount-in">+${money(p.amount_pence, { exact: p.amount_pence % 100 !== 0 })}</td></tr>`).join("");
+  return `<div class="section-title"><h2>Card payments received</h2><span class="muted small">from Stripe, automatically</span></div>
+    <div class="table-card"><div class="table-wrap"><table class="entries-table"><thead><tr><th>Date</th><th>From</th><th class="r">Amount</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
 
 function entriesCard(entries) {
@@ -261,7 +305,7 @@ function bindMoney() {
   view.querySelector("#add-cost-2").onclick = addEntry;
   view.querySelector("#edit-goal").onclick = editGoal;
   view.querySelectorAll("[data-stop-client]").forEach((b) => b.onclick = () => askDate(
-    "When did they stop paying?", "Their monthly stops from this date. They keep the website; everything else switches off.",
+    "When did they stop paying?", "Their monthly stops from this date. They keep the website; everything else switches off. If they pay by card, this also cancels it in Stripe.",
     (date) => api(`/api/money/clients/${encodeURIComponent(b.dataset.stopClient)}`, { method: "PATCH", body: JSON.stringify({ cancelled_on: date }) })));
   view.querySelectorAll("[data-stop-entry]").forEach((b) => b.onclick = () => askDate(
     "When did it stop?", "No more monthly payments from this date.",

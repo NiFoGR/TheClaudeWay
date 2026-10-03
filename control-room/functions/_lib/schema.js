@@ -14,5 +14,7 @@ export const SCHEMA = [
   "CREATE INDEX IF NOT EXISTS api_usage_date ON api_usage (created_at)",
   "CREATE TABLE IF NOT EXISTS clients (\n  id              TEXT PRIMARY KEY,\n  name            TEXT NOT NULL,\n  place_id        TEXT,            \n  package         TEXT NOT NULL,   \n  build_fee_pence INTEGER NOT NULL,\n  monthly_pence   INTEGER NOT NULL,\n  free_days       INTEGER NOT NULL,\n  paid_on         TEXT NOT NULL,   \n  cancelled_on    TEXT,            \n  notes           TEXT NOT NULL DEFAULT '',\n  created_at      TEXT NOT NULL\n)",
   "CREATE TABLE IF NOT EXISTS money (\n  id           TEXT PRIMARY KEY,\n  kind         TEXT NOT NULL,   \n  category     TEXT NOT NULL,\n  label        TEXT NOT NULL,\n  amount_pence INTEGER NOT NULL,\n  on_date      TEXT NOT NULL,   \n  monthly      INTEGER NOT NULL DEFAULT 0,\n  ended_on     TEXT,            \n  created_at   TEXT NOT NULL\n)",
-  "CREATE TABLE IF NOT EXISTS settings (\n  key   TEXT PRIMARY KEY,\n  value TEXT NOT NULL\n)"
+  "CREATE TABLE IF NOT EXISTS settings (\n  key   TEXT PRIMARY KEY,\n  value TEXT NOT NULL\n)",
+  "CREATE TABLE IF NOT EXISTS payments (\n  id              TEXT PRIMARY KEY,  \n  stripe_customer TEXT,\n  name            TEXT NOT NULL,\n  category        TEXT NOT NULL,     \n  amount_pence    INTEGER NOT NULL,\n  fee_pence       INTEGER NOT NULL DEFAULT 0,\n  paid_on         TEXT NOT NULL,     \n  created_at      TEXT NOT NULL\n)",
+  "CREATE TABLE IF NOT EXISTS client_links (\n  client_id           TEXT PRIMARY KEY,\n  stripe_customer     TEXT NOT NULL,\n  stripe_subscription TEXT,\n  email               TEXT,\n  failed_on           TEXT  \n)"
 ];

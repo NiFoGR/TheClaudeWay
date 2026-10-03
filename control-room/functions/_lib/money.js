@@ -69,16 +69,25 @@ export function clientStatus(c, today) {
   return { key: firstCharge <= today ? "paying" : "free", firstCharge };
 }
 
-/** Every payment in and out, from the first record up to `until`. */
-export function ledger({ clients = [], entries = [], until }) {
+/** Every payment in and out, from the first record up to `until`.
+ * Clients who pay through Stripe (stripe_customer set) count what Stripe actually received (`payments`) up to
+ * today; their schedule is only used for the forecast. Clients added by hand follow their schedule throughout. */
+export function ledger({ clients = [], entries = [], payments = [], until, today = "9999-12-31" }) {
   const items = [];
+  const names = Object.fromEntries(clients.filter((c) => c.stripe_customer).map((c) => [c.stripe_customer, c.name]));
   for (const c of clients) {
-    items.push({ date: c.paid_on, kind: "in", category: "Website builds", label: c.name, pence: c.build_fee_pence });
+    const viaStripe = !!c.stripe_customer;
+    if (!viaStripe) items.push({ date: c.paid_on, kind: "in", category: "Website builds", label: c.name, pence: c.build_fee_pence });
     if (c.monthly_pence > 0) {
       for (const date of monthly(addDays(c.paid_on, c.free_days), until, c.cancelled_on)) {
-        items.push({ date, kind: "in", category: "Monthly retainers", label: c.name, pence: c.monthly_pence });
+        if (!viaStripe || date > today) items.push({ date, kind: "in", category: "Monthly retainers", label: c.name, pence: c.monthly_pence });
       }
     }
+  }
+  for (const p of payments) {
+    const label = names[p.stripe_customer] || p.name;
+    items.push({ date: p.paid_on, kind: "in", category: p.category, label, pence: p.amount_pence });
+    if (p.fee_pence) items.push({ date: p.paid_on, kind: "out", category: "Stripe fees", label, pence: p.fee_pence });
   }
   for (const e of entries) {
     const dates = e.monthly ? monthly(e.on_date, until, e.ended_on) : e.on_date <= until ? [e.on_date] : [];
@@ -115,10 +124,10 @@ function addTo(bucket, item) {
 }
 
 /** Everything the Money page shows. */
-export function summarise({ clients = [], entries = [], usage = [], pipeline = {}, goal = DEFAULT_GOAL, today }) {
+export function summarise({ clients = [], entries = [], payments = [], usage = [], pipeline = {}, goal = DEFAULT_GOAL, today }) {
   const thisMonth = monthOf(today);
   const horizon = addDays(`${monthKeyPlus(thisMonth, FUTURE_MONTHS + 1)}-01`, -1);
-  const items = ledger({ clients, entries, until: horizon });
+  const items = ledger({ clients, entries, payments, until: horizon, today });
   const google = googleCosts(usage);
   const recentGoogle = [0, 1, 2].map((i) => google[monthKeyPlus(thisMonth, -i)]?.pence || 0);
   const googleForecast = Math.round(recentGoogle.reduce((a, b) => a + b, 0) / 3);
@@ -185,22 +194,28 @@ export function summarise({ clients = [], entries = [], usage = [], pipeline = {
 // ---------------------------------------------------------------- loading from D1
 
 export async function loadMoney(DB, today = new Date().toISOString().slice(0, 10)) {
-  const [clients, entries, usage, pipe, goal] = await DB.batch([
-    DB.prepare("SELECT * FROM clients ORDER BY paid_on DESC, created_at DESC"),
+  const [clients, entries, usage, pipe, goal, payments] = await DB.batch([
+    DB.prepare(`SELECT clients.*, l.stripe_customer, l.failed_on FROM clients LEFT JOIN client_links l ON l.client_id = clients.id
+                ORDER BY clients.paid_on DESC, clients.created_at DESC`),
     DB.prepare("SELECT * FROM money ORDER BY on_date DESC, created_at DESC"),
     DB.prepare("SELECT substr(created_at, 1, 7) AS month, sku, SUM(calls) AS calls FROM api_usage GROUP BY month, sku"),
     DB.prepare("SELECT SUM(status = 'call booked') AS callsBooked, SUM(status = 'replied') AS replied FROM leads WHERE excluded = 0"),
     DB.prepare("SELECT value FROM settings WHERE key = 'mrr_goal_pence'"),
+    // name from the client where we know it (an invoice can arrive before the checkout that creates the client)
+    DB.prepare(`SELECT payments.*, COALESCE(c.name, payments.name) AS name FROM payments
+                LEFT JOIN client_links l ON l.stripe_customer = payments.stripe_customer LEFT JOIN clients c ON c.id = l.client_id
+                ORDER BY payments.paid_on DESC`),
   ]);
   const summary = summarise({
     clients: clients.results,
     entries: entries.results,
+    payments: payments.results,
     usage: usage.results,
     pipeline: pipe.results[0] || {},
     goal: Number(goal.results[0]?.value) || DEFAULT_GOAL,
     today,
   });
-  return { summary, entries: entries.results };
+  return { summary, entries: entries.results, payments: payments.results.slice(0, 50) };
 }
 
 /** "£1,950.00" → 195000. Accepts numbers or strings with £ and commas. Returns NaN if not a sensible amount. */

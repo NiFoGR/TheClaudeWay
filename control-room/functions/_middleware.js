@@ -1,6 +1,7 @@
 // Password gate for the whole Control Room. One password (CONTROL_ROOM_PASSWORD), a signed cookie for 30 days.
 const COOKIE = "cr_session";
-const PUBLIC_PATHS = new Set(["/login", "/login.html", "/style.css", "/favicon.svg", "/robots.txt"]);
+// /api/stripe/webhook is called by Stripe, not you: it checks Stripe's signature instead of the login cookie.
+const PUBLIC_PATHS = new Set(["/login", "/login.html", "/style.css", "/favicon.svg", "/robots.txt", "/api/stripe/webhook"]);
 
 async function sessionToken(password) {
   const enc = new TextEncoder();

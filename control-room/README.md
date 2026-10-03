@@ -56,6 +56,14 @@ repository access *Only select repositories → TheClaudeWay*, permission **Acti
 | `D1_DATABASE_ID` | The Database ID from step 1.2 |
 | `CLOUDFLARE_API_TOKEN` | Cloudflare → My Profile → API Tokens → Create token → *Custom*: permission **Account → D1 → Edit** |
 
+### 4. Stripe (card payments, optional but recommended)
+Stripe → Developers → API keys → copy the **Secret key** (`sk_test_…` to try it, `sk_live_…` for real money).
+Cloudflare → Settings → Variables and Secrets → add `STRIPE_SECRET_KEY` (type Secret) → retry the deployment.
+On **Setup**, press **Set up Stripe**: it creates the three packages, a payment link for each (with the 60/90 free days
+built in) and a webhook. Paid links then add the client, their payments and Stripe's fees to the Money page by
+themselves; failed payments and cancellations show there too. In Stripe → Settings → Billing → Subscriptions and
+emails, turn on trial-ending reminders and Smart Retries.
+
 Then open the Control Room's **Setup** page: every line should be green. Log in, type *roofer* / *Leeds* / *60*,
 and press **Find leads**. If a run fails, the reason shows on the run (e.g. "Google key missing") with what to fix.
 

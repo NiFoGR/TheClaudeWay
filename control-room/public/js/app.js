@@ -1,9 +1,9 @@
 // GoldBar Control Room: navigation and routing. Each page lives in its own file next to this one.
 import { homePage } from "./home.js";
 import { closeDrawer, leadsPage } from "./leads.js";
-import { api, esc, icon, pageHead, state, view } from "./lib.js";
+import { api, esc, icon, pageHead, state, toast, view } from "./lib.js";
 import { mapRankRoute } from "./maprank.js";
-import { moneyPage } from "./money.js";
+import { bindCopy, moneyPage, paymentLinks } from "./money.js";
 import { scraperRoute } from "./scraper.js";
 
 const NAV = [
@@ -31,7 +31,49 @@ async function setupPage() {
       <div class="check"><span class="dot ${c.ok ? "ok" : "no"}">${c.ok ? "✓" : "✕"}</span>
         <div><b>${esc(c.name)}</b><div class="muted small">${esc(c.ok ? c.detail : c.fix)}</div></div></div>`).join("")}
     </div>
-    <p class="hint">${esc(note)} Full step-by-step guide: <code>control-room/README.md</code> in the repo.</p>`;
+    <p class="hint">${esc(note)} Full step-by-step guide: <code>control-room/README.md</code> in the repo.</p>
+    <div id="stripe-card"></div>`;
+  await stripeCard();
+}
+
+async function stripeCard() {
+  const el = view.querySelector("#stripe-card");
+  const s = await api("/api/stripe/setup");
+  const mode = s.mode === "live" ? `<span class="badge good">Live: real payments</span>` : `<span class="badge warn">Test mode: no real money</span>`;
+  if (s.ready) {
+    el.innerHTML = `<div class="card" style="margin-top:16px"><div class="card-head"><h2>Stripe payment links</h2>${mode}</div>
+      <p class="muted" style="margin-top:0">Send one after the call. When they pay, they appear on the Money page as a client by themselves.</p>
+      ${paymentLinks(s.links)}
+      ${s.mode === "test" ? `<p class="hint">Try one now with card <code>4242 4242 4242 4242</code>, any future date, any CVC. Happy? Replace <code>STRIPE_SECRET_KEY</code> in Cloudflare with your live key (<code>sk_live_…</code>), retry the deployment, and press Set up Stripe again for real links.</p>` : ""}
+      <p class="hint">In Stripe → Settings → Billing → Subscriptions and emails: turn on <b>Send reminders before trials end</b> and <b>Smart Retries</b>. That's the day-61 reminder and failed-payment chasing, done by Stripe.</p></div>`;
+    bindCopy(el);
+    return;
+  }
+  el.innerHTML = `<div class="card" style="margin-top:16px"><div class="card-head"><h2>Connect Stripe</h2>${s.hasKey ? mode : ""}</div>
+    <ol class="steps">
+      <li><b>Stripe</b> → Developers → API keys → copy the <b>Secret key</b> (starts <code>sk_test_</code> to try it first, <code>sk_live_</code> for real money).</li>
+      <li><b>Cloudflare</b> → your Pages project → Settings → Variables and Secrets → Add: name <code>STRIPE_SECRET_KEY</code>, type <b>Secret</b>, paste the key.</li>
+      <li>Deployments → <b>Retry deployment</b> so the key takes effect, then come back here.</li>
+      <li>Press <b>Set up Stripe</b>: it creates your three packages, a payment link for each, and connects payments to the Money page.</li>
+    </ol>
+    <p style="margin-bottom:0"><button class="btn" id="stripe-go" ${s.hasKey ? "" : "disabled"}>Set up Stripe</button>
+      ${s.hasKey ? "" : `<span class="hint" style="margin-left:8px">Waiting for the key (steps 1–3).</span>`}</p>
+    <p class="error" id="stripe-error" hidden></p></div>`;
+  const go = el.querySelector("#stripe-go");
+  go.onclick = async () => {
+    go.disabled = true;
+    go.textContent = "Setting up…";
+    try {
+      await api("/api/stripe/setup", { method: "POST" });
+      toast("Stripe is set up.");
+      await setupPage();
+    } catch (e) {
+      el.querySelector("#stripe-error").textContent = e.message;
+      el.querySelector("#stripe-error").hidden = false;
+      go.disabled = false;
+      go.textContent = "Set up Stripe";
+    }
+  };
 }
 
 function currentPage() {

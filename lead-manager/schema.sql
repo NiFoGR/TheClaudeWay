@@ -147,3 +147,22 @@ CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+-- Stripe. Every payment Stripe reports (build fees and retainers actually received), with Stripe's fee.
+CREATE TABLE IF NOT EXISTS payments (
+  id              TEXT PRIMARY KEY,  -- Stripe invoice/session id (+ ":build" / ":monthly" per part)
+  stripe_customer TEXT,
+  name            TEXT NOT NULL,
+  category        TEXT NOT NULL,     -- Website builds | Monthly retainers
+  amount_pence    INTEGER NOT NULL,
+  fee_pence       INTEGER NOT NULL DEFAULT 0,
+  paid_on         TEXT NOT NULL,     -- YYYY-MM-DD
+  created_at      TEXT NOT NULL
+);
+-- Which clients pay through Stripe (their income then comes from payments, not the schedule).
+CREATE TABLE IF NOT EXISTS client_links (
+  client_id           TEXT PRIMARY KEY,
+  stripe_customer     TEXT NOT NULL,
+  stripe_subscription TEXT,
+  email               TEXT,
+  failed_on           TEXT  -- YYYY-MM-DD of the last failed monthly payment; cleared when one succeeds
+);
