@@ -1,12 +1,12 @@
 // GET /api/setup → which parts of the Control Room are connected, in plain English. Never returns secret values.
-import { getSetting, stripeMode } from "../_lib/stripe.js";
+import { getSetting, isCurrent, stripeMode } from "../_lib/stripe.js";
 import { json } from "../_lib/util.js";
 
 async function checkStripe(env) {
   if (!env.STRIPE_SECRET_KEY) return { ok: false, fix: "Not connected yet: follow “Connect Stripe” below." };
   try {
     const saved = env.DB ? await getSetting(env.DB, "stripe") : null;
-    if (saved?.mode === stripeMode(env) && saved.webhook) return { ok: true };
+    if (await isCurrent(env, saved)) return { ok: true };
     return { ok: false, fix: "Key added. Press “Set up Stripe” below to create your payment links." };
   } catch {
     return { ok: false, fix: "Key added, but the database isn't answering yet." };

@@ -6,6 +6,17 @@ import { PACKAGES } from "./money.js";
 export const STRIPE_VERSION = "2024-06-20";
 export const WEBHOOK_EVENTS = ["checkout.session.completed", "invoice.paid", "invoice.payment_failed", "customer.subscription.deleted"];
 
+/** Short fingerprint of the key, so switching to a different Stripe account (or key) is noticed and set up fresh. */
+export async function keyId(env) {
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(env.STRIPE_SECRET_KEY || "")));
+  return [...new Uint8Array(hash)].slice(0, 8).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Is what's saved in settings made with the key Cloudflare has now? */
+export async function isCurrent(env, saved) {
+  return !!(env.STRIPE_SECRET_KEY && saved?.links && saved.webhook && saved.mode === stripeMode(env) && saved.key === (await keyId(env)));
+}
+
 export const stripeMode = (env) => (String(env.STRIPE_SECRET_KEY || "").startsWith("sk_live") || String(env.STRIPE_SECRET_KEY || "").startsWith("rk_live") ? "live" : "test");
 
 /** Stripe's form encoding: {a: {b: 1}, c: [x]} → a[b]=1&c[0]=x */
@@ -72,7 +83,8 @@ const THANKS = "Payment received, thank you! We'll be in touch today to get your
 export async function setUpStripe(env, DB, origin) {
   const mode = stripeMode(env);
   const existing = await getSetting(DB, "stripe");
-  if (existing?.mode === mode && existing.links && existing.webhook) return existing;
+  const key = await keyId(env);
+  if (await isCurrent(env, existing)) return existing;
 
   const build = await stripe(env, "POST", "products", { name: "Website build", description: "Your new website, live in 7 days, guaranteed." });
   const monthly = await stripe(env, "POST", "products", { name: "Monthly growth plan", description: "Hosting, updates, Google Business Profile and getting you onto the front page of Google." });
@@ -98,14 +110,14 @@ export async function setUpStripe(env, DB, origin) {
     links[key] = { id: link.id, url: link.url };
   }
 
-  if (existing?.webhook?.id && existing.mode === mode) {
+  if (existing?.webhook?.id && existing.mode === mode && existing.key === key) { // same account: replace its old webhook
     await stripe(env, "DELETE", `webhook_endpoints/${existing.webhook.id}`).catch(() => {});
   }
   const hook = await stripe(env, "POST", "webhook_endpoints", {
     url: `${origin}/api/stripe/webhook`, enabled_events: WEBHOOK_EVENTS, api_version: STRIPE_VERSION,
     description: "Aetos Control Room: payments onto the Money page",
   });
-  const saved = { mode, links, webhook: { id: hook.id, secret: hook.secret, url: hook.url } };
+  const saved = { mode, key, links, webhook: { id: hook.id, secret: hook.secret, url: hook.url } };
   await putSetting(DB, "stripe", saved);
   return saved;
 }

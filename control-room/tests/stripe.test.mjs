@@ -5,7 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { SCHEMA } from "../functions/_lib/schema.js";
 import { summarise } from "../functions/_lib/money.js";
-import { encode, verifySignature } from "../functions/_lib/stripe.js";
+import { encode, isCurrent, keyId, verifySignature } from "../functions/_lib/stripe.js";
 import { handleEvent } from "../functions/_lib/stripe-events.js";
 
 function fakeD1() {
@@ -96,4 +96,13 @@ test("Website Only pays once with no invoice: recorded from the checkout", async
 test("payments from other Stripe products are ignored", async () => {
   const DB = fakeD1();
   assert.match(await handleEvent(DB, env, { type: "checkout.session.completed", data: { object: { id: "cs_3", customer: "c", metadata: {} } } }), /ignored/);
+});
+
+test("a key from a different Stripe account means setting up again", async () => {
+  const oldEnv = { STRIPE_SECRET_KEY: "rk_test_kofi" };
+  const saved = { mode: "test", key: await keyId(oldEnv), links: { full: {} }, webhook: { id: "we_1" } };
+  assert.equal(await isCurrent(oldEnv, saved), true);
+  assert.equal(await isCurrent({ STRIPE_SECRET_KEY: "rk_test_aetos" }, saved), false);
+  assert.equal(await isCurrent({ STRIPE_SECRET_KEY: "rk_live_kofi" }, saved), false);
+  assert.equal(await isCurrent({}, saved), false);
 });

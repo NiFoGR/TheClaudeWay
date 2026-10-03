@@ -1,17 +1,18 @@
 // GET  /api/stripe/setup → is Stripe connected, and the payment links to send clients.
 // POST /api/stripe/setup → one press: create the products, payment links and webhook in Stripe.
-import { getSetting, setUpStripe, stripeMode } from "../../_lib/stripe.js";
+import { getSetting, isCurrent, setUpStripe, stripeMode } from "../../_lib/stripe.js";
 import { bad, db, json } from "../../_lib/util.js";
 
 export async function onRequestGet({ env }) {
   const DB = await db(env);
   const saved = await getSetting(DB, "stripe");
   const mode = stripeMode(env);
+  const ready = await isCurrent(env, saved);
   return json({
     hasKey: !!env.STRIPE_SECRET_KEY,
     mode,
-    ready: !!(env.STRIPE_SECRET_KEY && saved?.mode === mode && saved.links && saved.webhook),
-    links: saved?.mode === mode ? saved.links : null,
+    ready,
+    links: ready ? saved.links : null,
   });
 }
 
