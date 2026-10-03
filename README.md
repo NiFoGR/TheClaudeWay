@@ -9,4 +9,4 @@ Automation for GoldBar Websites: find local UK businesses with weak websites, sh
 | Demo sites and order page | Next |
 | Outreach and auto-replies | Later |
 
-Setup steps: [control-room/README.md](control-room/README.md).
+Setup steps: [control-room/README.md](control-room/README.md). Business playbooks: [docs/](docs/).
