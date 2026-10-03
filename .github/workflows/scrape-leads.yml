@@ -59,8 +59,8 @@ jobs:
         if: success() && steps.scrape.outputs.for_claude != '0' && steps.scrape.outputs.for_claude != ''
         continue-on-error: true
         env:
-          ROUTINE_URL: ${{ secrets.CLAUDE_ROUTINE_URL }}
-          ROUTINE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_TOKEN }}
+          ROUTINE_URL: ${{ secrets.CLAUDE_ROUTINE_URL || vars.CLAUDE_ROUTINE_URL }}
+          ROUTINE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_TOKEN || vars.CLAUDE_ROUTINE_TOKEN }}
           JOB_ID: ${{ inputs.job_id }}
           N: ${{ steps.scrape.outputs.for_claude }}
         run: |
