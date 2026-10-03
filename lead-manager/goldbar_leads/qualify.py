@@ -31,6 +31,8 @@ WEIGHTS = [
     ("No proper website", 95),
     ("Website is down", 90),
     ("Website is broken", 90),
+    ("security warning", 60),
+    ("Couldn't check", 0),
     ("Not mobile-friendly", 25),
     ('"Not secure"', 15),
     ("Looks outdated", 20),
@@ -46,14 +48,42 @@ WEIGHTS = [
 ]
 
 
+def _phone_key(phone: str) -> str:
+    digits = re.sub(r"\D", "", phone)
+    return digits[-10:] if len(digits) >= 10 else ""
+
+
+def _duplicates(leads: list[Lead]) -> dict[str, str]:
+    """Same phone number = same business listed twice. Keep the listing with a real website (else the most
+    reviewed); return {place_id: name of the listing we kept} for the others."""
+    groups: dict[str, list[Lead]] = {}
+    for lead in leads:
+        if key := _phone_key(lead.phone):
+            groups.setdefault(key, []).append(lead)
+    dupes: dict[str, str] = {}
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        keep = max(group, key=lambda l: (bool(l.website and is_real_website(l.website)), l.review_count))
+        for lead in group:
+            if lead is not keep:
+                dupes[lead.place_id] = keep.name
+    return dupes
+
+
 def mark_exclusions(leads: list[Lead]) -> None:
     """Set excluded/exclude_reason in place. Excluded leads are kept (for transparency) but never pitched."""
+    dupes = _duplicates(leads)
     # the same website across several listings = a chain or multi-branch business
-    site_counts = Counter(host_of(l.website) for l in leads if l.website and is_real_website(l.website))
+    site_counts = Counter(
+        host_of(l.website) for l in leads if l.place_id not in dupes and l.website and is_real_website(l.website)
+    )
     for lead in leads:
         reason = ""
         if lead.business_status and lead.business_status != "OPERATIONAL":
             reason = "Closed"
+        elif lead.place_id in dupes:
+            reason = f"Duplicate listing of {dupes[lead.place_id]}"
         elif CHAINS.search(lead.name):
             reason = "Chain / national brand"
         elif lead.website and is_real_website(lead.website) and site_counts[host_of(lead.website)] > 1:

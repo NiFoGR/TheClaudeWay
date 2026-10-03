@@ -23,7 +23,7 @@ def place(i: int, **over) -> dict:
             {"longText": "Leeds", "types": ["postal_town"]},
             {"longText": "LS1 1AA", "types": ["postal_code"]},
         ],
-        "nationalPhoneNumber": "0113 496 0000",
+        "nationalPhoneNumber": f"0113 496 {i:04d}",
         "rating": 4.8,
         "userRatingCount": 40,
         "businessStatus": "OPERATIONAL",
@@ -307,3 +307,59 @@ def test_cli_reports_clear_failures_to_the_control_room(monkeypatch, tmp_path):
     assert main(["--trade", "roofer", "--town", "Leeds", "--job-id", "j1", "--out", str(tmp_path)]) == 2
     last = json.loads(d1.calls[-1].request.content)
     assert "Google refused the search" in last["params"][3]
+
+
+# ---------------------------------------------------------------- fixes from the first real run (Warrington roofers)
+
+
+@respx.mock
+def test_firewall_block_is_not_reported_as_broken():
+    respx.get("https://guarded.co.uk/").mock(return_value=httpx.Response(403))
+    l = run_audit(lead(website="https://guarded.co.uk/"))
+    assert l.issues == [audit.NOT_CHECKED] and l.audit["status"] == "blocked"
+    assert qualify.quality_score(l.issues) == 0
+
+
+@respx.mock
+def test_slow_site_gets_a_retry_before_being_called_down():
+    respx.get("https://sleepy.co.uk/").mock(side_effect=[httpx.ReadTimeout("slow"), httpx.Response(200, text=GOOD)])
+    l = run_audit(lead(website="https://sleepy.co.uk/"))
+    assert l.audit["status"] == "ok"
+
+
+@respx.mock
+def test_broken_certificate_is_its_own_issue():
+    respx.get("https://badcert.co.uk/").mock(side_effect=httpx.ConnectError("[SSL: CERTIFICATE_VERIFY_FAILED] expired"))
+    l = run_audit(lead(website="https://badcert.co.uk/"))
+    assert "security warning" in l.issues[0] and qualify.quality_score(l.issues) == 60
+
+
+def test_template_placeholder_emails_are_ignored():
+    html = "example@mysite.com info@yoursite.com test@roofing.co.uk john@realroofing.co.uk"
+    assert audit.extract_emails(html, "realroofing.co.uk") == ["john@realroofing.co.uk"]
+
+
+def test_copyright_2023_is_not_outdated_in_2026():
+    issues, _ = audit.analyse_html(OLD.replace("2016", "2023"), "https://x.co.uk/", "Leeds", 1, today=date(2026, 10, 3))
+    assert not any("outdated" in i for i in issues)
+    issues, _ = audit.analyse_html(OLD.replace("2016", "2022"), "https://x.co.uk/", "Leeds", 1, today=date(2026, 10, 3))
+    assert any("outdated" in i for i in issues)
+
+
+def test_same_phone_twice_is_one_business_and_keeps_the_listing_with_a_website():
+    leads = [
+        lead(place_id="a", name="Magic Roofing Warrington Ltd", phone="07907 928806"),
+        lead(place_id="b", name="Magic Roofing", phone="+44 7907 928806", website="https://magicroofing.co.uk"),
+        lead(place_id="c", name="Other Roofing", phone="07000 000000"),
+    ]
+    qualify.mark_exclusions(leads)
+    assert [l.exclude_reason for l in leads] == ["Duplicate listing of Magic Roofing", "", ""]
+
+
+def test_duplicate_listings_sharing_a_website_are_not_called_a_chain():
+    leads = [
+        lead(place_id="a", name="Magic Roofing", phone="07907 928806", website="https://magicroofing.co.uk"),
+        lead(place_id="b", name="Magic Roofing Ltd", phone="07907928806", website="https://www.magicroofing.co.uk/"),
+    ]
+    qualify.mark_exclusions(leads)
+    assert sorted(l.exclude_reason for l in leads) == ["", "Duplicate listing of Magic Roofing"]

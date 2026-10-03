@@ -13,9 +13,17 @@ from bs4 import BeautifulSoup
 
 from goldbar_leads.models import Lead
 
-USER_AGENT = "Mozilla/5.0 (compatible; GoldBarAudit/1.0)"
+# look like a normal browser: many small-business sites block anything that announces itself as a bot
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-GB,en;q=0.9",
+}
+# these mean "a firewall stopped our checker", not "the site is broken": never pitch on them
+BLOCKED_STATUSES = {401, 403, 406, 429, 503}
+NOT_CHECKED = "Couldn't check the website automatically (it blocks checkers). Look at it yourself"
 SLOW_SECONDS = 3.0
-OUTDATED_YEARS = 3  # copyright older than this many years = looks abandoned
+OUTDATED_YEARS = 4  # copyright this many years old or more = looks abandoned (2023 in 2026 isn't enough)
 
 SOCIAL_HOSTS = {
     "facebook.com": "facebook",
@@ -44,8 +52,9 @@ CONTACT_HINTS = ("contact", "get-in-touch", "about", "quote")
 
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 JUNK_EMAIL = re.compile(
-    r"(example\.|sentry|wixpress|domain\.com|email\.com|yourdomain|\.(png|jpe?g|gif|svg|webp)$|@2x|"
-    r"godaddy|squarespace|wordpress|noreply|no-reply)",
+    r"(example|sentry|wixpress|domain\.com|email\.com|yourdomain|mysite|yoursite|sitename|website\.com|"
+    r"company\.com|\.(png|jpe?g|gif|svg|webp)$|@2x|godaddy|squarespace|wordpress|noreply|no-reply|"
+    r"^(test|name|email|user|your|yourname|someone)@)",
     re.I,
 )
 COPYRIGHT_RE = re.compile(r"(?:©|&copy;|copyright)\s*(?:\d{4}\s*[-–]\s*)?(\d{4})", re.I)
@@ -156,13 +165,26 @@ async def audit_lead(client: httpx.AsyncClient, lead: Lead) -> None:
         lead.audit = {"status": "profile_only", "url": lead.website}
         return
 
-    start = time.monotonic()
-    try:
-        resp = await client.get(lead.website)
-        elapsed = time.monotonic() - start
-    except httpx.HTTPError as e:
-        lead.issues = ["Website is down or won't load"]
-        lead.audit = {"status": "unreachable", "error": type(e).__name__}
+    resp, elapsed, error = None, 0.0, None
+    for attempt in range(2):  # one retry: small sites are often just slow to wake up
+        start = time.monotonic()
+        try:
+            resp = await client.get(lead.website, timeout=15 if attempt == 0 else 30)
+            elapsed = time.monotonic() - start
+            break
+        except httpx.HTTPError as e:
+            error = e
+    if resp is None:
+        if "CERTIFICATE" in str(error).upper():
+            lead.issues = ["Browsers show a security warning on their website (broken certificate)"]
+            lead.audit = {"status": "bad_certificate"}
+        else:
+            lead.issues = ["Website is down or won't load"]
+            lead.audit = {"status": "unreachable", "error": type(error).__name__}
+        return
+    if resp.status_code in BLOCKED_STATUSES:
+        lead.issues = [NOT_CHECKED]
+        lead.audit = {"status": "blocked", "http_status": resp.status_code}
         return
     if resp.status_code >= 400:
         lead.issues = [f"Website is broken (error {resp.status_code})"]
@@ -191,5 +213,5 @@ async def audit_lead(client: httpx.AsyncClient, lead: Lead) -> None:
 
 def make_client(timeout: float = 15.0) -> httpx.AsyncClient:
     return httpx.AsyncClient(
-        timeout=timeout, follow_redirects=True, headers={"User-Agent": USER_AGENT}, verify=True
+        timeout=timeout, follow_redirects=True, headers=HEADERS, verify=True
     )
