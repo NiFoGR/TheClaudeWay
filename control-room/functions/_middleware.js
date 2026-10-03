@@ -42,6 +42,7 @@ export async function onRequest({ request, env, next }) {
     return redirect("/login", { "set-cookie": `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}` });
   }
   if (PUBLIC_PATHS.has(url.pathname)) return next();
+  if (url.pathname.startsWith("/api/agent/")) return next(); // checked against OUTREACH_AGENT_TOKEN in the function itself
 
   if (!safeEqual(readCookie(request, COOKIE), token)) {
     if (url.pathname.startsWith("/api/")) return new Response(JSON.stringify({ error: "Not logged in" }), { status: 401 });

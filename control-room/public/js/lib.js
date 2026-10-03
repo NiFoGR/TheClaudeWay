@@ -23,7 +23,11 @@ export async function api(path, options = {}) {
   const resp = await fetch(path, { headers: { "content-type": "application/json" }, ...options });
   if (resp.status === 401) location.href = "/login";
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok && !data.job && !data.scan) throw new Error(data.error || `Request failed (${resp.status})`);
+  if (!resp.ok && !data.job && !data.scan) {
+    const err = new Error(data.error || `Request failed (${resp.status})`);
+    err.issues = data.issues || [];
+    throw err;
+  }
   return data;
 }
 

@@ -51,7 +51,7 @@ businesses (dentists, clinics, solicitors) or chains.
 
 ```
 cd lead-manager && pip install -r requirements-dev.txt && python -m pytest -q   # tests (must pass before pushing)
-node --test control-room/tests/money.test.mjs control-room/tests/stripe.test.mjs  # Money maths + Stripe webhooks
+node --test control-room/tests/*.test.mjs                                         # Money, Stripe, Outreach engine
 for f in control-room/public/js/*.js; do node --check "$f"; done                   # JS syntax
 ```
 Local Control Room: `npx wrangler pages dev` in `control-room/` with a `wrangler.toml` binding a local D1 as `DB`
@@ -77,11 +77,18 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
 - No filler, no sugar-coating, plain English, short answers. Push back when something's wrong, once, then go with their call.
 - Don't overcomplicate: prefer free, simple setups (Cloudflare + GitHub free tiers). Budget for leads + mailboxes: £100/month.
 - Built so far: Control Room (Home, Lead Scraper with live progress, Map Rank heatmaps, Leads with a details drawer,
-  Money, Setup); lead score = Website 45 + Local SEO 30 + Google Maps 25 (`lead-manager/aetos_leads/scoring.py`);
-  email finding in `lead-manager/aetos_leads/contacts.py`. Next: Demos, Outreach, Onboarding.
+  Outreach, Money, Setup); lead score = Website 45 + Local SEO 30 + Google Maps 25 (`lead-manager/aetos_leads/scoring.py`);
+  email finding in `lead-manager/aetos_leads/contacts.py`. Next: aetoswebsites.com, Demos, Outreach sending, Onboarding, client second brain.
 - Money page: clients (build fee + retainer after the free days), costs you add, and Google API cost estimated from
   calls logged per run (`aetos_leads/usage.py` → `api_usage` table; prices and free allowances in
   `control-room/functions/_lib/money.js`). Forecasts count only what's committed.
+- Outreach (design + review: `docs/outreach-experiments.md`): one test at a time on the first email (2–3 whole-email
+  versions, Thompson sampling, Beta(1,49) prior, 10-day credit window, decide at 250 counted each or 8 weeks); follow-ups
+  fixed. Engine `functions/_lib/outreach.js` (pure, tested), DB `outreach-db.js`, quality gate on every version rendered on
+  real leads. Only Companies House ltd/llp/plc/Scottish partnerships matched by postcode/town, non-webmail, are emailed
+  (PECR); everyone else is the call list. Claude's part runs on the owner's subscription as a weekly Routine
+  (`docs/outreach-weekly-review.md`) via `/api/agent/*` with `OUTREACH_AGENT_TOKEN`; the owner approves every version.
+  Sending (Gmail API + a cron Worker) is built when the mailboxes exist.
 - Stripe (`functions/_lib/stripe.js`, `stripe-events.js`): Setup's button creates products, payment links and the webhook
   from `STRIPE_SECRET_KEY` (Cloudflare secret); ids + webhook secret live in the `settings` table. Webhook payloads are
   pinned to API version 2024-06-20. Card clients' income = actual `payments`; their schedule is only the forecast.

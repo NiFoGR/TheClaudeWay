@@ -323,7 +323,7 @@ def test_companies_house_match_gets_director_first_name():
     respx.get(f"{companies_house.BASE}/search/companies").mock(
         return_value=httpx.Response(200, json={"items": [
             {"title": "SMITH ROOFING (LEEDS) LIMITED", "company_number": "999", "company_status": "dissolved"},
-            {"title": "SMITH ROOFING LTD", "company_number": "123", "company_status": "active",
+            {"title": "SMITH ROOFING LTD", "company_number": "123", "company_status": "active", "company_type": "ltd",
              "address_snippet": "1 High St, Leeds, LS1 1AA"},
         ]})
     )
@@ -338,6 +338,16 @@ def test_companies_house_match_gets_director_first_name():
     with httpx.Client() as c:
         companies_house.find_director(c, "KEY", l)
     assert (l.company_number, l.director_first_name, l.director_name) == ("123", "Peter", "Peter Smith")
+    # outreach eligibility needs the company type and a match backed by the address
+    assert l.audit["company"]["type"] == "ltd" and l.audit["company"]["match_basis"] == "postcode"
+
+
+def test_company_match_basis_ranks_postcode_over_town_over_name():
+    l = lead(postcode="LS1 1AA")
+    l.town = "Leeds"
+    assert companies_house.match_basis(l, "1 High St, Leeds, LS1 1AA") == "postcode"
+    assert companies_house.match_basis(l, "2 Mill Rd, Leeds, LS9 9ZZ") == "town"
+    assert companies_house.match_basis(l, "3 Park Ln, York, YO1 1AA") == "name"
 
 
 @respx.mock
@@ -368,7 +378,7 @@ def test_sqlite_upsert_keeps_outreach_state(tmp_path):
 
 def test_d1_schema_statements_are_clean():
     stmts = store.schema_statements()
-    assert len(stmts) == 17 and all("--" not in s for s in stmts)
+    assert len(stmts) == 23 and all("--" not in s for s in stmts)
 
 
 @respx.mock

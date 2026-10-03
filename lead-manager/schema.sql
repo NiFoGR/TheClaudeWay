@@ -166,3 +166,64 @@ CREATE TABLE IF NOT EXISTS client_links (
   email               TEXT,
   failed_on           TEXT  -- YYYY-MM-DD of the last failed monthly payment; cleared when one succeeds
 );
+-- Outreach (docs/outreach-experiments.md). A "test" compares 2–3 versions of the first email; follow-ups are fixed.
+CREATE TABLE IF NOT EXISTS outreach_tests (
+  id          TEXT PRIMARY KEY,
+  started_at  TEXT NOT NULL,
+  ended_at    TEXT,
+  kept_id     TEXT,              -- the version kept when the test ended
+  summary     TEXT NOT NULL DEFAULT '',  -- what was learned, for the past-tests log
+  results     TEXT               -- JSON snapshot of each version's numbers at the end
+);
+CREATE TABLE IF NOT EXISTS outreach_versions (
+  id             TEXT PRIMARY KEY,
+  step           INTEGER NOT NULL,          -- 1 = first email (tested), 2–4 = follow-ups (fixed)
+  test_id        TEXT,                      -- step 1 only
+  name           TEXT NOT NULL,
+  hypothesis     TEXT NOT NULL DEFAULT '',
+  subject        TEXT NOT NULL DEFAULT '',  -- follow-ups reply in the same thread
+  body           TEXT NOT NULL,
+  status         TEXT NOT NULL DEFAULT 'proposed', -- proposed → live → kept / retired / paused; or rejected
+  author         TEXT NOT NULL,             -- owner | claude | seed
+  parent_id      TEXT,
+  prior_a        REAL NOT NULL DEFAULT 1,
+  prior_b        REAL NOT NULL DEFAULT 49,
+  status_reason  TEXT,
+  created_at     TEXT NOT NULL,
+  approved_at    TEXT,
+  decided_at     TEXT
+);
+CREATE TABLE IF NOT EXISTS outreach_sends (
+  id            TEXT PRIMARY KEY,
+  place_id      TEXT NOT NULL,
+  email         TEXT NOT NULL,
+  mailbox       TEXT,
+  step          INTEGER NOT NULL,
+  version_id    TEXT NOT NULL,
+  test_id       TEXT,
+  subject       TEXT,
+  body          TEXT,
+  features      TEXT,             -- JSON snapshot of the lead at send time (top finding, maps band, trade, email source…)
+  gmail_msg_id  TEXT,
+  thread_id     TEXT,
+  status        TEXT NOT NULL DEFAULT 'queued',  -- queued → sent / bounced / cancelled
+  due_at        TEXT,
+  sent_at       TEXT
+);
+CREATE INDEX IF NOT EXISTS outreach_sends_lead ON outreach_sends (place_id);
+CREATE TABLE IF NOT EXISTS outreach_replies (
+  id             TEXT PRIMARY KEY,
+  place_id       TEXT NOT NULL,
+  send_id        TEXT,
+  received_at    TEXT NOT NULL,
+  snippet        TEXT,
+  auto_class     TEXT,   -- bounce | auto_reply | opt_out | complaint
+  owner_class    TEXT,   -- interested | question | not_now | no | referral
+  classified_by  TEXT    -- auto | owner
+);
+CREATE TABLE IF NOT EXISTS suppression (
+  value       TEXT PRIMARY KEY,  -- an email, a domain, or a company number
+  kind        TEXT NOT NULL,     -- email | domain | company
+  reason      TEXT NOT NULL,
+  created_at  TEXT NOT NULL
+);

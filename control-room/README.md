@@ -64,6 +64,10 @@ built in) and a webhook. Paid links then add the client, their payments and Stri
 themselves; failed payments and cancellations show there too. In Stripe → Settings → Billing → Subscriptions and
 emails, turn on trial-ending reminders and Smart Retries.
 
+### 5. Outreach's weekly Claude review (when sending starts)
+Cloudflare → Settings → Variables and Secrets → add `OUTREACH_AGENT_TOKEN` (type Secret, any random 32+ characters). The
+weekly Claude Routine uses the same value to read the report and propose versions; see `docs/outreach-weekly-review.md`.
+
 Then open the Control Room's **Setup** page: every line should be green. Log in, type *roofer* / *Leeds* / *60*,
 and press **Find leads**. If a run fails, the reason shows on the run (e.g. "Google key missing") with what to fix.
 

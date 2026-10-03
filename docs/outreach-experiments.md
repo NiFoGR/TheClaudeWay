@@ -1,137 +1,160 @@
-# Outreach that improves itself: design
+# Outreach that improves itself: design (v2, after review)
 
-How Aetos outreach finds the most effective emails on its own, safely, at about 30 emails a day.
+How Aetos outreach finds the most effective first email on its own, safely, at about 30 emails a day.
+v1 was reviewed independently. The main corrections: the volume maths, testing one whole email at a time, timeboxed
+decisions, a real scheduler, and the law section.
 
-## 1. What "most effective" means
+## 1. The honest volume
 
-We optimise for **positive replies** (interested, asks a question, asks for the demo or a call). That's what leads to calls,
-and calls lead to sales.
+- 3 mailboxes × at most 10 a day = **30 emails a day**, including follow-ups.
+- Each lead gets up to 4 emails, about 3.3 on average, so that's **about 9 new leads a day, about 200 a month**.
+- At a realistic 1–2% positive reply rate: **2–4 positive replies a month** from copy alone.
 
-| Measure | Used for | Why |
-| --- | --- | --- |
-| **Positive reply rate** (per email delivered) | Picking winners | The closest signal to money that's frequent enough to learn from |
-| Calls booked, clients won | Reported, and used as a tie-break | Too rare at our volume to decide on alone |
-| Negative replies, unsubscribes, bounces | Safety limits (guardrails) | A variant that annoys people or bounces gets paused, whatever its reply rate |
-| ~~Opens~~ | Not used | Apple Mail fakes opens, and tracking pixels push emails towards spam. We don't track opens. |
+Copy tests are therefore slow. The biggest wins come from **better leads** (§8) and **speed of reply** (§7).
 
-## 2. The honest maths at 30 emails a day
+## 2. What we measure
 
-About 650 first emails a month. Cold email to trades typically gets a 1–5% positive reply rate, so roughly **7–30 positive
-replies a month**. That shapes everything:
+| Measure | Used for |
+| --- | --- |
+| **Positive replies** (Interested, or a genuine Question) **per delivered first email**, counting any positive reply from that lead within **10 days** | Deciding tests |
+| Calls booked, clients won, revenue per version | Reported (too rare to decide on) |
+| Negative replies, unsubscribes, spam complaints | Guardrails |
+| ~~Opens~~ | Never tracked: no pixels, no link tracking |
 
-- **Only test big differences.** Different angles (problem-led vs Google-Maps-rank-led vs demo-led), not swapping one word.
-  A 2% vs 2.5% difference would take thousands of emails to detect; 2% vs 5% shows up within a few hundred.
-- **At most 3 live versions per slot**, so each gets enough traffic.
-- **Don't wait for "statistical significance".** We use **Thompson sampling**: every email picks a version in proportion
-  to how likely it is to be the best, given the results so far. Winners automatically get more traffic, losers fade out,
-  and new ideas still get tried. It's the standard method when every email counts.
-- **Replies arrive late.** An email only counts towards the rates once it's **5 days old** (or has been replied to).
-  Otherwise new versions look bad just because their replies haven't arrived yet.
+A first email only counts once it's 10 days old (or the lead has replied), so new versions aren't penalised for replies
+that haven't arrived yet.
 
-## 3. What gets tested: slots
+## 3. What gets tested: one whole first email at a time
 
-An email is built from interchangeable parts. Each part is a **slot**, and each slot has its own experiment:
+- **The unit is a complete first email** (subject + opener + pitch + ask, written together and approved as one).
+  Mixing parts could create combinations nobody approved, and subject lines barely move reply rates.
+- **One test at a time, 2 versions (3 at most).** Every new lead is randomly assigned one.
+- **Follow-ups are fixed** (same for everyone), so they add equal noise to every version and credit stays simple. They
+  only become a test after step 1 has had 2 decided tests.
+- **Sequence: 4 emails.** Day 0, 3, 7 and 14 (a polite close). Follow-ups go in the same Gmail thread.
 
-| Step | Sent on | Slots |
-| --- | --- | --- |
-| 1. First email | day 0 | **subject**, **opener** (first line), **pitch** (the WIIFM and offer), **ask** (call to action) |
-| 2. Follow-up | day 3 | **angle** (e.g. "made you a demo", "where you show up on Google Maps") |
-| 3. Follow-up | day 7 | **angle** (e.g. seasonal demand, the heatmap vs the top competitor) |
-| 4. Follow-up | day 14 | **angle** (e.g. "reminded me of you" or a new idea, never "just following up") |
-| 5. Last email | day 21 | **angle** (a polite close: "should I stop emailing?") |
+## 4. How it decides (numbers from the review's simulation)
 
-Each slot's version is chosen independently, so one email teaches us about its subject, its opener, its pitch and its ask
-at the same time.
+- **Starting assumption (prior):** Beta(1, 49), i.e. "about 2%, worth 50 emails of evidence". Every version starts equal.
+- **Allocation:** Thompson sampling, with an **exploration floor**: any version with under 150 counted emails gets at
+  least 25% of new leads.
+- **When the test ends:** when every version has **250 counted emails, or after 8 weeks**, whichever is first. Keep the
+  version with the highest expected rate. It becomes the **kept** version and carries into the next test.
+- **Early retire:** a version is dropped mid-test only if its chance of being best is under 2% with 250+ counted emails.
+- **Guardrails (pause, owner reviews):** 4+ negatives or unsubscribes **and** over 4% after 60+ emails; or any spam
+  complaint.
+- **Mailbox stop:** hard bounces over 3% of the last 100 sends stops that mailbox. Bounces are a list problem, not a copy
+  problem, so they never count against a version (except content blocks, 5.7.x).
 
-**Who gets credit:**
-- A reply is credited to the **step it replied to**.
-- Step 1's slots are credited for replies to step 1.
-- Each follow-up's angle is credited for replies to that follow-up.
-- A positive reply at any step also counts towards step 1's subject (it got the thread opened). That's tracked as a secondary measure, not used for picking.
+## 5. Templates and the quality gate
 
-Results are **pooled across all trades** to start, because there isn't enough data to split. Per-trade breakdowns show in
-the report, and a trade gets its own experiments once it has 300 or more step-1 emails.
+Versions use placeholders filled only from audit facts: `{greeting}`, `{business}`, `{town}`, `{trade}`, `{problem}`,
+`{top3}`, `{competitor}`, `{competitor_top3}`, `{rating}`, `{reviews}`, `{sender_first}`. If a lead lacks the data a version
+needs, that version is skipped for that lead.
 
-## 4. Templates are formulas filled with each lead's real data
-
-Versions are written with placeholders. The Control Room fills them in from the lead:
-
-`{first_name}` (director, if known), `{business}`, `{town}`, `{trade}`, `{problem}` (the top audit issue, written softly),
-`{maps_line}` (their Map Rank result), `{competitor}` (the top-ranked rival), `{reviews}`, `{rating}`, `{demo_link}`,
-`{report_link}`, `{sender_name}`.
-
-- If a version needs data the lead doesn't have (e.g. `{competitor}` but no heatmap), that version is skipped for that
-  lead and another eligible one is chosen.
-- **Nothing untrue:** every fact comes from the audit, which is already held to "no false alarms".
-
-## 5. Quality gate: every version must pass before it can go live
-
-Run automatically on every version, whoever wrote it (owner, Claude or seed). A failure blocks it, with the reason.
-These come straight from the playbook:
+The gate runs on the template **and on the version rendered for 5 real leads**. It blocks anything that fails:
 
 | Rule | Check |
 | --- | --- |
-| Not waffle | Step 1 total under 120 words; follow-ups under 90; sentences under 25 words |
-| Sounds human | No robot phrases ("I hope this email finds you well", "I am reaching out", "leverage", "synergy"…) |
-| No hype or "steroids" | No hype words ("revolutionary", "skyrocket", "guaranteed results" outside the real guarantees, "!!!") |
-| Never insults their site | No "outdated", "terrible", "bad", "ugly", "sucks", "old-fashioned" aimed at them |
-| Never says "SEO" | Say "front page of Google" |
-| One goal | Exactly one question or ask per email |
-| Plain subject | Under 6 words, no clickbait, no emoji, no ALL CAPS, no "Re:" or "Fwd:" tricks |
-| Honest placeholders | Only known placeholders; no made-up numbers |
-| Unsubscribe line | Added automatically to every email; a version can't remove it |
+| Short | First email ≤ 90 words, follow-ups ≤ 60, sentences ≤ 25 words (footer not counted) |
+| Human, not hype | No robot phrases ("I hope this finds you well", "reaching out", "leverage"…); no hype words; no "!!" |
+| Never insults | No "outdated / terrible / ugly / old-fashioned…" about them; never runs a competitor down |
+| Never "SEO" | Say "front page of Google" |
+| One ask | At most one question mark |
+| First email | No links, no prices, no "free", no guarantee claims; a lead-specific fact in the first 2 lines |
+| Subject | ≤ 6 words, no emoji, no ALL CAPS, no fake "Re:" (real thread replies are exempt) |
+| Rendered check | No empty or unknown placeholders, no "Ltd Ltd", no SHOUTING names |
+| Truthful | No claims about work not yet done ("I've mocked up…" only once demos exist) |
 
-## 6. How the system adapts on its own
+Every email gets a fixed footer that versions can't change: sender identity, privacy link, opt-out line.
 
-**Every email (instant, in the Control Room):** Thompson sampling picks the version for each slot from the live ones.
+## 6. The law and deliverability
 
-**Every day (automatic):** each live version is checked:
-- **Retire:** after at least 150 counted emails, if its chance of being the best is under 5%.
-- **Champion:** after at least 150 counted emails, if its chance of being the best is over 95%. It stays live and becomes
-  the one new challengers are measured against.
-- **Pause at once (guardrail):** negative replies plus unsubscribes over 3% (after 40 emails), or bounces over 5%.
-  Sending stops entirely if any mailbox's bounce rate passes 3%: a bounce problem is a list problem, not a copy problem.
+**Who gets emailed (UK PECR and UK GDPR):**
+- Only leads matched to Companies House as **ltd, llp, plc or a Scottish partnership**, and only when the match is
+  backed by the **postcode or town** of the registered address (a name-only match isn't trusted).
+- **Sole traders and other partnerships** need prior consent, so they go on the **call list** instead. Check TPS/CTPS
+  before calling.
+- **Free webmail** (gmail, hotmail, btinternet…) is treated as personal and never emailed.
+- **Suppression:** an opt-out suppresses the email, its domain and the company number, permanently.
 
-**Every week (Claude, on your subscription):** a scheduled Claude session (a Routine on your Claude account; no API key)
-reads the experiment report and:
-1. Says in plain English what's working and why.
-2. For each slot with a retired loser or no clear winner, writes **one or two new challengers**. They're bold variations in
-   the direction of what's winning, following the playbook, and each comes with a one-line hypothesis ("shorter opener
-   that leads with their Maps rank, because rank-led openers are winning").
-3. Submits them to the Control Room as **proposed**.
+**Paperwork the owner needs before sending:**
+- ICO data protection fee (about £52 a year)
+- a written legitimate-interests assessment
+- a privacy page at aetoswebsites.com/privacy (the footer links to it)
 
-**You approve.** New versions only go live when you press Approve in the Outreach page, with the quality gate passed and a
-live preview on a real lead. You can also write your own. This keeps a human on everything that goes out under your name.
+**Footer:** "Nikiforos [Surname], trading as Aetos Websites, [business address]. How I got your details:
+aetoswebsites.com/privacy. Reply 'no thanks' and I won't email again." The real List-Unsubscribe header (one-click) is
+added at send time.
 
-**Exploration floor:** a newly approved challenger gets a fair start: its prior (starting assumption) matches the slot's
-average, so it isn't drowned out before it's had about 50 emails.
+**Guarantees in ads:** the "front page in 90 days" guarantee is never put in a first email; it only goes where its terms
+can be linked.
 
-## 7. Safety and the law (UK)
+**Deliverability on one domain:**
+- SPF `include:_spf.google.com -all`, DKIM 2048-bit, DMARC `p=none` (reports to Cloudflare's free DMARC Management) and
+  then `p=quarantine` after 4 clean weeks. Google Postmaster Tools.
+- **Ramp:** 2 weeks of normal manual email first, then 3 → 5 → 8 → **10 a day per mailbox (hard cap)**, raised weekly.
+- **Format:** plain text, no images, no attachments.
+- **Sending window:** Mon–Thu, 07:00–09:30 and 12:00–13:30 UK time, at least 8 minutes apart, no bank holidays.
+- **Guessed info@ addresses:** none in the first 4 weeks, then at most 25% of daily volume, tracked separately. Never
+  guess firstname@.
 
-- **Who we cold email.** Under PECR, unsolicited marketing email to **sole traders and partnerships** needs their prior
-  consent. To **limited companies and LLPs** it's allowed, with a clear opt-out. So outreach only emails leads with a
-  **Companies House company number**. Sole traders go on the **call list** (calls to businesses are allowed if they're
-  not on the TPS/CTPS do-not-call registers; check before calling).
-- **Opt-out:** every email has a one-click unsubscribe. Unsubscribes go on a permanent suppression list, checked before
-  every send.
-- **Sending limits:** each mailbox ramps up 2 → 4 → 6 → 10 → 14 emails a day (the playbook's schedule), with a hard
-  cap of 14. Emails go out at random times in working hours.
-- **Stop rules:** a "not interested" stops the sequence for that lead. Any reply pauses the automatic follow-ups and
-  hands over to you (or to the auto-reply once built).
-- **Sender:** real name, real business, real address in the footer.
+## 7. Replies (built with the mailboxes)
 
-## 8. What gets built now vs when mailboxes exist
+- **Classified automatically:**
+  - bounces → suppress;
+  - auto-replies/out-of-office → reschedule;
+  - opt-outs ("unsubscribe / remove / stop / not interested") → suppress at once, sequence stops.
+- **Everything else, the owner taps once:** Interested · Question · Not now (snooze 120 days) · No · Referral. Any reply
+  stops the automatic follow-ups. Unclassified after 72 hours → left out of the stats and flagged.
+- **Speed:** a phone alert for every human reply. The playbook's 5-minute rule: call them back.
+
+## 8. The bigger self-improvement loop: better leads
+
+Each send stores a snapshot of the lead's features: top finding, Maps-rank band, trade, email source, whether a first
+name was known. The monthly report breaks positive replies down by these, so the **lead score** and the targeting can be
+adjusted towards the kinds of business that actually reply. This matters more than copy tweaks.
+
+## 9. Claude's part, on the owner's subscription
+
+A scheduled Claude Routine on the owner's Claude account (no API key) reads `/api/agent/outreach-report`, using a
+Control Room token stored as an environment secret.
+
+- **Weekly:** writes a plain-English summary.
+- **When a test ends (about monthly):** proposes 1–2 challengers. Each changes **one named idea** (angle, ask type, hook
+  or length), comes with a hypothesis, and is checked against the playbook and the past-test log so old ideas aren't
+  retested.
+
+The report includes:
+- per-version counts, expected rates with 90% ranges and chance-of-best;
+- the anonymised text of positive and negative replies;
+- the feature breakdowns (§8);
+- the full log of past tests;
+- the playbook rules.
+
+Proposals land as **proposed**. The owner sees each one rendered on real leads, with the gate results, and approves
+or rejects it. Nothing goes out under his name without approval.
+
+## 10. Build order
 
 **Now:**
-- the database tables
-- the experiment engine (Thompson sampling, counting rules, retire/champion/guardrails)
-- template filling and the quality gate
-- the eligibility and suppression rules
-- the Outreach page (experiments, results, approval queue, preview on a real lead, marking reply outcomes)
-- the endpoints the weekly Claude review uses
-- seed versions written from the playbook
-- the weekly review prompt
+- database tables
+- the decision engine (§4)
+- placeholders + the quality gate (§5)
+- eligibility + suppression (§6)
+- the Outreach page: the test, versions and stats, the approval queue, previews on real leads, a write-your-own form,
+  and sender details
+- the agent report and proposal endpoints
+- seed versions
+- the weekly Routine prompt
+- the Companies House company-type fix
 - tests
 
-**When mailboxes exist (Monday + warm-up):** the sending connection (Gmail API from Google Workspace), the reply
-inbox, and switching the weekly Claude Routine on.
+**With the mailboxes:**
+- a separate free **Cloudflare Worker with a cron trigger** (Pages has no cron, and GitHub Actions every few minutes
+  would blow the free minutes), bound to the same database, every 5 minutes: sends due emails in the window, reads
+  replies and bounces from Gmail, runs the decisions
+- Gmail API connection
+- List-Unsubscribe
+- the reply inbox
+- phone alerts

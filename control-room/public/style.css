@@ -390,3 +390,19 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
 /* payment links */
 .link-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
 .link-row:first-child { border-top: 0; padding-top: 0; }
+
+/* outreach */
+.email-pre { white-space: pre-wrap; font: 13px/1.55 var(--font); margin: 8px 0 0; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; }
+.email-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.email { display: grid; gap: 6px; }
+.email-head { display: grid; gap: 2px; }
+.email .issues li::before { background: var(--bad); }
+.email .up { display: flex; align-items: center; gap: 6px; }
+.fu-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.fu { background: var(--surface-2); border-radius: var(--r); padding: 12px 14px; display: grid; gap: 6px; align-content: start; }
+.fu-v { cursor: pointer; font-weight: 550; }
+.fu-v:hover { color: var(--gold); }
+dialog .card { border: 0; padding: 0; margin: 0 !important; }
+@media (max-width: 860px) {
+  .email-grid, .fu-row { grid-template-columns: 1fr; }
+}

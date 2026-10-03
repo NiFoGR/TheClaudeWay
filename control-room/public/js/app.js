@@ -3,13 +3,14 @@ import { homePage } from "./home.js";
 import { closeDrawer, leadsPage } from "./leads.js";
 import { api, esc, icon, pageHead, state, toast, view } from "./lib.js";
 import { mapRankRoute } from "./maprank.js";
+import { outreachPage } from "./outreach.js";
 import { bindCopy, moneyPage, paymentLinks } from "./money.js";
 import { scraperRoute } from "./scraper.js";
 
 const NAV = [
   [null, [["home", "Home", "home"]]],
   ["Find", [["scraper", "Lead Scraper", "search"], ["maprank", "Map Rank", "map"]]],
-  ["Sell", [["leads", "Leads", "users"], [null, "Demos", "layout"], [null, "Outreach", "send"]]],
+  ["Sell", [["leads", "Leads", "users"], [null, "Demos", "layout"], ["outreach", "Outreach", "send"]]],
   ["Business", [["money", "Money", "pound"], [null, "Onboarding", "briefcase"]]],
 ];
 
@@ -78,7 +79,7 @@ async function stripeCard() {
 
 function currentPage() {
   const path = location.hash.split("?")[0].replace("#/", "");
-  return ["home", "scraper", "maprank", "leads", "money", "setup"].includes(path) ? path : "home";
+  return ["home", "scraper", "maprank", "leads", "outreach", "money", "setup"].includes(path) ? path : "home";
 }
 
 async function route() {
@@ -93,6 +94,7 @@ async function route() {
     else if (page === "maprank") await mapRankRoute(params);
     else if (page === "leads") await leadsPage();
     else if (page === "money") await moneyPage();
+    else if (page === "outreach") await outreachPage();
     else if (page === "scraper") {
       if (params.get("job")) state.jobId = params.get("job");
       await scraperRoute();
