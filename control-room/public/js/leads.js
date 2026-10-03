@@ -50,7 +50,7 @@ function leadRow(l) {
     <td class="c-biz"><div class="biz">${esc(l.name)}</div><div class="sub-line">${esc([l.director_name && `Owner: ${l.director_name}`, l.town].filter(Boolean).join(" · "))}</div></td>
     <td class="c-problem"><div class="problem">${esc(problems[0] || "Nothing major found")}</div>${problems.length > 1 ? `<div class="sub-line">+${problems.length - 1} more</div>` : ""}</td>
     <td class="c-contact">${l.phone ? `<a href="${tel(l.phone)}" class="num">${esc(l.phone)}</a>` : `<span class="faint">No phone</span>`}
-      <div class="sub-line">${l.email ? `${esc(l.email)}${guessed(l) ? ' <span class="tag">guessed</span>' : ""}` : "No email found"}</div></td>
+      <div class="sub-line">${l.email ? `${esc(l.email)}${guessed(l) ? ' <span class="tag">guessed</span>' : l.audit?.email_source === "ai" ? ' <span class="tag ai">AI found</span>' : ""}` : l.audit?.ai_research ? "No email (AI searched too)" : "No email found"}</div></td>
     <td class="c-google"><span class="rating">${l.rating ? `${icon("star")} ${esc(l.rating)}` : "–"} <span class="faint">(${esc(l.review_count || 0)})</span></span>${mapsLine(l)}</td>
     <td class="c-status"><select class="status-select" data-status="${esc(l.place_id)}" aria-label="Status">${status}</select></td>
   </tr>`;
@@ -177,6 +177,7 @@ export function openDrawer(lead, onChange = () => {}) {
         <select id="d-status" class="status-select" style="width:100%;border-radius:8px;padding:8px 12px;font-size:14px">${status}</select>
         ${l.excluded ? "" : parts}
         <h3>${l.excluded ? "Why it's excluded" : "What's wrong online"}</h3><ul class="issues">${problems}</ul>
+        ${aiCard(l)}
         <h3>Email</h3>${emails}
         ${socials ? `<h3>Socials</h3><div class="actions">${socials}</div>` : ""}
         <h3>Details</h3>
@@ -203,6 +204,24 @@ export function openDrawer(lead, onChange = () => {}) {
     const saved = await saveLead(l.place_id, { notes: e.target.value });
     if (saved) { l.notes = saved.notes; root().querySelector("#d-saved").textContent = "Saved."; }
   };
+}
+
+/** What Claude found when it researched this lead (emails with proof, owner, its own review of the website). */
+function aiCard(l) {
+  const r = l.audit?.ai_research;
+  if (!r) return "";
+  const link = (u, text) => (safeUrl(u) ? `<a href="${esc(safeUrl(u))}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>` : esc(text));
+  const rv = r.review || {};
+  return `<h3>Claude's research <span class="faint" style="text-transform:none;letter-spacing:0">· ${esc(ago(r.done_at))}</span></h3>
+    <div class="ai-card">
+      ${rv.verdict || rv.summary ? `<p style="margin:0 0 8px">${rv.verdict ? `<b>${esc(rv.verdict)}.</b> ` : ""}${esc(rv.summary || "")}</p>` : ""}
+      ${rv.problems?.length ? `<ul class="issues">${rv.problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
+      ${rv.good?.length ? `<p class="small muted" style="margin:8px 0 0">Good: ${rv.good.map(esc).join(" · ")}</p>` : ""}
+      ${r.emails?.length ? `<p class="small" style="margin:8px 0 0">${r.emails.map((e) => `${esc(e.email)} (${link(e.source_url, e.where || "source")})`).join("<br>")}</p>` : ""}
+      ${r.owner ? `<p class="small" style="margin:6px 0 0">Owner: ${esc(r.owner.full)} (${link(r.owner.source_url, "source")})</p>` : ""}
+      ${r.website ? `<p class="small" style="margin:6px 0 0">Website not linked on Google: ${link(r.website, r.website)}</p>` : ""}
+      ${r.notes ? `<p class="small faint" style="margin:6px 0 0">${esc(r.notes)}</p>` : ""}
+    </div>`;
 }
 
 // ---------------------------------------------------------------- All Leads page

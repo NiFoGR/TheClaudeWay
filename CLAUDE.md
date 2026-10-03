@@ -90,6 +90,10 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
   is emailed (sole traders included; he accepts the PECR risk); no name/address footer, just a "reply no thanks" opt-out. "Write it your way" briefs (owner's rough wording per step) are turned into versions by Claude. Claude's part runs on the owner's subscription as a daily Routine (full review weekly)
   (`docs/outreach-weekly-review.md`) via `/api/agent/*` with `OUTREACH_AGENT_TOKEN`; the owner approves every version.
   Sending (Gmail API + a cron Worker) is built when the mailboxes exist.
+- AI lead research: a Claude Routine on the owner's subscription (Sonnet, hourly, `docs/lead-research-routine.md`)
+  researches each lead on the web (Facebook, Instagram, directories, Google), finds emails/owner/unlinked websites with a
+  source URL for each, and reviews the website as an expert; posts to `/api/agent/leads/:id` (merge: `_lib/research.js`).
+  The automated audit stays for measurable facts (speed, mobile, HTTPS); Claude adds the judgement.
 - Stripe (`functions/_lib/stripe.js`, `stripe-events.js`): Setup's button creates products, payment links and the webhook
   from `STRIPE_SECRET_KEY` (Cloudflare secret); ids + webhook secret live in the `settings` table. Webhook payloads are
   pinned to API version 2024-06-20. Card clients' income = actual `payments`; their schedule is only the forecast.

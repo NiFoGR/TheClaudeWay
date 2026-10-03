@@ -406,3 +406,5 @@ dialog .card { border: 0; padding: 0; margin: 0 !important; }
 @media (max-width: 860px) {
   .email-grid, .fu-row { grid-template-columns: 1fr; }
 }
+.ai-card { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; }
+.tag.ai { background: var(--gold-soft); color: var(--gold); }
