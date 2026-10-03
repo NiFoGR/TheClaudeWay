@@ -1,6 +1,7 @@
 # Aetos Websites — brand
 
-**Charcoal & Eagle Gold.** Premium, trustworthy, calm. Mostly neutral, with gold used sparingly.
+**Charcoal & White, with an Eagle Gold accent.** Premium, trustworthy, calm. The logo is a white eagle on charcoal;
+everything else is mostly neutral, and gold is used sparingly, only for buttons and highlights.
 
 ## Colour palette
 
@@ -19,6 +20,7 @@
 
 | Pair | Ratio | OK for |
 | --- | --- | --- |
+| White on Charcoal | 16.1 : 1 | Logo, wordmark, all text on dark sections |
 | Charcoal on Marble | 14.7 : 1 | All text |
 | Eagle Gold on Charcoal | 6.6 : 1 | All text, gold buttons with Charcoal text |
 | Slate on Marble | 5.8 : 1 | Body text |
@@ -27,10 +29,10 @@
 
 ## Rules
 
-- **70 / 25 / 5:** about 70% Marble or Charcoal, 25% Slate and Stone, 5% Gold. The less gold, the more expensive it looks.
+- **70 / 25 / 5:** about 70% Charcoal, White or Marble, 25% Slate and Stone, 5% Gold. The less gold, the more expensive it looks.
 - **Gold means "click here" or "this matters".** It isn't used for decoration.
 - **One font: Inter.** Body is Regular 400. Headings are Bold 700.
-- **Wordmark:** "AETOS" in capitals, Bold or ExtraBold, letter-spacing +8 to +12%. Optionally add "WEBSITES" underneath, smaller, in Slate, with wide spacing.
+- **Wordmark:** "AETOS" in capitals, Bold or ExtraBold, letter-spacing +8 to +12%: White on Charcoal, or Charcoal on Marble. Optionally add "WEBSITES" underneath, smaller, with wide spacing (Stone on Charcoal, Slate on Marble).
 - **Logo:** a white bald-eagle head (realistic silhouette, detail made with Charcoal cut-outs) on Charcoal, beside a white wordmark. On light backgrounds: the Charcoal eagle on Marble. Gold is never in the logo: it stays the accent colour for buttons and highlights.
 - **Scope:** this is Aetos's own brand (website, emails, invoices, Stripe checkout, Control Room). Client demo sites get their own colours per trade.
 
@@ -39,6 +41,7 @@
 ```css
 :root {
   --charcoal: #1F2124;
+  --white:    #FFFFFF;
   --graphite: #2E3135;
   --marble:   #F6F4EF;
   --stone:    #D9D4CA;
