@@ -1,0 +1,45 @@
+name: Reset leads
+
+# Deletes every lead and Lead Scraper run from the Control Room's database, to start fresh.
+# Keeps clients, money, Google usage costs, outreach versions and Map Rank heatmaps.
+# Run by hand: Actions → Reset leads → Run workflow, type DELETE.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type DELETE to remove every lead"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  reset:
+    if: inputs.confirm == 'DELETE'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: lead-manager
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install httpx
+      - name: Delete leads
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          python - <<'EOF'
+          import os, httpx
+          url = f"https://api.cloudflare.com/client/v4/accounts/{os.environ['CLOUDFLARE_ACCOUNT_ID']}/d1/database/{os.environ['D1_DATABASE_ID']}/query"
+          headers = {"Authorization": f"Bearer {os.environ['CLOUDFLARE_API_TOKEN']}"}
+          for table in ("leads", "jobs", "job_progress", "lead_map_rank"):
+              before = httpx.post(url, json={"sql": f"SELECT COUNT(*) AS n FROM {table}"}, headers=headers, timeout=30).json()
+              r = httpx.post(url, json={"sql": f"DELETE FROM {table}"}, headers=headers, timeout=30).json()
+              if not r.get("success"):
+                  raise SystemExit(f"{table}: {r.get('errors')}")
+              print(f"{table}: deleted {before['result'][0]['results'][0]['n']} rows")
+          EOF
