@@ -8,3 +8,5 @@ Reference material the business (and Claude) works from.
 | [playbooks/local-seo-client-workflow.pdf](playbooks/local-seo-client-workflow.pdf) | **How SEO is done**: benchmarking, Google Business Profile fixes, on-page SEO, service and area pages, citations, weekly routine, 12-week email schedule | All SEO work for clients, and the website checks in the lead scraper |
 
 Plans live in claude.ai: *GoldBar Websites: System Plan* and *GoldBar Websites: Launch Action Plan* (written before the rename to Aetos Websites).
+
+- [brand.md](brand.md): colour palette, logo rules and the logo prompt.
