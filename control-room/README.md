@@ -1,7 +1,8 @@
 # GoldBar Control Room
 
 The website you log into to run everything. Today it has **Lead Scraper** (type a niche, a town and how many
-leads, press *Find leads*) and **All Leads** (every lead, with status and notes). Demos, Outreach and Clients come next.
+leads, press *Find leads*), **All Leads** (every lead, with status and notes) and **Setup** (green ticks show
+what's connected). Demos, Outreach and Clients come next.
 
 It runs entirely online and free, so your PC can be off:
 
