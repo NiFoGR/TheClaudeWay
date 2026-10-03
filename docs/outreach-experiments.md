@@ -70,6 +70,9 @@ Every email gets a fixed footer that versions can't change: sender identity, pri
 
 ## 6. The law and deliverability
 
+> **Owner's decision (overrides this section's eligibility and footer rules):** email every lead that has an email
+> address, sole traders included, accepting the PECR risk. Emails end with only the opt-out line, no name/address footer.
+
 **Who gets emailed (UK PECR and UK GDPR):**
 - Only leads matched to Companies House as **ltd, llp, plc or a Scottish partnership**, and only when the match is
   backed by the **postcode or town** of the registered address (a name-only match isn't trusted).

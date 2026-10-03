@@ -61,20 +61,18 @@ test("the gate blocks what the playbook forbids", () => {
   assert.match(gate({ subject: "Hi", body: "Hi,\n\nNice weather today.\n\nWant a chat?" }, 1, { rendered: true, lead: F }).join("|"), /lead-specific/);
 });
 
-test("only limited companies confirmed by address, on business email, not opted out, get emailed", () => {
+test("every lead with an email gets emailed, unless opted out, already contacted, or a too-early guess", () => {
   assert.equal(eligibility(LEAD).ok, true);
+  assert.equal(eligibility({ ...LEAD, company_number: null, audit: { email_source: "website" } }).ok, true); // sole traders too
+  assert.equal(eligibility({ ...LEAD, email: "dave.smith@gmail.com" }).ok, true);
   const no = (patch, ctx = {}) => eligibility({ ...LEAD, ...patch }, ctx).reason;
-  assert.match(no({ company_number: null, audit: { email_source: "website" } }), /sole trader/);
-  assert.match(no({ audit: { email_source: "website", company: { type: "ltd", match_basis: "name" } } }), /not confirmed/);
-  assert.match(no({ audit: { email_source: "website", company: { type: "limited-partnership", match_basis: "postcode" } } }), /consent/);
-  assert.match(no({ email: "dave.smith@gmail.com" }), /webmail/);
-  assert.match(no({ audit: { email_source: "guessed", company: { type: "ltd", match_basis: "town" } } }), /Guessed/);
-  assert.equal(eligibility({ ...LEAD, audit: { email_source: "guessed", company: { type: "ltd", match_basis: "town" } } }, { guessedAllowed: true }).ok, true);
+  assert.match(no({ email: "" }), /No email/);
+  assert.match(no({ audit: { email_source: "guessed" } }), /Guessed/);
+  assert.equal(eligibility({ ...LEAD, audit: { email_source: "guessed" } }, { guessedAllowed: true }).ok, true);
   assert.match(no({}, { suppressed: new Set(["smithroofing.co.uk"]) }), /Opted out/);
   assert.match(no({}, { suppressed: new Set(["123"]) }), /Opted out/);
   assert.match(no({}, { contacted: new Set(["p1"]) }), /sequence/);
   assert.match(no({ status: "contacted" }), /Already contacted/);
-  assert.equal(eligibility({ ...LEAD, audit: { email_source: "website", company: { type: "scottish-partnership", match_basis: "town" } } }).ok, true);
 });
 
 const DAY = 86400000;

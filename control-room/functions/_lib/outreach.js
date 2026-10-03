@@ -113,13 +113,9 @@ export function render(version, f) {
   return { subject: fill(version.subject || "", f), body: fill(version.body, f) };
 }
 
-/** The fixed footer: who is writing (law), where the data came from (UK GDPR), how to opt out. */
-export function footer(sender = {}) {
-  return [
-    `${sender.name || "{sender_name}"}, trading as Aetos Websites, ${sender.address || "{sender_address}"}`,
-    "How I got your details: aetoswebsites.com/privacy",
-    "Reply \"no thanks\" and I won't email again.",
-  ].join("\n");
+/** The fixed last line every email gets: an easy opt-out (stops people hitting "spam" instead). */
+export function footer() {
+  return "Reply \"no thanks\" and I won't email again.";
 }
 
 // ---------------------------------------------------------------- the quality gate (§5)
@@ -181,13 +177,7 @@ export function gate({ subject = "", body = "" }, step, opts = {}) {
   return [...new Set(issues)];
 }
 
-// ---------------------------------------------------------------- who may be emailed (§6)
-
-const ALLOWED_COMPANY_TYPES = ["ltd", "llp", "plc", "scottish-partnership", "private-limited-guarant-nsc",
-  "private-limited-guarant-nsc-limited-exemption", "private-limited-shares-section-30-exemption"];
-const FREEMAIL = ["gmail.com", "googlemail.com", "hotmail.com", "hotmail.co.uk", "outlook.com", "live.co.uk", "live.com",
-  "yahoo.com", "yahoo.co.uk", "btinternet.com", "btopenworld.com", "sky.com", "aol.com", "icloud.com", "me.com", "msn.com",
-  "talktalk.net", "virginmedia.com", "ntlworld.com", "blueyonder.co.uk", "mail.com", "protonmail.com", "proton.me", "gmx.com", "gmx.co.uk"];
+// ---------------------------------------------------------------- who gets emailed (owner's decision: every lead with an email)
 
 export const domainOf = (email) => String(email || "").split("@")[1]?.toLowerCase() || "";
 
@@ -203,10 +193,6 @@ export function eligibility(lead, ctx = {}) {
   if (ctx.contacted?.has(lead.place_id)) return { ok: false, reason: "Already in a sequence" };
   if ((lead.status || "new") !== "new") return { ok: false, reason: "Already contacted" };
   if (!email) return { ok: false, reason: "No email: call list" };
-  if (!lead.company_number || !company.type) return { ok: false, reason: "Not a limited company (sole trader?): call list" };
-  if (!ALLOWED_COMPANY_TYPES.includes(company.type)) return { ok: false, reason: `Company type "${company.type}" needs consent: call list` };
-  if (!["postcode", "town"].includes(company.match_basis)) return { ok: false, reason: "Company match not confirmed by address: call list" };
-  if (FREEMAIL.includes(domainOf(email))) return { ok: false, reason: "Personal webmail address: call list" };
   if (lead.audit?.email_source === "guessed" && !ctx.guessedAllowed) return { ok: false, reason: "Guessed address (not in the first 4 weeks)" };
   if ([email, domainOf(email), lead.company_number].some((v) => suppressed.has(String(v).toLowerCase()))) return { ok: false, reason: "Opted out" };
   return { ok: true, reason: "" };

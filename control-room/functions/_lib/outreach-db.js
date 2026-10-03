@@ -147,7 +147,7 @@ export async function loadOutreach(DB, { apply = true } = {}) {
     sender,
     replies,
     guessedAllowed: !!firstSend?.first && Date.now() - Date.parse(firstSend.first) >= FOUR_WEEKS,
-    footer: footer(sender),
+    footer: footer(),
   };
 }
 

@@ -13,7 +13,6 @@ export async function outreachPage() {
   const d = (state.outreach = await api("/api/outreach"));
   const live1 = d.stats.filter((s) => s.status === "live");
   const proposals = d.versions.filter((v) => v.status === "proposed");
-  const senderOk = d.sender.name && d.sender.address;
   const e = d.eligibility;
 
   view.innerHTML = `
@@ -21,32 +20,29 @@ export async function outreachPage() {
       `<button class="btn" id="new-version">${icon("plus")} Write a version</button>`)}
     <div class="kpis">
       ${kpi("Sending", d.sendingConnected ? "On" : "Not connected", d.sendingConnected ? "" : "Connects when your mailboxes are warmed up", d.sendingConnected ? "accent" : "")}
-      ${kpi("Can be emailed now", e.eligible, `of ${e.total} leads (limited companies only)`)}
+      ${kpi("Can be emailed now", e.eligible, `of ${e.total} leads`)}
       ${kpi("Versions in the test", live1.length, live1.length < 2 ? "Approve 2 to start testing" : "Competing for new leads")}
       ${kpi("Waiting for you", proposals.length, proposals.length ? "Approve or reject below" : "Nothing to approve")}
     </div>
-    ${senderOk ? "" : senderCard(d.sender)}
     ${testCard(d)}
     ${proposals.length ? `<div class="section-title"><h2>Waiting for your approval</h2><span class="muted small">Each is shown on your real leads with the quality check</span></div>
       <div class="stack">${proposals.map(proposalCard).join("")}</div>` : ""}
     ${followupsCard(d)}
     <div class="grid-2" style="margin-top:16px">${eligibilityCard(e)}${pastCard(d)}</div>
     <div class="card" style="margin-top:16px"><div class="card-head"><h2>Every email ends with</h2>
-      <button class="btn ghost sm" id="edit-sender">Edit sender</button></div>
-      <pre class="email-pre">${esc(d.footer)}</pre>
-      <p class="hint">Required by UK law (who's writing, where their details came from, how to opt out). Versions can't change it.</p></div>`;
+      <button class="btn ghost sm" id="edit-sender">Signed as ${esc(d.sender.first || "Nik")}</button></div>
+      <pre class="email-pre">${esc(d.sender.first || "Nik")}
+
+${esc(d.footer)}</pre>
+      <p class="hint">An easy opt-out line, so people reply instead of hitting "spam" (which hurts your inbox reputation).</p></div>`;
   bind(d);
 }
 
 function senderCard(sender) {
-  return `<div class="card" style="margin-top:16px;border-color:var(--gold-line)"><div class="card-head"><h2>Who are the emails from?</h2></div>
-    <p class="muted" style="margin-top:0">UK law needs your name and a business address in every email. A virtual office address keeps your home private.</p>
-    <form id="sender-form" class="field-row">
-      <div><label for="s-name">Name (as the law needs it)</label><input id="s-name" placeholder="N. Surname" value="${esc(sender.name || "")}" required></div>
+  return `<form id="sender-form" class="field-row">
       <div><label for="s-first">You sign emails as</label><input id="s-first" placeholder="Nik" value="${esc(sender.first || "")}" required></div>
-      <div style="grid-column:1/-1"><label for="s-address">Business address</label><input id="s-address" placeholder="Virtual office address" value="${esc(sender.address || "")}" required></div>
-      <div><button class="btn" type="submit">Save</button></div>
-    </form><p class="error" id="sender-error" hidden></p></div>`;
+      <div style="align-self:end"><button class="btn" type="submit">Save</button></div>
+    </form><p class="error" id="sender-error" hidden></p>`;
 }
 
 function testCard(d) {
@@ -103,7 +99,6 @@ function followupsCard(d) {
 
 function eligibilityCard(e) {
   return `<div class="card"><div class="card-head"><h2>Who can be emailed</h2><span class="muted small num">${e.eligible} of ${e.total}</span></div>
-    <p class="muted" style="margin-top:0">UK law lets you cold email limited companies with an opt-out, but sole traders need consent first. Everyone else goes on the call list.</p>
     <div class="cost-rows">${e.reasons.slice(0, 7).map(([reason, n]) => `<div class="cost-row"><span>${esc(reason)}</span><b class="num">${n}</b></div>`).join("") || `<p class="muted">No leads yet.</p>`}</div></div>`;
 }
 
@@ -197,11 +192,9 @@ function bind(d) {
   const form = view.querySelector("#sender-form");
   const editSender = view.querySelector("#edit-sender");
   editSender.onclick = () => {
-    if (form) return form.scrollIntoView({ behavior: "smooth" });
     const m = modal(`<div class="modal-head"><h2>Sender</h2><button class="icon-btn" data-close aria-label="Close">${icon("x")}</button></div><div class="modal-body">${senderCard(d.sender)}</div>`);
     bindSender(m);
   };
-  if (form) bindSender(view);
 }
 
 function bindSender(root) {
@@ -211,7 +204,7 @@ function bindSender(root) {
     const err = root.querySelector("#sender-error");
     try {
       await api("/api/outreach/settings", { method: "PUT", body: JSON.stringify({
-        name: root.querySelector("#s-name").value, first: root.querySelector("#s-first").value, address: root.querySelector("#s-address").value,
+        first: root.querySelector("#s-first").value,
       }) });
       root.closest?.("dialog")?.close();
       toast("Saved.");
