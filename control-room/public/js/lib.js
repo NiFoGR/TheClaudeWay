@@ -5,7 +5,7 @@ export const view = document.getElementById("view");
 export const state = {
   jobs: [], jobId: null, leads: [], filter: "pitch", search: "", poll: null, showScoreHelp: false, showAllRuns: false,
   scans: [], scanId: null, scan: null, biz: null, scanPoll: null, map: null, showAllScans: false,
-  drawer: null, money: null,
+  drawer: null, money: null, selected: new Set(),
 };
 
 export const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);

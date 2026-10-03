@@ -51,4 +51,4 @@ export function parseJson(value, fallback) {
   }
 }
 
-export const LEAD_STATUSES = ["new", "contacted", "replied", "call booked", "won", "lost", "not interested"];
+export const LEAD_STATUSES = ["new", "in outreach", "contacted", "replied", "call booked", "won", "lost", "not interested"];

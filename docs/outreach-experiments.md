@@ -1,4 +1,12 @@
-# Outreach that improves itself: design (v2, after review)
+# Outreach that improves itself: design (v3)
+
+> **v3, built around the demo (owner's System Plan):** every email's one job is getting them to look at the demo site
+> we built for them; the demo page does the selling (Order button). Cold emails never push a call: Claude offers one
+> only in a reply, when someone is unsure. A **win** is a demo view, an interested reply/question, or an order within
+> 10 days, so the prior is Beta(1, 19) (about 5%). The first email's only allowed link is `{demo_link}`. Nothing is
+> sent until the owner presses **Start outreach** on a lead (or several at once). Claude can ask the owner questions
+> (Outreach page); his answers become rules in every report. Starters live in `functions/_lib/outreach-seed.js`
+> (`SEED_VERSION` swaps unsent old ones). Where this conflicts with v2 below, v3 wins.
 
 How Aetos outreach finds the most effective first email on its own, safely, at about 30 emails a day.
 v1 was reviewed independently. The main corrections: the volume maths, testing one whole email at a time, timeboxed
@@ -16,10 +24,10 @@ Copy tests are therefore slow. The biggest wins come from **better leads** (§8)
 
 | Measure | Used for |
 | --- | --- |
-| **Positive replies** (Interested, or a genuine Question) **per delivered first email**, counting any positive reply from that lead within **10 days** | Deciding tests |
+| **Wins per delivered first email**: a view of their demo, a positive reply (Interested or a genuine Question) or an order, within **10 days** | Deciding tests |
 | Calls booked, clients won, revenue per version | Reported (too rare to decide on) |
 | Negative replies, unsubscribes, spam complaints | Guardrails |
-| ~~Opens~~ | Never tracked: no pixels, no link tracking |
+| ~~Opens~~ | Never tracked: no pixels, no redirect tracking (a demo view is a visit to their own page) |
 
 A first email only counts once it's 10 days old (or the lead has replied), so new versions aren't penalised for replies
 that haven't arrived yet.
@@ -35,7 +43,7 @@ that haven't arrived yet.
 
 ## 4. How it decides (numbers from the review's simulation)
 
-- **Starting assumption (prior):** Beta(1, 49), i.e. "about 2%, worth 50 emails of evidence". Every version starts equal.
+- **Starting assumption (prior):** Beta(1, 19), i.e. "about 5%, worth 20 emails of evidence" (v2 used Beta(1, 49) for replies only). Every version starts equal.
 - **Allocation:** Thompson sampling, with an **exploration floor**: any version with under 150 counted emails gets at
   least 25% of new leads.
 - **When the test ends:** when every version has **250 counted emails, or after 8 weeks**, whichever is first. Keep the
@@ -61,10 +69,10 @@ The gate runs on the template **and on the version rendered for 5 real leads**. 
 | Never insults | No "outdated / terrible / ugly / old-fashioned…" about them; never runs a competitor down |
 | Never "SEO" | Say "front page of Google" |
 | One ask | At most one question mark |
-| First email | No links, no prices, no "free", no guarantee claims; a lead-specific fact in the first 2 lines |
+| First email | Only link: their demo; no prices, no "free", no guarantee claims; a lead-specific fact in the first 2 lines |
 | Subject | ≤ 6 words, no emoji, no ALL CAPS, no fake "Re:" (real thread replies are exempt) |
 | Rendered check | No empty or unknown placeholders, no "Ltd Ltd", no SHOUTING names |
-| Truthful | No claims about work not yet done ("I've mocked up…" only once demos exist) |
+| Truthful | "I built you a site" only in versions using `{demo_link}`/`{demo_expiry}`, which can't be sent without a demo |
 
 Every email gets a fixed footer that versions can't change: sender identity, privacy link, opt-out line.
 

@@ -1,16 +1,29 @@
 // Outreach: database side. Loads everything the Outreach page and the weekly Claude report need, keeps the test
 // up to date (pauses, retirements, ending a test), and renders versions on real leads.
 import { decide, eligibility, facts, footer, gate, render, versionStats, withChances, POSITIVE, NEGATIVE } from "./outreach.js";
-import { SEED_FOLLOWUPS, SEED_TEST } from "./outreach-seed.js";
+import { SEED_FOLLOWUPS, SEED_TEST, SEED_VERSION } from "./outreach-seed.js";
 import { getSetting, putSetting } from "./stripe.js";
 import { leadRow, now } from "./util.js";
 
 const FOUR_WEEKS = 28 * 86400000;
+const slug = (name) => String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
 
-/** Load the starting versions once, as proposals for the owner to approve. */
+/** Load the starting versions as proposals for the owner to approve. When the starters are rewritten (SEED_VERSION),
+ * old ones that were never sent are swapped out; anything already sent stays for its history. */
 async function seed(DB) {
+  const have = Number(await getSetting(DB, "outreach_seed_version")) || 0;
+  if (have >= SEED_VERSION) return;
   const any = await DB.prepare("SELECT id FROM outreach_versions LIMIT 1").first();
-  if (any) return;
+  if (any && !have) {
+    // starters from before SEED_VERSION existed: version 1
+    await DB.prepare(`DELETE FROM outreach_versions WHERE author = 'seed' AND status = 'proposed'`).run();
+    await DB.prepare(`UPDATE outreach_versions SET status = 'retired', status_reason = 'Replaced by starters built around the demo site', decided_at = ?
+      WHERE author = 'seed' AND status IN ('live', 'paused') AND id NOT IN (SELECT DISTINCT version_id FROM outreach_sends WHERE version_id IS NOT NULL)`)
+      .bind(now()).run();
+  } else if (any && have < SEED_VERSION) {
+    await DB.prepare(`DELETE FROM outreach_versions WHERE author = 'seed' AND status = 'proposed'`).run();
+  }
+  await putSetting(DB, "outreach_seed_version", SEED_VERSION);
   const ts = now();
   await DB.batch([
     ...SEED_TEST.map((v) => DB.prepare(
@@ -50,10 +63,13 @@ export async function previews(DB, version, n = 5) {
   for (const row of results) {
     if (out.length >= n) break;
     const lead = leadRow(row);
-    const f = facts(lead, { ...(await mapContext(DB, lead.place_id)), sender: { first: sender.first || "Nik" } });
+    // demo sites aren't built yet: previews show where their link will go
+    const demo = { url: `https://aetoswebsites.com/demo/${slug(lead.name)}`, expires: Date.now() + 14 * 86400000 };
+    const f = facts(lead, { ...(await mapContext(DB, lead.place_id)), sender: { first: sender.first || "Nik" }, demo });
     const r = render(version, f);
     if (!r) continue;
-    out.push({ place_id: lead.place_id, name: lead.name, subject: r.subject, body: r.body, issues: gate(r, version.step, { rendered: true, lead: f }) });
+    out.push({ place_id: lead.place_id, name: lead.name, subject: r.subject, body: r.body,
+      issues: gate(r, version.step, { rendered: true, lead: f, demoUrl: demo.url }) });
   }
   return out;
 }
@@ -131,12 +147,14 @@ export async function loadOutreach(DB, { apply = true } = {}) {
     if (actions.length) return loadOutreach(DB, { apply: false }); // reload after changes
   }
 
-  const [sendCounts, firstSend, sender, replies, briefs] = await Promise.all([
+  const [sendCounts, firstSend, sender, replies, briefs, questions] = await Promise.all([
     DB.prepare("SELECT step, status, COUNT(*) AS n FROM outreach_sends GROUP BY step, status").all().then((r) => r.results),
     DB.prepare("SELECT MIN(sent_at) AS first FROM outreach_sends WHERE status = 'sent'").first(),
     senderSettings(DB),
     DB.prepare("SELECT r.*, l.name FROM outreach_replies r LEFT JOIN leads l ON l.place_id = r.place_id ORDER BY received_at DESC LIMIT 50").all().then((r) => r.results),
     DB.prepare("SELECT * FROM outreach_briefs ORDER BY created_at DESC LIMIT 20").all().then((r) => r.results),
+    DB.prepare("SELECT * FROM owner_questions ORDER BY answered_at IS NOT NULL, asked_at DESC LIMIT 60").all()
+      .then((r) => r.results.map((q) => ({ ...q, options: JSON.parse(q.options || "[]") }))),
   ]);
   return {
     test,
@@ -148,6 +166,7 @@ export async function loadOutreach(DB, { apply = true } = {}) {
     sender,
     replies,
     briefs,
+    questions,
     guessedAllowed: !!firstSend?.first && Date.now() - Date.parse(firstSend.first) >= FOUR_WEEKS,
     footer: footer(),
   };

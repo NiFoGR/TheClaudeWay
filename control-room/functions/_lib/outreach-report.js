@@ -13,10 +13,13 @@ export function report(data, breakdown) {
   lines.push("## Rules you must follow when proposing versions",
     "- Change ONE named idea per challenger (angle, ask type, hook, or length) and state it as a hypothesis.",
     `- First email ≤ ${STEPS[0].maxWords} words; follow-ups ≤ 60; sentences ≤ 25 words; at most one question mark.`,
-    "- First email: no links, no prices, no \"free\", no guarantees, a lead-specific fact in the first 2 lines.",
+    "- Every email's job is a look at the demo site we built for them ({demo_link}); the demo page sells (Order button).",
+    "  Never push a call in cold emails: a call is only offered in a reply, when someone is unsure.",
+    "- First email: its only link can be {demo_link}; no prices, no \"free\", no guarantees, a lead-specific fact in the first 2 lines.",
     "- Sound human (read it out loud), no hype, never insult their site or a competitor, never say \"SEO\" (say \"front page of Google\").",
-    "- Only claim what is true today (we have their audit and Google Maps heatmap; demos are offered, not made yet).",
-    `- Placeholders: {greeting} {business} {town} {trade} {problem} {top3} {competitor} {competitor_top3} {spots} {rating} {reviews} {sender_first}.`,
+    "- Only claim what is true: \"I built you a site\" is fine only in versions that use {demo_link} or {demo_expiry} (those only go to leads with a demo).",
+    `- Placeholders: {greeting} {business} {town} {trade} {problem} {top3} {competitor} {competitor_top3} {spots} {rating} {reviews} {sender_first} {demo_link} {demo_expiry}.`,
+    "- A win = they viewed their demo, replied with interest or a question, or ordered, within 10 days of the first email.",
     "- Don't retest ideas in the past-tests log.", "");
   lines.push("## Current test");
   if (!data.test) lines.push("No test running.");
@@ -36,6 +39,15 @@ export function report(data, breakdown) {
     "and follow the rules above. POST each with \"brief_id\" set, so it's marked done.");
   if (!waiting.length) lines.push("None waiting.");
   for (const b of waiting) lines.push("", `### Brief ${b.id} · step ${b.step} (${["", "first email", "follow-up day 3", "follow-up day 7", "polite close day 14"][b.step]})`, "```", b.text, "```");
+  const qs = data.questions || [];
+  lines.push("", "## The owner's answers to your questions (his rules: follow them in everything you write)");
+  const answered = qs.filter((q) => q.answer);
+  if (!answered.length) lines.push("None yet.");
+  for (const q of answered) lines.push(`- **Q (${q.answered_at.slice(0, 10)}):** ${q.question}`, `  **A:** ${q.answer}`);
+  const open = qs.filter((q) => !q.answer);
+  lines.push("", "## Questions still waiting for the owner (don't ask these again)");
+  if (!open.length) lines.push("None.");
+  for (const q of open) lines.push(`- ${q.question}`);
   const rejected = data.versions.filter((v) => v.status === "rejected");
   lines.push("", "## Rejected by the owner (he didn't want these sent; don't write like this)");
   if (!rejected.length) lines.push("None yet.");

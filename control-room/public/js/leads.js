@@ -1,7 +1,7 @@
 // The lead table (Lead Scraper results and All Leads) and the lead details drawer.
-import { ago, api, esc, icon, pageHead, ring, safeUrl, state, view } from "./lib.js";
+import { ago, api, esc, icon, pageHead, ring, safeUrl, state, toast, view } from "./lib.js";
 
-export const STATUSES = ["new", "contacted", "replied", "call booked", "won", "lost", "not interested"];
+export const STATUSES = ["new", "in outreach", "contacted", "replied", "call booked", "won", "lost", "not interested"];
 export const NO_SITE = ["no_website", "profile_only", "site_down", "site_broken", "bad_certificate"];
 const PARTS = [["website", "Website", 45], ["seo", "Local SEO", 30], ["maps", "Google Maps", 25]];
 
@@ -34,10 +34,11 @@ export function leadsTable() {
       <div class="search-box">${icon("search")}<input id="search" placeholder="Search name, town, email…" value="${esc(state.search)}"></div>
       <button class="btn secondary" id="csv">${icon("download")} CSV</button>
     </div>
+    ${selectionBar(rows)}
     <p class="hint" style="margin:0 0 12px"><b>Score</b> = how much we can help them, out of 100. Best first. <a href="#" id="score-help">${state.showScoreHelp ? "Hide" : "How it's worked out"}</a></p>
     ${state.showScoreHelp ? scoreHelp() : ""}
     <div class="table-card"><div class="table-wrap"><table class="leads-table">
-      <thead><tr><th>Score</th><th>Business</th><th>Biggest problem</th><th>Contact</th><th>Google</th><th>Status</th></tr></thead>
+      <thead><tr><th><input type="checkbox" id="sel-all" aria-label="Select all shown" ${rows.length && rows.every((l) => state.selected.has(l.place_id)) ? "checked" : ""}> Score</th><th>Business</th><th>Biggest problem</th><th>Contact</th><th>Google</th><th>Status</th></tr></thead>
       <tbody>${rows.length ? rows.map(leadRow).join("") : `<tr><td colspan="6" class="empty">No leads here.</td></tr>`}</tbody>
     </table></div></div>`;
 }
@@ -46,7 +47,7 @@ function leadRow(l) {
   const problems = l.excluded ? [l.exclude_reason] : l.issues;
   const status = STATUSES.map((s) => `<option ${s === l.status ? "selected" : ""}>${esc(s)}</option>`).join("");
   return `<tr class="click ${state.drawer === l.place_id ? "sel" : ""}" data-id="${esc(l.place_id)}">
-    <td class="c-score">${ring(l.excluded ? null : l.quality_score)}</td>
+    <td class="c-score"><div class="score-cell"><input type="checkbox" class="sel" data-sel="${esc(l.place_id)}" aria-label="Select ${esc(l.name)}" ${state.selected.has(l.place_id) ? "checked" : ""}>${ring(l.excluded ? null : l.quality_score)}</div></td>
     <td class="c-biz"><div class="biz">${esc(l.name)}</div><div class="sub-line">${esc([l.director_name && `Owner: ${l.director_name}${l.audit?.owner_confident ? "" : " (unconfirmed)"}`, l.town].filter(Boolean).join(" · "))}</div></td>
     <td class="c-problem"><div class="problem">${esc(problems[0] || "Nothing major found")}</div>${problems.length > 1 ? `<div class="sub-line">+${problems.length - 1} more</div>` : ""}</td>
     <td class="c-contact">${l.phone ? `<a href="${tel(l.phone)}" class="num">${esc(l.phone)}</a>` : `<span class="faint">No phone</span>`}
@@ -54,6 +55,28 @@ function leadRow(l) {
     <td class="c-google"><span class="rating">${l.rating ? `${icon("star")} ${esc(l.rating)}` : "–"} <span class="faint">(${esc(l.review_count || 0)})</span></span>${mapsLine(l)}</td>
     <td class="c-status"><select class="status-select" data-status="${esc(l.place_id)}" aria-label="Status">${status}</select></td>
   </tr>`;
+}
+
+/** Bar shown while leads are ticked: add them all to outreach in one go. */
+function selectionBar(rows) {
+  const n = state.selected.size;
+  if (!n) return `<p class="hint" style="margin:0 0 8px">Tick leads to add them to outreach together, or open one and press <b>Start outreach</b>. Nothing is emailed until you do.</p>`;
+  const shown = rows.filter((l) => state.selected.has(l.place_id)).length;
+  return `<div class="sel-bar"><b>${n} selected</b>${shown < n ? `<span class="muted small">(${n - shown} not shown by this filter)</span>` : ""}
+    <button class="btn sm" id="sel-start">${icon("send")} Start outreach</button>
+    <button class="btn secondary sm" id="sel-clear">Clear</button></div>`;
+}
+
+/** Add leads to outreach (or take them back out). Reports anything skipped, in plain English. */
+export async function enrol(ids, action = "start") {
+  const out = await api("/api/outreach/enrol", { method: "POST", body: JSON.stringify({ place_ids: ids, action }) });
+  const done = new Set(ids.filter((id) => !out.skipped.some((s) => s.place_id === id)));
+  state.leads = state.leads.map((l) => (done.has(l.place_id) ? { ...l, status: out.status } : l));
+  const skipped = out.skipped.length ? ` Skipped ${out.skipped.length}: ${[...new Set(out.skipped.map((s) => s.reason))].join("; ")}.` : "";
+  toast(action === "start"
+    ? `${out.added} added to outreach.${skipped} The first email goes once sending is switched on.`
+    : `${out.added} taken out of outreach.${skipped}`);
+  return out;
 }
 
 function mapsLine(l) {
@@ -88,11 +111,33 @@ export function bindTable(rerender) {
   };
   view.querySelector("#csv").onclick = downloadCsv;
   view.querySelectorAll("tr.click").forEach((tr) => tr.onclick = (e) => {
-    if (e.target.closest("a, select")) return;
+    if (e.target.closest("a, select, input")) return;
     const lead = state.leads.find((l) => l.place_id === tr.dataset.id);
     if (lead) openDrawer(lead, rerender);
   });
   view.querySelectorAll("[data-status]").forEach((sel) => sel.onchange = () => saveLead(sel.dataset.status, { status: sel.value }));
+  view.querySelectorAll("[data-sel]").forEach((box) => box.onchange = () => {
+    box.checked ? state.selected.add(box.dataset.sel) : state.selected.delete(box.dataset.sel);
+    rerender();
+  });
+  const all = view.querySelector("#sel-all");
+  if (all) all.onchange = () => {
+    for (const l of visibleLeads()) all.checked ? state.selected.add(l.place_id) : state.selected.delete(l.place_id);
+    rerender();
+  };
+  const start = view.querySelector("#sel-start");
+  if (start) start.onclick = async () => {
+    start.disabled = true;
+    try {
+      await enrol([...state.selected]);
+      state.selected.clear();
+    } catch (err) {
+      alert(err.message);
+    }
+    rerender();
+  };
+  const clear = view.querySelector("#sel-clear");
+  if (clear) clear.onclick = () => { state.selected.clear(); rerender(); };
 }
 
 export async function saveLead(id, patch) {
@@ -170,9 +215,11 @@ export function openDrawer(lead, onChange = () => {}) {
         ${l.email ? `<a class="btn ${l.phone ? "secondary" : ""} sm" href="mailto:${esc(l.email)}">${icon("mail")} Email</a>` : ""}
         ${site ? `<a class="btn secondary sm" href="${esc(site)}" target="_blank" rel="noopener noreferrer">${icon("globe")} Website</a>` : ""}
         ${maps ? `<a class="btn secondary sm" href="${esc(maps)}" target="_blank" rel="noopener noreferrer">${icon("pin")} Google</a>` : ""}
+        ${outreachButton(l)}
         ${l.map_scan_id ? `<a class="btn secondary sm" href="#/maprank?scan=${encodeURIComponent(l.map_scan_id)}&biz=${encodeURIComponent(l.place_id)}">${icon("grid")} Heatmap</a>` : ""}
       </div>
       <div class="drawer-body">
+        ${l.excluded ? "" : `<p class="hint" style="margin-top:0">Coming here soon: their demo site and a call script. <a href="#/roadmap">Roadmap</a></p>`}
         <h3>Status</h3>
         <select id="d-status" class="status-select" style="width:100%;border-radius:8px;padding:8px 12px;font-size:14px">${status}</select>
         ${l.excluded ? "" : parts}
@@ -200,10 +247,32 @@ export function openDrawer(lead, onChange = () => {}) {
     const saved = await saveLead(l.place_id, { status: e.target.value });
     if (saved) { l.status = saved.status; onChange(); }
   };
+  const ob = root().querySelector("[data-outreach]");
+  if (ob) ob.onclick = async () => {
+    ob.disabled = true;
+    try {
+      await enrol([l.place_id], ob.dataset.outreach);
+      onChange();
+      const fresh = state.leads.find((x) => x.place_id === l.place_id);
+      if (fresh) openDrawer(fresh, onChange);
+    } catch (err) {
+      alert(err.message);
+      ob.disabled = false;
+    }
+  };
   root().querySelector("#d-notes").onchange = async (e) => {
     const saved = await saveLead(l.place_id, { notes: e.target.value });
     if (saved) { l.notes = saved.notes; root().querySelector("#d-saved").textContent = "Saved."; }
   };
+}
+
+/** Start outreach (only the owner's click puts a lead into the email sequence). */
+function outreachButton(l) {
+  if (l.excluded) return "";
+  if (l.status === "in outreach") return `<button class="btn secondary sm" data-outreach="stop">${icon("x")} Stop outreach</button>`;
+  if ((l.status || "new") !== "new") return "";
+  if (!l.email) return `<span class="hint" style="align-self:center">No email: call them</span>`;
+  return `<button class="btn sm" data-outreach="start">${icon("send")} Start outreach</button>`;
 }
 
 /** What Claude found when it researched this lead (emails with proof, owner, its own review of the website). */

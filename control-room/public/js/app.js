@@ -4,23 +4,24 @@ import { closeDrawer, leadsPage } from "./leads.js";
 import { api, esc, icon, pageHead, state, toast, view } from "./lib.js";
 import { mapRankRoute } from "./maprank.js";
 import { outreachPage } from "./outreach.js";
+import { roadmapPage } from "./roadmap.js";
 import { bindCopy, moneyPage, paymentLinks } from "./money.js";
 import { scraperRoute } from "./scraper.js";
 
 const NAV = [
   [null, [["home", "Home", "home"]]],
   ["Find", [["scraper", "Lead Scraper", "search"], ["maprank", "Map Rank", "map"]]],
-  ["Sell", [["leads", "Leads", "users"], [null, "Demos", "layout"], ["outreach", "Outreach", "send"]]],
-  ["Business", [["money", "Money", "pound"], [null, "Onboarding", "briefcase"]]],
+  ["Sell", [["leads", "Leads", "users"], [null, "Demos", "layout"], ["outreach", "Outreach", "send"], [null, "Call scripts", "phone"], [null, "Replies", "mail"]]],
+  ["Business", [["money", "Money", "pound"], [null, "Onboarding", "briefcase"], [null, "Monthly care", "spark"], [null, "Website", "globe"]]],
 ];
 
 const link = (route, label, ic) => route
   ? `<a href="#/${route}" data-route="${route}">${icon(ic)}<span class="lbl">${label}</span></a>`
-  : `<span class="soon">${icon(ic)}${label}<small>soon</small></span>`;
+  : `<a href="#/roadmap" class="soon" title="Coming soon: see the Roadmap">${icon(ic)}${label}<small>soon</small></a>`;
 
 document.getElementById("nav").innerHTML = NAV.map(([group, items]) =>
   `${group ? `<div class="nav-label">${group}</div>` : ""}${items.map(([r, l, i]) => link(r, l, i)).join("")}`).join("");
-document.getElementById("nav-bottom").innerHTML = `${link("setup", "Setup", "sliders")}<a href="/logout">${icon("logout")}<span class="lbl">Log out</span></a>`;
+document.getElementById("nav-bottom").innerHTML = `${link("roadmap", "Roadmap", "check")}${link("setup", "Setup", "sliders")}<a href="/logout">${icon("logout")}<span class="lbl">Log out</span></a>`;
 
 async function setupPage() {
   view.innerHTML = pageHead("Setup", "Checking what's connected…");
@@ -79,7 +80,7 @@ async function stripeCard() {
 
 function currentPage() {
   const path = location.hash.split("?")[0].replace("#/", "");
-  return ["home", "scraper", "maprank", "leads", "outreach", "money", "setup"].includes(path) ? path : "home";
+  return ["home", "scraper", "maprank", "leads", "outreach", "money", "setup", "roadmap"].includes(path) ? path : "home";
 }
 
 async function route() {
@@ -95,6 +96,7 @@ async function route() {
     else if (page === "leads") await leadsPage();
     else if (page === "money") await moneyPage();
     else if (page === "outreach") await outreachPage();
+    else if (page === "roadmap") roadmapPage();
     else if (page === "scraper") {
       if (params.get("job")) state.jobId = params.get("job");
       await scraperRoute();

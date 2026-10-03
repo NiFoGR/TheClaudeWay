@@ -36,7 +36,13 @@ You are reviewing Aetos Websites' cold-email test. Work in this repository; read
      `curl -fsS -X POST -H "Authorization: Bearer $OUTREACH_AGENT_TOKEN" -H "content-type: application/json"
       -d '{"step":1,"name":"…","hypothesis":"…","subject":"…","body":"…"}' "$CONTROL_ROOM_URL/api/agent/versions"`
    - if the response lists `issues`, fix them and post a corrected version. Never post more than 2 challengers (briefs don't count towards that).
-5. Commit the summary file (if one was written) and push to the current branch. Finish with a 3-line summary: what's winning, what you
+5. **Ask the owner when it's his call, not a guess.** If a decision depends on his taste or judgement (how blunt to be,
+   which angle he'd never use, how he'd answer a kind of reply), POST at most 2 questions per run, each with 2–4
+   suggested answers and why you're asking:
+   `curl -fsS -X POST -H "Authorization: Bearer $OUTREACH_AGENT_TOKEN" -H "content-type: application/json"
+    -d '{"question":"…","why":"…","options":["…","…"]}' "$CONTROL_ROOM_URL/api/agent/questions"`
+   Never re-ask anything in "Questions still waiting"; follow every answer in "The owner's answers" as a rule.
+6. Commit the summary file (if one was written) and push to the current branch. Finish with a 3-line summary: what's winning, what you
    proposed (if anything), what the owner should do (usually "approve or reject the proposal on the Outreach page").
 
 Never send email, never change live versions, never approve your own proposals. The owner approves everything.

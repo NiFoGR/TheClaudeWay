@@ -6,7 +6,7 @@ Automation for Aetos Websites: find local UK businesses with weak websites, show
 | --- | --- |
 | [Control Room](control-room/): the website you log into (Lead Scraper, All Leads) | Built |
 | [Lead manager](lead-manager/): the engine that finds, audits, qualifies and scores leads | Built |
-| Demo sites and order page | Next |
+| Demo sites and order page | Next (see the Roadmap page in the Control Room) |
 | Outreach and auto-replies | Later |
 
 Setup steps: [control-room/README.md](control-room/README.md). Business playbooks: [docs/](docs/).

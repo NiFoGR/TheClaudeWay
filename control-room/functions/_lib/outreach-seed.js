@@ -1,33 +1,35 @@
-// Starting versions, written to the playbook rules (docs/playbooks/business-sales-marketing-notes.md §6).
-// Loaded once into an empty database. Everything claimed is true today: we have the heatmap and the audit; we offer to
-// make the demo or send the map, we never say we already have.
+// Starting versions, written to the playbook rules (docs/playbooks/business-sales-marketing-notes.md §6) and the
+// System Plan: every email's job is a look at the demo site we built for them; the demo page does the selling (Order
+// button). A call is never pushed in cold emails; Claude offers one only when someone replies unsure.
+// "I built you a site" is true by construction: a version using {demo_link}/{demo_expiry} only goes to leads with a demo.
+// SEED_VERSION goes up when these change, so old unapproved starters are swapped for the new ones.
+
+export const SEED_VERSION = 2;
 
 export const SEED_TEST = [
   {
-    name: "Maps rank vs the local leader",
-    hypothesis: "A true, specific comparison with the business beating them on Google Maps makes the problem real without insulting their site.",
-    subject: "{business} on Google",
+    name: "Built you a site: here's the link",
+    hypothesis: "Showing the finished site straight away gets the most people to look at it.",
+    subject: "{business} website",
     body: `{greeting}
 
-I searched "{trade}" from {spots} spots around {town}. {competitor} shows in Google's top 3 in {competitor_top3}% of them, {business} in {top3}%.
+{problem}. So I built a new website for {business} to show you what it could look like:
 
-Most of that gap comes down to the website and how the Google profile is set up, and both are fixable.
+{demo_link}
 
-Want me to send you the map and what I'd change?
+It's up until {demo_expiry}. If you like it, everything to make it yours is on that page.
 
 {sender_first}`,
   },
   {
-    name: "Their biggest problem, then a demo offer",
-    hypothesis: "Leading with the one concrete problem we found, plus a low-effort yes (seeing a mock-up), gets more replies than a ranking story.",
-    subject: "website for {business}",
+    name: "Built you a site: want the link?",
+    hypothesis: "Asking before sending the link gets more replies (and better inbox placement) than putting the link in the first email.",
+    subject: "{business} website",
     body: `{greeting}
 
-{problem}. People looking for a {trade} in {town} will usually call whoever they find first on Google.
+{problem}. So I built a new website for {business}, made for a {trade} in {town}, to show you what it could look like.
 
-I build websites for trades that fix exactly this. I can mock up a homepage for {business} so you can see what it'd look like.
-
-Want me to?
+It's ready to see until {demo_expiry}. Want me to send you the link?
 
 {sender_first}`,
   },
@@ -37,34 +39,27 @@ Want me to?
 export const SEED_FOLLOWUPS = [
   {
     step: 2,
-    name: "Top 3 is where the calls go (with map)",
+    name: "Did you get a chance to look?",
     body: `{greeting}
 
-One more thought: most people call one of the first three businesses Google shows them. Around {town} that's usually {competitor}, not {business}.
+Did you get a chance to look at the site I made for {business}?
 
-Worth a 10-minute call this week to show you how we'd change that?
+{demo_link}
 
-{sender_first}`,
-  },
-  {
-    step: 2,
-    name: "Top 3 is where the calls go",
-    body: `{greeting}
-
-One more thought: when someone in {town} needs a {trade}, most call one of the first three they see on Google. Getting {business} into that three is what we do.
-
-Worth a 10-minute call this week?
+If anything's not right for you, just reply and tell me. I'll change it.
 
 {sender_first}`,
   },
   {
     step: 3,
-    name: "Short and respectful of their time",
+    name: "Preview comes down soon",
     body: `{greeting}
 
-I know you're busy, so I'll keep it short. In 10 minutes I can show you, using your own Google results, how {business} could get more calls.
+Quick one: the preview of your new site comes down on {demo_expiry}.
 
-Is that worth a look?
+{demo_link}
+
+If you want it live, the button's on the page.
 
 {sender_first}`,
   },
@@ -73,9 +68,11 @@ Is that worth a look?
     name: "Polite close",
     body: `{greeting}
 
-I haven't heard back, so I'll assume now isn't the right time and won't keep emailing. If that changes, just reply here and I'll pick it up.
+I haven't heard back, so I'll leave it there and won't keep emailing. The site I made for {business} is still up until {demo_expiry} if you want another look:
 
-All the best with {business},
+{demo_link}
+
+All the best,
 {sender_first}`,
   },
 ];

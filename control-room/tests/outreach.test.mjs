@@ -7,11 +7,12 @@ import { SEED_FOLLOWUPS, SEED_TEST } from "../functions/_lib/outreach-seed.js";
 
 const LEAD = {
   place_id: "p1", name: "SMITH ROOFING LTD - Roofer in Leeds", town: "LEEDS", trade: "roofer", director_first_name: "DAVID",
-  email: "info@smithroofing.co.uk", company_number: "123", status: "new", rating: 4.7, review_count: 23,
+  email: "info@smithroofing.co.uk", company_number: "123", status: "in outreach", rating: 4.7, review_count: 23,
   findings: ["not_mobile", "maps_rarely_found"], map_rank: { top3_pct: 8 },
   audit: { email_source: "website", owner_source: "website", owner_confident: true, company: { type: "ltd", match_basis: "postcode" } },
 };
-const F = facts(LEAD, { competitor: { name: "Apex Roofing Ltd", top3_pct: 76 }, spots: 25, sender: { first: "Nik" } });
+const DEMO = { url: "https://aetoswebsites.com/demo/smith-roofing", expires: Date.parse("2026-10-23T12:00:00Z") };
+const F = facts(LEAD, { competitor: { name: "Apex Roofing Ltd", top3_pct: 76 }, spots: 25, sender: { first: "Nik" }, demo: DEMO });
 
 test("facts are cleaned up and only true", () => {
   assert.equal(F.business, "Smith Roofing");
@@ -32,7 +33,7 @@ test("every starting version passes the quality gate, as a template and rendered
     assert.deepEqual(gate(v, 1), [], v.name);
     const r = render(v, F);
     assert.ok(r, v.name);
-    assert.deepEqual(gate(r, 1, { rendered: true, lead: F }), [], v.name);
+    assert.deepEqual(gate(r, 1, { rendered: true, lead: F, demoUrl: DEMO.url }), [], v.name);
   }
   for (const v of SEED_FOLLOWUPS) {
     assert.deepEqual(gate(v, v.step), [], v.name);
@@ -41,16 +42,19 @@ test("every starting version passes the quality gate, as a template and rendered
 });
 
 test("a version is skipped for a lead without the facts it needs", () => {
-  const noMaps = facts({ ...LEAD, map_rank: {} }, { sender: { first: "Nik" } });
-  assert.equal(render(SEED_TEST[0], noMaps), null);
-  assert.ok(render(SEED_TEST[1], noMaps));
+  // no demo built yet: nothing that says "I built you a site" can go out
+  const noDemo = facts(LEAD, { sender: { first: "Nik" } });
+  for (const v of [...SEED_TEST, ...SEED_FOLLOWUPS]) assert.equal(render(v, noDemo), null, v.name);
+  assert.ok(render(SEED_TEST[0], facts(LEAD, { sender: { first: "Nik" }, demo: DEMO })));
+  assert.equal(facts(LEAD, { demo: DEMO }).demo_expiry, "Friday 23 October");
 });
 
 test("the gate blocks what the playbook forbids", () => {
   const g = (body, subject = "website for you", step = 1, opts = {}) => gate({ subject, body }, step, opts).join(" | ");
   assert.match(g("{greeting}\n\nYour SEO needs work in {town}. Interested?"), /SEO/);
   assert.match(g("{greeting}\n\nYour outdated site in {town} could be better. Want help?"), /insult/);
-  assert.match(g("{greeting}\n\nSee https://aetoswebsites.com for {business}. Want it?"), /links/);
+  assert.match(g("{greeting}\n\nSee https://aetoswebsites.com for {business}. Want it?"), /only link/);
+  assert.doesNotMatch(g("{greeting}\n\nI built {business} a site:\n\n{demo_link}"), /link|not done/); // their demo is the one allowed link
   assert.match(g("{greeting}\n\nWebsites for {business} from £1,950. Want one?"), /prices/);
   assert.match(g("{greeting}\n\nA free audit for {business}. Want it?"), /free/);
   assert.match(g("{greeting}\n\nIs {business} busy? Want more calls?"), /one question/);
@@ -63,7 +67,8 @@ test("the gate blocks what the playbook forbids", () => {
   assert.match(gate({ subject: "Hi", body: "Hi,\n\nNice weather today.\n\nWant a chat?" }, 1, { rendered: true, lead: F }).join("|"), /lead-specific/);
 });
 
-test("every lead with an email gets emailed, unless opted out, already contacted, or a too-early guess", () => {
+test("only leads the owner added to outreach get emailed, unless opted out, already contacted, or a too-early guess", () => {
+  assert.match(eligibility({ ...LEAD, status: "new" }).reason, /Not added/);
   assert.equal(eligibility(LEAD).ok, true);
   assert.equal(eligibility({ ...LEAD, company_number: null, audit: { email_source: "website" } }).ok, true); // sole traders too
   assert.equal(eligibility({ ...LEAD, email: "dave.smith@gmail.com" }).ok, true);
@@ -97,7 +102,7 @@ test("emails count after 10 days, or straight away once a positive reply arrives
   assert.deepEqual([a.sends, a.counted, a.positive], [3, 2, 1]);
   assert.deepEqual([b.sends, b.counted, b.positive], [1, 1, 0]);
   assert.equal(a.alpha, 2);
-  assert.equal(a.beta, 50);
+  assert.equal(a.beta, 20);
 });
 
 const arm = (id, counted, positive, extra = {}) => ({ id, status: "live", sends: counted, counted, positive, negative: 0, complaints: 0, alpha: 1 + positive, beta: 49 + counted - positive, mean: (1 + positive) / (50 + counted), pbest: null, ...extra });

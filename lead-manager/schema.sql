@@ -236,3 +236,15 @@ CREATE TABLE IF NOT EXISTS outreach_briefs (
   created_at  TEXT NOT NULL,
   done_at     TEXT
 );
+
+-- Claude asks the owner how he'd handle something (outreach style, replies, offers); his answers guide every later run.
+CREATE TABLE IF NOT EXISTS owner_questions (
+  id          TEXT PRIMARY KEY,
+  topic       TEXT NOT NULL DEFAULT 'outreach',
+  question    TEXT NOT NULL,
+  why         TEXT NOT NULL DEFAULT '',          -- what Claude will do with the answer
+  options     TEXT NOT NULL DEFAULT '[]',        -- JSON array of suggested answers (he can also type his own)
+  answer      TEXT,
+  asked_at    TEXT NOT NULL,
+  answered_at TEXT
+);

@@ -76,6 +76,8 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
 - Discuss decisions step by step before building big things; build only what's needed to get to cash.
 - No filler, no sugar-coating, plain English, short answers. Push back when something's wrong, once, then go with their call.
 - Don't overcomplicate: prefer free, simple setups (Cloudflare + GitHub free tiers). Budget for leads + mailboxes: £100/month.
+- The plans are the owner's claude.ai docs *GoldBar Websites — System Plan* and *Launch Action Plan* (read them before
+  building a feature). Keep `control-room/public/js/roadmap.js` (Roadmap page) and the nav's "soon" items current.
 - Built so far: Control Room (Home, Lead Scraper with live progress, Map Rank heatmaps, Leads with a details drawer,
   Outreach, Money, Setup); lead score = Website 45 + Local SEO 30 + Google Maps 25 (`lead-manager/aetos_leads/scoring.py`);
   email finding in `lead-manager/aetos_leads/contacts.py`; owner's first name in `owner.py` (website → Google reviews →
@@ -86,10 +88,15 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
 - Outreach (design + review: `docs/outreach-experiments.md`): one test at a time on the first email (2–3 whole-email
   versions, Thompson sampling, Beta(1,49) prior, 10-day credit window, decide at 250 counted each or 8 weeks); follow-ups
   fixed. Engine `functions/_lib/outreach.js` (pure, tested), DB `outreach-db.js`, quality gate on every version rendered on
-  real leads. Owner's decision: every lead with an email
-  is emailed (sole traders included; he accepts the PECR risk); no name/address footer, just a "reply no thanks" opt-out. "Write it your way" briefs (owner's rough wording per step) are turned into versions by Claude. Claude's part runs on the owner's subscription as a daily Routine (full review weekly)
+  real leads. Built around the demo (System Plan): every email's job is a look at their demo site, which sells (Order
+  button); calls are only offered in replies when someone's unsure. A win = demo view, positive reply or order (prior
+  Beta(1,19)); the first email's only link is `{demo_link}`. Nothing is sent until the owner presses **Start outreach**
+  on a lead (status "in outreach"; `api/outreach/enrol.js`). Any lead with an email can be added (sole traders included;
+  he accepts the PECR risk); no name/address footer, just a "reply no thanks" opt-out. Claude asks the owner questions
+  (`owner_questions`, Outreach page); his answers are rules in the report. "Write it your way" briefs (owner's rough wording per step) are turned into versions by Claude. Claude's part runs on the owner's subscription as a daily Routine (full review weekly)
   (`docs/outreach-weekly-review.md`) via `/api/agent/*` with `OUTREACH_AGENT_TOKEN`; the owner approves every version.
-  Sending (Gmail API + a cron Worker) is built when the mailboxes exist.
+  Sending (Gmail API + a cron Worker) is built when the mailboxes exist. **Replies must be fast: set up per inbox when
+  the mailboxes are bought** (each inbox's new-mail check fires the reply Routine's API trigger, like Find leads does).
 - AI lead research (80/20): the scraper does everything free first, then `aetos_leads/research.py` flags only leads
   worth pitching (score ≥ 35) with a to-do list (size / email / best email / owner / website / review). The scrape
   workflow fires a Claude Routine (API trigger, owner's subscription, Sonnet) once per Find-leads run if any are flagged;

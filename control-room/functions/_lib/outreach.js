@@ -7,7 +7,7 @@ import { probBest, thompsonPick } from "./bandit.js";
 
 export const RULES = {
   priorA: 1,
-  priorB: 49,              // "about 2%, worth 50 emails of evidence"
+  priorB: 19,              // "about 5% (a demo view or a good reply), worth 20 emails of evidence"
   creditDays: 10,          // a positive reply within 10 days of the first email counts for its version
   floorUntil: 150,         // versions with fewer counted emails get at least 25% of new leads
   floorShare: 0.25,
@@ -27,7 +27,8 @@ export const STEPS = [
   { step: 4, day: 14, label: "Polite close", maxWords: 60 },
 ];
 
-export const POSITIVE = ["interested", "question"];
+// a win = they looked at their demo, replied with interest or a question, or ordered (the email's job is the demo click)
+export const POSITIVE = ["interested", "question", "demo_view", "ordered"];
 export const NEGATIVE = ["no", "opt_out", "complaint"];
 
 // ---------------------------------------------------------------- facts from a lead (only what the audit proved)
@@ -97,10 +98,16 @@ export function facts(lead, extra = {}) {
   if (lead.rating) f.rating = String(lead.rating);
   if (lead.review_count) f.reviews = String(lead.review_count);
   if (extra.sender?.first) f.sender_first = extra.sender.first;
+  // their demo site: only exists once it's built, so versions that mention it only go to leads who have one
+  if (extra.demo?.url) {
+    f.demo_link = extra.demo.url;
+    if (extra.demo.expires) f.demo_expiry = new Date(extra.demo.expires).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "Europe/London" });
+  }
   return f;
 }
 
-export const PLACEHOLDERS = ["greeting", "business", "town", "trade", "problem", "top3", "competitor", "competitor_top3", "spots", "rating", "reviews", "sender_first"];
+export const PLACEHOLDERS = ["greeting", "business", "town", "trade", "problem", "top3", "competitor", "competitor_top3", "spots", "rating", "reviews", "sender_first",
+  "demo_link", "demo_expiry"];
 
 export const placeholdersIn = (text) => [...String(text).matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
 
@@ -129,7 +136,9 @@ const HYPE = ["revolutionary", "skyrocket", "explode your", "game-changer", "gam
   "world-class", "best-in-class", "10x", "unbeatable", "amazing results", "incredible", "massive results", "!!"];
 const INSULT = ["outdated", "terrible", "awful", "ugly", "old-fashioned", "old fashioned", "rubbish", "crap", "sucks",
   "embarrassing", "amateur", "poor website", "bad website", "dated website"];
-const UNTRUE_UNTIL_DEMOS = ["i've mocked", "i have mocked", "i've built", "i have built", "i've made you", "i've designed", "i've put together"];
+const UNTRUE_UNTIL_DEMOS = ["i've mocked", "i have mocked", "i've built", "i have built", "i built", "i've made", "i made", "i've designed",
+  "i've put together", "i put together"];
+const usesDemo = (text) => /\{demo_(link|expiry)\}/.test(text);
 
 const words = (t) => String(t).trim().split(/\s+/).filter(Boolean).length;
 const has = (text, list) => list.filter((p) => text.toLowerCase().includes(p));
@@ -147,11 +156,14 @@ export function gate({ subject = "", body = "" }, step, opts = {}) {
   for (const p of has(text, INSULT)) issues.push(`Could read as an insult: "${p}"`);
   if (/\bSEO\b/i.test(text)) issues.push('Says "SEO": say "front page of Google"');
   if ((body.match(/\?/g) || []).length > 1) issues.push("More than one question: keep one ask");
-  if (!opts.demosLive) for (const p of has(body, UNTRUE_UNTIL_DEMOS)) issues.push(`Claims work not done yet: "${p}"`);
+  // "I built you a site" is only true where the version carries their demo (it can't be sent to a lead without one)
+  if (!opts.demosLive && !opts.rendered && !usesDemo(text)) for (const p of has(body, UNTRUE_UNTIL_DEMOS)) issues.push(`Claims work not done yet: "${p}": add {demo_link} or {demo_expiry}`);
   const unknown = placeholdersIn(text).filter((k) => !PLACEHOLDERS.includes(k));
   if (unknown.length) issues.push(`Unknown placeholder: {${unknown.join("}, {")}}`);
   if (step === 1) {
-    if (/https?:\/\/|www\.|\.(com|co\.uk|uk|net|org)\b/i.test(body)) issues.push("First email can't contain links");
+    // the only link allowed in a first email is their own demo (one link, one goal)
+    const bodyNoDemo = String(body).replace(/\{demo_link\}/g, "").split(opts.demoUrl || "\u0000").join("");
+    if (/https?:\/\/|www\.|\.(com|co\.uk|uk|net|org)\b/i.test(bodyNoDemo)) issues.push("First email's only link can be their demo ({demo_link})");
     if (/£\s?\d|\d+\s?(pounds|quid)/i.test(text)) issues.push("First email can't mention prices");
     if (/\bfree\b/i.test(text)) issues.push('First email can\'t say "free"');
     if (/guarantee/i.test(text)) issues.push("Guarantees only go where their terms can be linked, not in the first email");
@@ -179,7 +191,7 @@ export function gate({ subject = "", body = "" }, step, opts = {}) {
   return [...new Set(issues)];
 }
 
-// ---------------------------------------------------------------- who gets emailed (owner's decision: every lead with an email)
+// ---------------------------------------------------------------- who gets emailed (only leads the owner added to outreach)
 
 export const domainOf = (email) => String(email || "").split("@")[1]?.toLowerCase() || "";
 
@@ -193,8 +205,10 @@ export function eligibility(lead, ctx = {}) {
   const email = String(lead.email || "").toLowerCase();
   if (lead.excluded) return { ok: false, reason: "Excluded lead" };
   if (ctx.contacted?.has(lead.place_id)) return { ok: false, reason: "Already in a sequence" };
-  if ((lead.status || "new") !== "new") return { ok: false, reason: "Already contacted" };
   if (!email) return { ok: false, reason: "No email: call list" };
+  const status = lead.status || "new";
+  if (status === "new") return { ok: false, reason: "Not added to outreach yet" };
+  if (status !== "in outreach") return { ok: false, reason: "Already contacted" };
   if (lead.audit?.email_source === "guessed" && !ctx.guessedAllowed) return { ok: false, reason: "Guessed address (not in the first 4 weeks)" };
   if ([email, domainOf(email), lead.company_number].some((v) => suppressed.has(String(v).toLowerCase()))) return { ok: false, reason: "Opted out" };
   return { ok: true, reason: "" };

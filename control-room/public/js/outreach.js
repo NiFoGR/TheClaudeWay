@@ -16,14 +16,15 @@ export async function outreachPage() {
   const e = d.eligibility;
 
   view.innerHTML = `
-    ${pageHead("Outreach", "Emails that improve themselves: two versions of the first email compete, the better one wins, Claude writes the next challenger, you approve it.",
+    ${pageHead("Outreach", "Emails whose one job is getting them to look at the site we built them. Two versions of the first email compete, the better one wins, Claude writes the next challenger, you approve it.",
       `<button class="btn" id="new-version">${icon("plus")} Write it my way</button>`)}
     <div class="kpis">
       ${kpi("Sending", d.sendingConnected ? "On" : "Not connected", d.sendingConnected ? "" : "Connects when your mailboxes are warmed up", d.sendingConnected ? "accent" : "")}
-      ${kpi("Can be emailed now", e.eligible, `of ${e.total} leads`)}
+      ${kpi("Added to outreach", e.eligible, e.eligible ? "Ready for the first email" : "Press Start outreach on a lead")}
       ${kpi("Versions in the test", live1.length, live1.length < 2 ? "Approve 2 to start testing" : "Competing for new leads")}
       ${kpi("Waiting for you", proposals.length, proposals.length ? "Approve or reject below" : "Nothing to approve")}
     </div>
+    ${questionsCard(d)}
     ${testCard(d)}
     ${proposals.length ? `<div class="section-title"><h2>Waiting for your approval</h2><span class="muted small">Each is shown on your real leads with the quality check</span></div>
       <div class="stack">${proposals.map(proposalCard).join("")}</div>` : ""}
@@ -147,7 +148,7 @@ function followupsCard(d) {
 }
 
 function eligibilityCard(e) {
-  return `<div class="card"><div class="card-head"><h2>Who can be emailed</h2><span class="muted small num">${e.eligible} of ${e.total}</span></div>
+  return `<div class="card"><div class="card-head"><h2>Who's in outreach</h2><span class="muted small num">${e.eligible} of ${e.total}</span></div>
     <div class="cost-rows">${e.reasons.slice(0, 7).map(([reason, n]) => `<div class="cost-row"><span>${esc(reason)}</span><b class="num">${n}</b></div>`).join("") || `<p class="muted">No leads yet.</p>`}</div></div>`;
 }
 
@@ -155,6 +156,24 @@ function pastCard(d) {
   return `<div class="card"><div class="card-head"><h2>Past tests</h2></div>
     ${d.tests.length ? `<div class="cost-rows">${d.tests.map((t) => `<div><div class="small faint">${esc(fmtDate(t.ended_at, true))}</div><div class="small">${esc(t.summary)}</div></div>`).join("")}</div>`
       : `<p class="muted" style="margin:0">Each finished test is logged here, so ideas that lost aren't tried again.</p>`}</div>`;
+}
+
+/** Claude's questions: how would you handle X? Your answers become rules for every later email and reply. */
+function questionsCard(d) {
+  const open = (d.questions || []).filter((q) => !q.answer);
+  const answered = (d.questions || []).filter((q) => q.answer);
+  if (!open.length && !answered.length) return "";
+  return `<div class="card" style="margin-top:16px"><div class="card-head"><h2>Claude's questions for you</h2>
+      <span class="muted small">Your answers become rules for every email and reply it writes</span></div>
+    ${open.map((q) => `<form class="q-form" data-q="${esc(q.id)}">
+      <p style="margin:0 0 4px"><b>${esc(q.question)}</b></p>
+      ${q.why ? `<p class="hint" style="margin:0 0 8px">${esc(q.why)}</p>` : ""}
+      ${q.options.length ? `<div class="actions" style="margin-bottom:8px">${q.options.map((o) => `<button type="button" class="btn secondary sm" data-opt="${esc(o)}">${esc(o)}</button>`).join("")}</div>` : ""}
+      <textarea rows="2" name="answer" placeholder="Your answer, in your own words"></textarea>
+      <div style="margin-top:8px"><button class="btn sm" type="submit">Answer</button></div></form>`).join("")}
+    ${answered.length ? `<details style="margin-top:${open.length ? 12 : 0}px"><summary class="muted small">${answered.length} answered</summary>
+      ${answered.map((q) => `<div class="small" style="margin-top:8px"><b>${esc(q.question)}</b><div class="muted">${esc(q.answer)}</div></div>`).join("")}</details>` : ""}
+  </div>`;
 }
 
 function emailHtml(p) {
@@ -208,6 +227,19 @@ function bind(d) {
   view.querySelectorAll("[data-reject]").forEach((b) => b.onclick = () => act(b.dataset.reject, "reject"));
   view.querySelectorAll("[data-preview]").forEach((el) => fillPreview(el, el.dataset.preview));
   view.querySelectorAll("[data-version]").forEach((el) => el.onclick = () => showVersion(el.dataset.version));
+  view.querySelectorAll(".q-form").forEach((f) => {
+    f.querySelectorAll("[data-opt]").forEach((b) => b.onclick = () => { f.answer.value = b.dataset.opt; f.answer.focus(); });
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      try {
+        await api(`/api/outreach/questions/${encodeURIComponent(f.dataset.q)}`, { method: "PATCH", body: JSON.stringify({ answer: f.answer.value }) });
+        toast("Thanks. Claude will follow that from now on.");
+        outreachPage();
+      } catch (err) {
+        alert(err.message);
+      }
+    };
+  });
   const form = view.querySelector("#sender-form");
   const editSender = view.querySelector("#edit-sender");
   editSender.onclick = () => {
