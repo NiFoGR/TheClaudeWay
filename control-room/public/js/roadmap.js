@@ -13,8 +13,12 @@ const ROADMAP = [
   ["Find leads", [
     ["built", "Lead Scraper", "Trade + town → every business on Google Maps, website audit, email, owner, quality score; chains and front-desk businesses filtered out."],
     ["built", "Map Rank heatmaps", "Where each business shows on Google Maps across town; feeds the score and the emails."],
+    ["next", "Sharper owner search", "Claude must always check the Facebook bio via search results for the owner (missed Mark Matthews at Diamond Kickboxing) and flag dissolved companies."],
     ["built", "Claude research after each search", "Claude checks only what the scraper couldn't: real emails, the owner's name, unlinked websites, a proper website review, big firms excluded."],
     ["next", "Call list with a call script per lead", "Leads with no email: an auto-filled script (opener, questions, the demo walkthrough, close) and answers to common objections."],
+  ]],
+  ["The funnel (decide first)", [
+    ["next", "The exact closing funnel", "Every step from first email to paid client, written down: what they see, what we send when, what triggers a call, how each objection is handled, how fast. Built to close by email + demo; calls only when needed."],
   ]],
   ["Demo sites (the email's whole point)", [
     ["next", "Demo template for the first trade", "Modelled on the UK's top-ranking sites in that trade, filled in from each lead's data, one link per lead."],

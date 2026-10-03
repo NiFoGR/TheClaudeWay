@@ -81,7 +81,7 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
 - Built so far: Control Room (Home, Lead Scraper with live progress, Map Rank heatmaps, Leads with a details drawer,
   Outreach, Money, Setup); lead score = Website 45 + Local SEO 30 + Google Maps 25 (`lead-manager/aetos_leads/scoring.py`);
   email finding in `lead-manager/aetos_leads/contacts.py`; owner's first name in `owner.py` (website → Google reviews →
-  email → business name, Companies House only as a fallback; never a word from the business name, the town or a famous person; only their own words or email count as confirmed (`owner_confident`), emails greet a guessed name with plain "Hi," and Claude checks guesses). Next: aetoswebsites.com, Demos, Outreach sending, Onboarding, client second brain.
+  email → business name, Companies House only as a fallback; never a word from the business name, the town or a famous person; only their own words or email count as confirmed (`owner_confident`), emails greet a guessed name with plain "Hi," and Claude checks guesses). Next: the exact closing funnel (decide with the owner first), Demos + order page, call scripts, aetoswebsites.com, Outreach sending, Onboarding, client second brain. The Roadmap page is the to-do list.
 - Money page: clients (build fee + retainer after the free days), costs you add, and Google API cost estimated from
   calls logged per run (`aetos_leads/usage.py` → `api_usage` table; prices and free allowances in
   `control-room/functions/_lib/money.js`). Forecasts count only what's committed.
