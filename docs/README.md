@@ -10,3 +10,4 @@ Reference material the business (and Claude) works from.
 Plans live in claude.ai: *GoldBar Websites: System Plan* and *GoldBar Websites: Launch Action Plan* (written before the rename to Aetos Websites).
 
 - [brand.md](brand.md): colour palette, logo rules and the logo prompt.
+- [setup-domain-email-stripe.md](setup-domain-email-stripe.md): Namecheap → Cloudflare, control.aetoswebsites.com, hello@ email, Stripe.
