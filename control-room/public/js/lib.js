@@ -132,7 +132,7 @@ export function confetti() {
   c.height = innerHeight;
   document.body.append(c);
   const ctx = c.getContext("2d");
-  const colors = ["#e3b341", "#f6d77f", "#b07f12", "#fff3cf", "#45c381"];
+  const colors = ["#C9A13B", "#E2C26A", "#9C7A25", "#FFFFFF", "#45c381"];
   const bits = Array.from({ length: 140 }, () => ({
     x: innerWidth / 2 + (Math.random() - 0.5) * 200, y: innerHeight / 3, vx: (Math.random() - 0.5) * 16, vy: -Math.random() * 14 - 4,
     r: Math.random() * 6 + 3, c: colors[Math.floor(Math.random() * colors.length)], a: Math.random() * Math.PI,
