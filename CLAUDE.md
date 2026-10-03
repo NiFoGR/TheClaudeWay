@@ -87,7 +87,7 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
   versions, Thompson sampling, Beta(1,49) prior, 10-day credit window, decide at 250 counted each or 8 weeks); follow-ups
   fixed. Engine `functions/_lib/outreach.js` (pure, tested), DB `outreach-db.js`, quality gate on every version rendered on
   real leads. Owner's decision: every lead with an email
-  is emailed (sole traders included; he accepts the PECR risk); no name/address footer, just a "reply no thanks" opt-out. Claude's part runs on the owner's subscription as a weekly Routine
+  is emailed (sole traders included; he accepts the PECR risk); no name/address footer, just a "reply no thanks" opt-out. "Write it your way" briefs (owner's rough wording per step) are turned into versions by Claude. Claude's part runs on the owner's subscription as a daily Routine (full review weekly)
   (`docs/outreach-weekly-review.md`) via `/api/agent/*` with `OUTREACH_AGENT_TOKEN`; the owner approves every version.
   Sending (Gmail API + a cron Worker) is built when the mailboxes exist.
 - Stripe (`functions/_lib/stripe.js`, `stripe-events.js`): Setup's button creates products, payment links and the webhook

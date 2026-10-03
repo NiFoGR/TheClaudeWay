@@ -14,7 +14,17 @@ def test_website_self_introductions_and_owner_labels():
 
 def test_website_ignores_words_that_arent_names():
     assert owner.from_website(["Meet the team behind Smith Roofing", "I'm proud of our work", "Owner operated since 2001"]) is None
-    assert owner.from_website(["Meet Grant, our apprentice"]) is None  # ambiguous words are left out on purpose
+
+
+
+def test_names_are_recognised_without_a_list():
+    # names outside any list, and everyday words that are also names, are read from the sentence
+    assert owner.from_website(["Owner: Grant Wilkinson, 20 years in the trade"]) == ("Grant", "Grant Wilkinson")
+    assert owner.from_website(["Family-run business founded by Rajesh Patel in 2004."]) == ("Rajesh", "Rajesh Patel")
+    reviews = [{"author": "A B", "text": "Huge thanks to Kasia for sorting our boiler."},
+               {"author": "C D", "text": "Kasia was quick and tidy, highly recommend."}]
+    assert owner.from_reviews(reviews) == ("Kasia", "Kasia")
+    assert owner.from_email(["info@smith.co.uk", "enquiries@smith.co.uk", "sales@smith.co.uk"], "smith.co.uk") is None
 
 
 def test_reviews_need_two_different_customers_naming_the_same_person():

@@ -9,7 +9,12 @@ export async function onRequestPost({ request, env }) {
   if (denied) return denied;
   const DB = await db(env);
   const pending = await DB.prepare("SELECT COUNT(*) AS n FROM outreach_versions WHERE status = 'proposed' AND author = 'claude'").first();
-  if (pending.n >= 4) return bad("4 of Claude's proposals are already waiting for the owner. Wait for those first.", 429);
-  const out = await createVersion(DB, await request.json().catch(() => ({})), "claude");
-  return out.error ? bad(out.error) : json(out, 201);
+  if (pending.n >= 8) return bad("4 of Claude's proposals are already waiting for the owner. Wait for those first.", 429);
+  const body = await request.json().catch(() => ({}));
+  const out = await createVersion(DB, { ...body, hypothesis: body.hypothesis || (body.brief_id ? "From the owner's own wording" : "") }, "claude");
+  if (out.error) return bad(out.error);
+  if (body.brief_id) {
+    await DB.prepare("UPDATE outreach_briefs SET status = 'done', done_at = ? WHERE id = ?").bind(new Date().toISOString(), body.brief_id).run();
+  }
+  return json(out, 201);
 }

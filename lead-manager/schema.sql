@@ -227,3 +227,12 @@ CREATE TABLE IF NOT EXISTS suppression (
   reason      TEXT NOT NULL,
   created_at  TEXT NOT NULL
 );
+-- "Write it your way": the owner's rough wording for an email step. Claude turns each into proper versions.
+CREATE TABLE IF NOT EXISTS outreach_briefs (
+  id          TEXT PRIMARY KEY,
+  step        INTEGER NOT NULL,
+  text        TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'waiting',  -- waiting → done
+  created_at  TEXT NOT NULL,
+  done_at     TEXT
+);

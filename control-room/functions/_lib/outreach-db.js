@@ -131,11 +131,12 @@ export async function loadOutreach(DB, { apply = true } = {}) {
     if (actions.length) return loadOutreach(DB, { apply: false }); // reload after changes
   }
 
-  const [sendCounts, firstSend, sender, replies] = await Promise.all([
+  const [sendCounts, firstSend, sender, replies, briefs] = await Promise.all([
     DB.prepare("SELECT step, status, COUNT(*) AS n FROM outreach_sends GROUP BY step, status").all().then((r) => r.results),
     DB.prepare("SELECT MIN(sent_at) AS first FROM outreach_sends WHERE status = 'sent'").first(),
     senderSettings(DB),
     DB.prepare("SELECT r.*, l.name FROM outreach_replies r LEFT JOIN leads l ON l.place_id = r.place_id ORDER BY received_at DESC LIMIT 50").all().then((r) => r.results),
+    DB.prepare("SELECT * FROM outreach_briefs ORDER BY created_at DESC LIMIT 20").all().then((r) => r.results),
   ]);
   return {
     test,
@@ -146,6 +147,7 @@ export async function loadOutreach(DB, { apply = true } = {}) {
     sendCounts,
     sender,
     replies,
+    briefs,
     guessedAllowed: !!firstSend?.first && Date.now() - Date.parse(firstSend.first) >= FOUR_WEEKS,
     footer: footer(),
   };
@@ -176,7 +178,8 @@ export async function eligibilitySummary(DB, guessedAllowed) {
 /** Approve a version: gate it, then make it live (step 1 joins the open test, starting one if needed). */
 export async function approve(DB, version) {
   const { issues } = await check(DB, version);
-  if (issues.length) return { issues };
+  // the owner's own words are his call: the check only warns. Claude's and the starter versions must pass.
+  if (issues.length && version.author !== "owner") return { issues };
   const ts = now();
   if (version.step === 1) {
     let test = await DB.prepare("SELECT * FROM outreach_tests WHERE ended_at IS NULL").first();

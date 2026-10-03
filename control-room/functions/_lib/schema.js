@@ -22,5 +22,6 @@ export const SCHEMA = [
   "CREATE TABLE IF NOT EXISTS outreach_sends (\n  id            TEXT PRIMARY KEY,\n  place_id      TEXT NOT NULL,\n  email         TEXT NOT NULL,\n  mailbox       TEXT,\n  step          INTEGER NOT NULL,\n  version_id    TEXT NOT NULL,\n  test_id       TEXT,\n  subject       TEXT,\n  body          TEXT,\n  features      TEXT,             \n  gmail_msg_id  TEXT,\n  thread_id     TEXT,\n  status        TEXT NOT NULL DEFAULT 'queued',  \n  due_at        TEXT,\n  sent_at       TEXT\n)",
   "CREATE INDEX IF NOT EXISTS outreach_sends_lead ON outreach_sends (place_id)",
   "CREATE TABLE IF NOT EXISTS outreach_replies (\n  id             TEXT PRIMARY KEY,\n  place_id       TEXT NOT NULL,\n  send_id        TEXT,\n  received_at    TEXT NOT NULL,\n  snippet        TEXT,\n  auto_class     TEXT,   \n  owner_class    TEXT,   \n  classified_by  TEXT    \n)",
-  "CREATE TABLE IF NOT EXISTS suppression (\n  value       TEXT PRIMARY KEY,  \n  kind        TEXT NOT NULL,     \n  reason      TEXT NOT NULL,\n  created_at  TEXT NOT NULL\n)"
+  "CREATE TABLE IF NOT EXISTS suppression (\n  value       TEXT PRIMARY KEY,  \n  kind        TEXT NOT NULL,     \n  reason      TEXT NOT NULL,\n  created_at  TEXT NOT NULL\n)",
+  "CREATE TABLE IF NOT EXISTS outreach_briefs (\n  id          TEXT PRIMARY KEY,\n  step        INTEGER NOT NULL,\n  text        TEXT NOT NULL,\n  status      TEXT NOT NULL DEFAULT 'waiting',  \n  created_at  TEXT NOT NULL,\n  done_at     TEXT\n)"
 ];

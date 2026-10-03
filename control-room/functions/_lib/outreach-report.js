@@ -30,6 +30,12 @@ export function report(data, breakdown) {
       lines.push("", `### ${v.name}`, `Hypothesis: ${v.hypothesis || "–"}`, "", `Subject: ${v.subject}`, "", "```", v.body, "```");
     }
   }
+  const waiting = (data.briefs || []).filter((b) => b.status === "waiting");
+  lines.push("", "## The owner's own wording, waiting for you (do these first, every run)");
+  lines.push("Turn each into 1–2 proper versions for that step: keep his voice and his idea, add placeholders so it fits every lead,",
+    "and follow the rules above. POST each with \"brief_id\" set, so it's marked done.");
+  if (!waiting.length) lines.push("None waiting.");
+  for (const b of waiting) lines.push("", `### Brief ${b.id} · step ${b.step} (${["", "first email", "follow-up day 3", "follow-up day 7", "polite close day 14"][b.step]})`, "```", b.text, "```");
   const rejected = data.versions.filter((v) => v.status === "rejected");
   lines.push("", "## Rejected by the owner (he didn't want these sent; don't write like this)");
   if (!rejected.length) lines.push("None yet.");

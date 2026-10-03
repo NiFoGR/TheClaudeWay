@@ -17,7 +17,7 @@ export async function outreachPage() {
 
   view.innerHTML = `
     ${pageHead("Outreach", "Emails that improve themselves: two versions of the first email compete, the better one wins, Claude writes the next challenger, you approve it.",
-      `<button class="btn" id="new-version">${icon("plus")} Write a version</button>`)}
+      `<button class="btn" id="new-version">${icon("plus")} Write it my way</button>`)}
     <div class="kpis">
       ${kpi("Sending", d.sendingConnected ? "On" : "Not connected", d.sendingConnected ? "" : "Connects when your mailboxes are warmed up", d.sendingConnected ? "accent" : "")}
       ${kpi("Can be emailed now", e.eligible, `of ${e.total} leads`)}
@@ -27,6 +27,7 @@ export async function outreachPage() {
     ${testCard(d)}
     ${proposals.length ? `<div class="section-title"><h2>Waiting for your approval</h2><span class="muted small">Each is shown on your real leads with the quality check</span></div>
       <div class="stack">${proposals.map(proposalCard).join("")}</div>` : ""}
+    ${myWayCard(d)}
     ${followupsCard(d)}
     <div class="grid-2" style="margin-top:16px">${eligibilityCard(e)}${pastCard(d)}</div>
     <div class="card" style="margin-top:16px"><div class="card-head"><h2>Every email ends with</h2>
@@ -83,6 +84,54 @@ function proposalCard(v) {
     ${v.hypothesis ? `<p style="margin-top:0"><b>Idea:</b> ${esc(v.hypothesis)}</p>` : ""}
     <div class="preview" data-preview="${esc(v.id)}"><p class="muted small">Rendering on your leads…</p></div>
   </div>`;
+}
+
+function myWayCard(d) {
+  const waiting = (d.briefs || []).filter((b) => b.status === "waiting");
+  return `<div class="card" style="margin-top:16px"><div class="card-head"><div><h2>Write it your way</h2>
+      <div class="muted small">Write any email the way you'd say it, rough is fine. Claude turns it into proper versions with each lead's details, and they come back here for you to approve.</div></div></div>
+    <div class="actions">${[1, 2, 3, 4].map((s) => `<button class="btn secondary sm" data-myway="${s}">${icon("plus")} ${STEP_LABEL[s]}</button>`).join("")}</div>
+    ${waiting.length ? `<div class="cost-rows" style="margin-top:14px">${waiting.map((b) => `<div><div class="small faint">${esc(STEP_LABEL[b.step])} · waiting for Claude's next run</div><div class="small" style="white-space:pre-wrap">${esc(b.text.slice(0, 240))}${b.text.length > 240 ? "…" : ""}</div></div>`).join("")}</div>
+      <p class="hint">Claude picks these up on its next run. Want it now? Open Claude and say "process my outreach briefs".</p>` : ""}
+  </div>`;
+}
+
+function myWay(step = 1) {
+  const d = modal(`<form><div class="modal-head"><h2>Write it your way</h2><button type="button" class="icon-btn" data-close aria-label="Close">${icon("x")}</button></div>
+    <div class="modal-body">
+      <div><label for="m-step">Which email</label><select id="m-step">${[1, 2, 3, 4].map((s) => `<option value="${s}" ${s === step ? "selected" : ""}>${STEP_LABEL[s]}</option>`).join("")}</select></div>
+      <div id="m-subject-wrap"><label for="m-subject">Subject (optional)</label><input id="m-subject" placeholder="Leave empty and Claude will write one"></div>
+      <div><label for="m-text">How you'd say it</label><textarea id="m-text" rows="10" required placeholder="Hey mate, saw you're not showing up on Google when people search roofer in your area. I can sort that, want me to show you what I mean?"></textarea>
+        <p class="hint">Write it like you'd talk. Claude keeps your voice and your idea, and adds each lead's name, town and what we found.</p></div>
+      <p class="error" hidden></p>
+    </div><div class="modal-foot"><button type="button" class="btn ghost" id="m-asis">Use my words exactly</button><button class="btn" type="submit">Send to Claude</button></div></form>`);
+  const sel = d.querySelector("#m-step");
+  const sync = () => { d.querySelector("#m-subject-wrap").hidden = sel.value !== "1"; };
+  sel.onchange = sync;
+  sync();
+  const err = d.querySelector(".error");
+  const fail = (ex) => { err.textContent = ex.message + (ex.issues?.length ? `\n${ex.issues.join("\n")}` : ""); err.hidden = false; err.style.whiteSpace = "pre-wrap"; };
+  d.querySelector("form").onsubmit = async (e) => {
+    e.preventDefault();
+    try {
+      await api("/api/outreach/briefs", { method: "POST", body: JSON.stringify({ step: Number(sel.value), text: d.querySelector("#m-text").value }) });
+      d.close();
+      toast("Sent. Claude turns it into versions on its next run.");
+      await outreachPage();
+    } catch (ex) { fail(ex); }
+  };
+  d.querySelector("#m-asis").onclick = async () => {
+    try {
+      const step1 = sel.value === "1";
+      await api("/api/outreach/versions", { method: "POST", body: JSON.stringify({
+        step: Number(sel.value), name: "My own wording", hypothesis: "The owner's own words",
+        subject: step1 ? (d.querySelector("#m-subject").value || "Quick one, {business}") : "", body: d.querySelector("#m-text").value,
+      }) });
+      d.close();
+      toast("Saved as a proposal. Check it on your leads below, then approve.");
+      await outreachPage();
+    } catch (ex) { fail(ex); }
+  };
 }
 
 function followupsCard(d) {
@@ -152,39 +201,9 @@ function showVersion(id) {
   fillPreview(d.querySelector("[data-preview]"), v.id);
 }
 
-function writeVersion() {
-  const d = modal(`<form><div class="modal-head"><h2>Write a version</h2><button type="button" class="icon-btn" data-close aria-label="Close">${icon("x")}</button></div>
-    <div class="modal-body">
-      <div class="field-row"><div><label for="w-step">Which email</label><select id="w-step">${[1, 2, 3, 4].map((s) => `<option value="${s}">${STEP_LABEL[s]}</option>`).join("")}</select></div>
-        <div><label for="w-name">Short name</label><input id="w-name" required placeholder="Lead with their reviews"></div></div>
-      <div><label for="w-hyp">The idea being tested</label><input id="w-hyp" placeholder="Mentioning their good reviews first gets more replies"></div>
-      <div id="w-subject-wrap"><label for="w-subject">Subject</label><input id="w-subject" placeholder="{business} on Google"></div>
-      <div><label for="w-body">Email</label><textarea id="w-body" rows="9" required placeholder="{greeting}\n\n…\n\n{sender_first}"></textarea>
-        <p class="hint">Placeholders: {greeting} {business} {town} {trade} {problem} {top3} {competitor} {competitor_top3} {spots} {rating} {reviews} {sender_first}</p></div>
-      <p class="error" hidden></p>
-    </div><div class="modal-foot"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn" type="submit">Save as proposal</button></div></form>`);
-  const step = d.querySelector("#w-step");
-  step.onchange = () => { d.querySelector("#w-subject-wrap").hidden = step.value !== "1"; };
-  d.querySelector("form").onsubmit = async (e) => {
-    e.preventDefault();
-    const err = d.querySelector(".error");
-    try {
-      await api("/api/outreach/versions", { method: "POST", body: JSON.stringify({
-        step: Number(step.value), name: d.querySelector("#w-name").value, hypothesis: d.querySelector("#w-hyp").value,
-        subject: d.querySelector("#w-subject").value, body: d.querySelector("#w-body").value,
-      }) });
-      d.close();
-      toast("Saved. Check it on your leads below, then approve.");
-      await outreachPage();
-    } catch (ex) {
-      err.textContent = ex.message;
-      err.hidden = false;
-    }
-  };
-}
-
 function bind(d) {
-  view.querySelector("#new-version").onclick = writeVersion;
+  view.querySelector("#new-version").onclick = () => myWay(1);
+  view.querySelectorAll("[data-myway]").forEach((b) => b.onclick = () => myWay(Number(b.dataset.myway)));
   view.querySelectorAll("[data-approve]").forEach((b) => b.onclick = () => act(b.dataset.approve, "approve"));
   view.querySelectorAll("[data-reject]").forEach((b) => b.onclick = () => act(b.dataset.reject, "reject"));
   view.querySelectorAll("[data-preview]").forEach((el) => fillPreview(el, el.dataset.preview));
