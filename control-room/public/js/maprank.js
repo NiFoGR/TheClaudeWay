@@ -115,6 +115,7 @@ function drawHeatmap(data) {
   const map = L.map(el, { scrollWheelZoom: false });
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 18, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    referrerPolicy: "strict-origin-when-cross-origin", // OpenStreetMap blocks tile requests that don't say which site they're from
   }).addTo(map);
   const bounds = [];
   data.points.forEach((p, i) => {

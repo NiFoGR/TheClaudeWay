@@ -332,7 +332,9 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
 .comp-card { padding: 0; overflow: hidden; }
 .comp-card .card-head { padding: 16px 18px 0; }
 .comp-card .table-wrap { max-height: 540px; overflow-y: auto; }
-.leaflet-container { font: inherit; }
+.leaflet-container { font: inherit; background: var(--surface-2); }
+/* dark street map to match the theme (markers sit in another pane, so they keep their colours) */
+.leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.85) saturate(0.4); }
 
 /* score help */
 .help-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
