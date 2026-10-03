@@ -85,14 +85,14 @@ export async function setUpStripe(env, DB, origin) {
   const links = {};
   for (const [key, p] of Object.entries(PACKAGES)) {
     const common = {
-      metadata: { goldbar_package: key },
+      metadata: { aetos_package: key },
       custom_fields: [{ key: "business", label: { type: "custom", custom: "Business name" }, type: "text" }],
       phone_number_collection: { enabled: true },
       after_completion: { type: "hosted_confirmation", hosted_confirmation: { custom_message: THANKS } },
     };
     const params = p.monthly
       ? { ...common, line_items: [{ price: buildPrices[p.build].id, quantity: 1 }, { price: monthlyPrice.id, quantity: 1 }],
-          subscription_data: { trial_period_days: p.freeDays, metadata: { goldbar_package: key } } }
+          subscription_data: { trial_period_days: p.freeDays, metadata: { aetos_package: key } } }
       : { ...common, line_items: [{ price: buildPrices[p.build].id, quantity: 1 }], customer_creation: "always" };
     const link = await stripe(env, "POST", "payment_links", params);
     links[key] = { id: link.id, url: link.url };
@@ -103,7 +103,7 @@ export async function setUpStripe(env, DB, origin) {
   }
   const hook = await stripe(env, "POST", "webhook_endpoints", {
     url: `${origin}/api/stripe/webhook`, enabled_events: WEBHOOK_EVENTS, api_version: STRIPE_VERSION,
-    description: "GoldBar Control Room: payments onto the Money page",
+    description: "Aetos Control Room: payments onto the Money page",
   });
   const saved = { mode, links, webhook: { id: hook.id, secret: hook.secret, url: hook.url } };
   await putSetting(DB, "stripe", saved);

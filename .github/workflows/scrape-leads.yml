@@ -51,7 +51,7 @@ jobs:
           JOB_ID: ${{ inputs.job_id }}
         run: |
           set -o pipefail
-          python -m goldbar_leads --trade "$TRADE" --town "$TOWN" --max "$MAX" --job-id "$JOB_ID" --out output | tee output-summary.txt
+          python -m aetos_leads --trade "$TRADE" --town "$TOWN" --max "$MAX" --job-id "$JOB_ID" --out output | tee output-summary.txt
       - name: Tell the Control Room the run failed
         if: failure() && inputs.job_id != ''
         env:
@@ -59,7 +59,7 @@ jobs:
           D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           JOB_ID: ${{ inputs.job_id }}
-        run: python -m goldbar_leads --fail-job "$JOB_ID" "The scraper crashed. Open the run on GitHub (Actions tab) for details."
+        run: python -m aetos_leads --fail-job "$JOB_ID" "The scraper crashed. Open the run on GitHub (Actions tab) for details."
       - name: Show summary on the run page
         if: success()
         run: |

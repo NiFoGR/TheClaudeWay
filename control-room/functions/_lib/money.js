@@ -5,7 +5,7 @@
 // Forecast months only count what is already committed: active clients, monthly costs, average Google spend.
 
 // Google Places API (New) list prices, USD per 1,000 calls, and the free calls each SKU gets every month.
-// SKUs match lead-manager/goldbar_leads/usage.py. Check https://developers.google.com/maps/billing-and-pricing/pricing
+// SKUs match lead-manager/aetos_leads/usage.py. Check https://developers.google.com/maps/billing-and-pricing/pricing
 export const GOOGLE_SKUS = {
   text_search_enterprise: { usdPer1000: 35, freePerMonth: 1000, label: "Lead searches" },
   text_search_pro: { usdPer1000: 32, freePerMonth: 5000, label: "Finding town centres" },

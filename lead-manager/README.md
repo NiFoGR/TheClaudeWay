@@ -1,4 +1,4 @@
-# GoldBar lead manager
+# Aetos lead manager
 
 Type a trade and a UK town; get back every local business Google Maps shows, with what's wrong with their
 website, their email, the director's first name, and a quality score (how much we can help, 0–100).
@@ -31,12 +31,12 @@ The "Problems" column is written to be quoted politely in outreach, e.g. *Not mo
 cd lead-manager
 pip install -r requirements.txt
 export GOOGLE_PLACES_API_KEY=...        # COMPANIES_HOUSE_API_KEY optional
-python -m goldbar_leads --trade roofer --town Leeds --db leads.db
+python -m aetos_leads --trade roofer --town Leeds --db leads.db
 ```
 
 ## How the score works
 
-Score = how much GoldBar can help this business, out of 100 (rules in `goldbar_leads/scoring.py`, based on
+Score = how much Aetos can help this business, out of 100 (rules in `aetos_leads/scoring.py`, based on
 `docs/playbooks/local-seo-client-workflow.pdf`). Three parts, matching what we sell:
 
 | Part | Max | Points |
@@ -49,7 +49,7 @@ No website, a Facebook/Checkatrade page only, or a broken site maxes Website + L
 our checker scores 0 there (unknown, look yourself). "No chat" and "DIY builder" are listed but worth 0 points.
 Ties are broken by Google rating, then review count.
 
-## How emails are found (`goldbar_leads/contacts.py`)
+## How emails are found (`aetos_leads/contacts.py`)
 
 1. The homepage, then up to 6 pages most likely to list contacts (contact, quote, about, team, privacy, terms),
    best first. Stops as soon as an address on the business's own domain turns up.
@@ -67,14 +67,14 @@ and records the top 20 at each. Grid searches request place IDs only: Google's f
 Custom scans (3×3 to 13×13) run from the Control Room's Map Rank page (`.github/workflows/map-rank.yml`), or:
 
 ```
-python -m goldbar_leads map-rank --keyword roofer --town Warrington --grid 7 --spacing 1600
+python -m aetos_leads map-rank --keyword roofer --town Warrington --grid 7 --spacing 1600
 ```
 
 ## Costs
 
 - Google Places: each search returns up to 20 businesses per request (about 60 per trade + town in 3 requests).
   These are "Text Search Enterprise" calls: the first 1,000 a month are free, then about $35 per 1,000.
-  Heatmap grid searches ask for IDs only, which is free. Every run logs its calls (`goldbar_leads/usage.py`)
+  Heatmap grid searches ask for IDs only, which is free. Every run logs its calls (`aetos_leads/usage.py`)
   and the Control Room's Money page shows the cost.
 - Companies House: free (600 requests per 5 minutes).
 - GitHub Actions: free.

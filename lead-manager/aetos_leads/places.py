@@ -7,8 +7,8 @@ Results come back in Google's relevance order, which we record as the business's
 
 import httpx
 
-from goldbar_leads import usage
-from goldbar_leads.models import Lead
+from aetos_leads import usage
+from aetos_leads.models import Lead
 
 SEARCH_URL = "https://places.googleapis.com/v1/places:searchText"
 

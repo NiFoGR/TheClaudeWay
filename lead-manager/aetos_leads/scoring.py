@@ -1,4 +1,4 @@
-"""The lead score: how much GoldBar can help this business, 0-100. Higher = better lead.
+"""The lead score: how much Aetos can help this business, 0-100. Higher = better lead.
 
 Three parts, matching what we sell (rules from docs/playbooks/local-seo-client-workflow.pdf plus design checks):
 

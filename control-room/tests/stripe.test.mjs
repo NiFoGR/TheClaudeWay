@@ -46,7 +46,7 @@ test("a Full Package checkout becomes a client, marks the lead won, and invoices
   const DB = fakeD1();
   DB.raw.exec(`INSERT INTO leads (place_id, name, trade, search_town, first_seen_at, updated_at) VALUES ('p1', 'Smith Roofing', 'roofer', 'Leeds', 'x', 'x')`);
   const session = { id: "cs_1", mode: "subscription", customer: "cus_1", subscription: "sub_1", created: ts("2026-10-01"), amount_total: 195000,
-    metadata: { goldbar_package: "full" }, custom_fields: [{ key: "business", text: { value: "smith roofing" } }],
+    metadata: { aetos_package: "full" }, custom_fields: [{ key: "business", text: { value: "smith roofing" } }],
     customer_details: { name: "John Smith", email: "john@smith.co.uk", phone: "+447700900000" } };
   // the first invoice can arrive before the checkout event
   const firstInvoice = { id: "in_1", customer: "cus_1", amount_paid: 195000, created: ts("2026-10-01"), status_transitions: { paid_at: ts("2026-10-01") },
@@ -88,7 +88,7 @@ test("Website Only pays once with no invoice: recorded from the checkout", async
   const DB = fakeD1();
   await handleEvent(DB, env, { type: "checkout.session.completed", data: { object: {
     id: "cs_2", mode: "payment", customer: "cus_2", created: ts("2026-10-02"), amount_total: 175000,
-    metadata: { goldbar_package: "website" }, custom_fields: [], customer_details: { name: "Ann's Removals" } } } });
+    metadata: { aetos_package: "website" }, custom_fields: [], customer_details: { name: "Ann's Removals" } } } });
   assert.equal(DB.raw.prepare("SELECT monthly_pence FROM clients").get().monthly_pence, 0);
   assert.equal(DB.raw.prepare("SELECT amount_pence FROM payments").get().amount_pence, 175000);
 });

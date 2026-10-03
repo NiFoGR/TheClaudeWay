@@ -1,9 +1,9 @@
 """Usage:
-  python -m goldbar_leads --trade roofer --town Leeds [--max 60] [--out output] [--db leads.db] [--job-id ID]
+  python -m aetos_leads --trade roofer --town Leeds [--max 60] [--out output] [--db leads.db] [--job-id ID]
       find and qualify leads; with D1 configured it also runs a free 5x5 Map Rank scan for the same search
-  python -m goldbar_leads map-rank --keyword roofer --town Leeds [--grid 7] [--spacing 1600] [--scan-id ID]
+  python -m aetos_leads map-rank --keyword roofer --town Leeds [--grid 7] [--spacing 1600] [--scan-id ID]
       Map Rank heatmap scan only
-  python -m goldbar_leads --fail-job ID "reason"  /  python -m goldbar_leads --fail-scan ID "reason"
+  python -m aetos_leads --fail-job ID "reason"  /  python -m aetos_leads --fail-scan ID "reason"
       mark a Control Room run as failed (used by the workflows)
 
 Keys come from the environment: GOOGLE_PLACES_API_KEY (required), COMPANIES_HOUSE_API_KEY (optional),
@@ -18,8 +18,8 @@ import time
 import uuid
 from pathlib import Path
 
-from goldbar_leads import maprank, pipeline, store, usage
-from goldbar_leads.places import PlacesError
+from aetos_leads import maprank, pipeline, store, usage
+from aetos_leads.places import PlacesError
 
 PROGRESS_EVERY_S = 2.0  # how often to push the progress bar to the Control Room
 
@@ -78,7 +78,7 @@ def save_usage(d1, run_kind: str, run_id: str) -> None:
 
 
 def map_rank_main(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog="goldbar_leads map-rank", description="Map Rank heatmap scan")
+    p = argparse.ArgumentParser(prog="aetos_leads map-rank", description="Map Rank heatmap scan")
     p.add_argument("--keyword", required=True)
     p.add_argument("--town", required=True)
     p.add_argument("--grid", type=int, default=7, choices=maprank.GRID_SIZES)
@@ -119,7 +119,7 @@ def main(argv: list[str] | None = None) -> int:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
         return map_rank_main(argv[1:])
 
-    p = argparse.ArgumentParser(prog="goldbar_leads", description="Find and qualify local UK leads")
+    p = argparse.ArgumentParser(prog="aetos_leads", description="Find and qualify local UK leads")
     p.add_argument("--trade", required=True, help='e.g. "roofer"')
     p.add_argument("--town", required=True, help='e.g. "Leeds"')
     p.add_argument("--max", type=int, default=60, help="how many businesses to find (up to 300)")

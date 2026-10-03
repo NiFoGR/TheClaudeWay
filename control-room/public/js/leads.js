@@ -121,7 +121,7 @@ function downloadCsv() {
   const lines = [cols.map(([h]) => cell(h)).join(","), ...visibleLeads().map((l) => cols.map(([, f]) => cell(f(l))).join(","))];
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
-  a.download = `goldbar-leads-${state.filter}.csv`;
+  a.download = `aetos-leads-${state.filter}.csv`;
   a.click();
 }
 

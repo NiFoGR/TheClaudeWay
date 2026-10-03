@@ -1,4 +1,4 @@
-/* GoldBar Control Room. One set of tokens, a few components, used the same way on every page. */
+/* Aetos Control Room. One set of tokens, a few components, used the same way on every page. */
 :root {
   color-scheme: dark;
   --bg: #0b0c0e;
@@ -48,7 +48,7 @@ svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none;
 .app { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
 .side { position: sticky; top: 0; height: 100vh; background: var(--surface); border-right: 1px solid var(--line); padding: 18px 12px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 2px 10px 18px; }
-.brand-mark { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, #f6d77f, #b07f12); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08) inset; }
+.brand-mark { display: grid; place-items: center; color: var(--gold-ink); font-weight: 800; font-size: 16px; width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, #f6d77f, #b07f12); box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08) inset; }
 .brand b { display: block; font-size: 15px; letter-spacing: -0.01em; }
 .brand span { display: block; font-size: 12px; color: var(--text-3); }
 .nav-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); padding: 14px 10px 6px; }

@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from goldbar_leads import usage
-from goldbar_leads.places import SEARCH_URL, PlacesError
+from aetos_leads import usage
+from aetos_leads.places import SEARCH_URL, PlacesError
 
 NOT_FOUND = 21  # rank used for averages when a business isn't in the top 20 at a point
 MAX_RANK = 20

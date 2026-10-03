@@ -97,7 +97,7 @@ async def receives_email(client: httpx.AsyncClient, domain: str) -> bool:
 
 async def find(client: httpx.AsyncClient, first_html: str, final_url: str) -> dict:
     """Search the site for emails and socials. Returns {"emails", "source", "socials", "pages_checked"}."""
-    from goldbar_leads.audit import extract_socials, host_of  # local import: audit imports this module
+    from aetos_leads.audit import extract_socials, host_of  # local import: audit imports this module
 
     site_host = host_of(final_url)
     soup = BeautifulSoup(first_html, "html.parser")

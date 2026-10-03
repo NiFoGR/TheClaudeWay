@@ -11,8 +11,8 @@ from urllib.parse import urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from goldbar_leads import contacts
-from goldbar_leads.models import Lead
+from aetos_leads import contacts
+from aetos_leads.models import Lead
 
 # look like a normal browser: many small-business sites block anything that announces itself as a bot
 HEADERS = {

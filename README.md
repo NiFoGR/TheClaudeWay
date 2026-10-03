@@ -1,6 +1,6 @@
-# TheClaudeWay: GoldBar Websites Control Room
+# TheClaudeWay: Aetos Websites Control Room
 
-Automation for GoldBar Websites: find local UK businesses with weak websites, show them a demo, sell, deliver.
+Automation for Aetos Websites: find local UK businesses with weak websites, show them a demo, sell, deliver.
 
 | Part | Status |
 | --- | --- |

@@ -1,7 +1,9 @@
 # CLAUDE.md
 
-Automation for **GoldBar Websites**, a UK business (run by Nikiforos as a sole trader trading as GoldBar Websites;
-invoices in his name, not DAFNO LTD; payments via a personal Stripe account) that finds local trade businesses
+Automation for **Aetos Websites** (aetoswebsites.com, on Cloudflare; formerly "GoldBar"), a UK business run by
+Nikiforos as a sole trader trading as Aetos Websites (invoices in his name, not DAFNO LTD; payments via a personal
+Stripe account; a limited company comes later, e.g. Aetos Ltd / Aetos Digital Ltd, with services as "Aetos Websites",
+"Aetos Marketing"…). It finds local trade businesses
 with weak online presence, shows them a demo site, sells a website + monthly retainer, and delivers it.
 The owner (Nikiforos) does sales calls, relationships and approvals; the system does everything else.
 
@@ -55,7 +57,7 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
 ## Deployment facts
 
 - Branch `claude/confident-hawking-vi0lgk` is the only branch and Cloudflare's production branch; every push redeploys.
-- Cloudflare Pages: root `control-room`, output `public`, D1 binding `DB` → database `goldbarwebsites`; variables
+- Cloudflare Pages: root `control-room`, output `public`, D1 binding `DB` → database `goldbarwebsites` (named before the rename; leave it); variables
   `CONTROL_ROOM_PASSWORD`, `GITHUB_TOKEN`, `GITHUB_REPO=NiFoGR/TheClaudeWay`, `GITHUB_REF`. Variable/binding changes need a redeploy.
 - GitHub Actions secrets: `GOOGLE_PLACES_API_KEY`, `COMPANIES_HOUSE_API_KEY`, `CLOUDFLARE_ACCOUNT_ID`, `D1_DATABASE_ID`, `CLOUDFLARE_API_TOKEN`.
 
@@ -72,10 +74,10 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
 - No filler, no sugar-coating, plain English, short answers. Push back when something's wrong, once, then go with their call.
 - Don't overcomplicate: prefer free, simple setups (Cloudflare + GitHub free tiers). Budget for leads + mailboxes: £100/month.
 - Built so far: Control Room (Home, Lead Scraper with live progress, Map Rank heatmaps, Leads with a details drawer,
-  Money, Setup); lead score = Website 45 + Local SEO 30 + Google Maps 25 (`lead-manager/goldbar_leads/scoring.py`);
-  email finding in `lead-manager/goldbar_leads/contacts.py`. Next: Demos, Outreach, Onboarding.
+  Money, Setup); lead score = Website 45 + Local SEO 30 + Google Maps 25 (`lead-manager/aetos_leads/scoring.py`);
+  email finding in `lead-manager/aetos_leads/contacts.py`. Next: Demos, Outreach, Onboarding.
 - Money page: clients (build fee + retainer after the free days), costs you add, and Google API cost estimated from
-  calls logged per run (`goldbar_leads/usage.py` → `api_usage` table; prices and free allowances in
+  calls logged per run (`aetos_leads/usage.py` → `api_usage` table; prices and free allowances in
   `control-room/functions/_lib/money.js`). Forecasts count only what's committed.
 - Stripe (`functions/_lib/stripe.js`, `stripe-events.js`): Setup's button creates products, payment links and the webhook
   from `STRIPE_SECRET_KEY` (Cloudflare secret); ids + webhook secret live in the `settings` table. Webhook payloads are

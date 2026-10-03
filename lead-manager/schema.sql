@@ -112,7 +112,7 @@ CREATE TABLE IF NOT EXISTS api_usage (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   run_kind   TEXT NOT NULL,  -- scrape | scan
   run_id     TEXT,
-  sku        TEXT NOT NULL,  -- see lead-manager/goldbar_leads/usage.py
+  sku        TEXT NOT NULL,  -- see lead-manager/aetos_leads/usage.py
   calls      INTEGER NOT NULL,
   created_at TEXT NOT NULL
 );

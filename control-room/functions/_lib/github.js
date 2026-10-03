@@ -7,7 +7,7 @@ export async function startWorkflow(env, workflow, inputs) {
       authorization: `Bearer ${env.GITHUB_TOKEN}`,
       accept: "application/vnd.github+json",
       "x-github-api-version": "2022-11-28",
-      "user-agent": "goldbar-control-room",
+      "user-agent": "aetos-control-room",
     },
     body: JSON.stringify({ ref: env.GITHUB_REF || "main", inputs }),
   });

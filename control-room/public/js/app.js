@@ -1,4 +1,4 @@
-// GoldBar Control Room: navigation and routing. Each page lives in its own file next to this one.
+// Aetos Control Room: navigation and routing. Each page lives in its own file next to this one.
 import { homePage } from "./home.js";
 import { closeDrawer, leadsPage } from "./leads.js";
 import { api, esc, icon, pageHead, state, toast, view } from "./lib.js";

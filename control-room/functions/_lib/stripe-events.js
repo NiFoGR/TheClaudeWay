@@ -11,9 +11,9 @@ async function clientForCustomer(DB, customer) {
 
 /** A new client paid through a payment link: add them as a client (and mark the matching lead won). */
 async function checkoutCompleted(DB, s) {
-  const pkgKey = s.metadata?.goldbar_package;
+  const pkgKey = s.metadata?.aetos_package || s.metadata?.goldbar_package; // links made before the rename
   const pkg = PACKAGES[pkgKey];
-  if (!pkg || !s.customer) return "ignored: not a GoldBar payment link";
+  if (!pkg || !s.customer) return "ignored: not a Aetos payment link";
   if (await clientForCustomer(DB, s.customer)) return "already recorded";
   const business = (s.custom_fields || []).find((f) => f.key === "business")?.text?.value;
   const name = String(business || s.customer_details?.name || s.customer_details?.email || "New client").trim().slice(0, 120);

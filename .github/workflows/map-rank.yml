@@ -52,7 +52,7 @@ jobs:
           GRID: ${{ inputs.grid }}
           SPACING: ${{ inputs.spacing }}
           SCAN_ID: ${{ inputs.scan_id }}
-        run: python -m goldbar_leads map-rank --keyword "$KEYWORD" --town "$TOWN" --grid "$GRID" --spacing "$SPACING" --scan-id "$SCAN_ID"
+        run: python -m aetos_leads map-rank --keyword "$KEYWORD" --town "$TOWN" --grid "$GRID" --spacing "$SPACING" --scan-id "$SCAN_ID"
       - name: Tell the Control Room the scan failed
         if: failure() && inputs.scan_id != ''
         env:
@@ -60,4 +60,4 @@ jobs:
           D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           SCAN_ID: ${{ inputs.scan_id }}
-        run: python -m goldbar_leads --fail-scan "$SCAN_ID" "The scan crashed. Open the run on GitHub (Actions tab) for details."
+        run: python -m aetos_leads --fail-scan "$SCAN_ID" "The scan crashed. Open the run on GitHub (Actions tab) for details."

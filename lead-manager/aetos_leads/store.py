@@ -10,8 +10,8 @@ from pathlib import Path
 
 import httpx
 
-from goldbar_leads.maprank import Scan
-from goldbar_leads.models import Lead
+from aetos_leads.maprank import Scan
+from aetos_leads.models import Lead
 
 SCHEMA = (Path(__file__).resolve().parent.parent / "schema.sql").read_text()
 

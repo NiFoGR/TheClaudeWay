@@ -7,8 +7,8 @@ import httpx
 import respx
 
 from conftest import FIXTURES
-from goldbar_leads import audit, companies_house, maprank, pipeline, places, qualify, scoring, store, usage
-from goldbar_leads.models import Lead
+from aetos_leads import audit, companies_house, maprank, pipeline, places, qualify, scoring, store, usage
+from aetos_leads.models import Lead
 
 OLD = (FIXTURES / "old_site.html").read_text()
 GOOD = (FIXTURES / "good_site.html").read_text()
@@ -403,7 +403,7 @@ def test_progress_reporter_throttles_but_always_reports_stage_changes_and_finish
         def set_progress(self, *a):
             calls.append(a)
 
-    from goldbar_leads.__main__ import progress_reporter
+    from aetos_leads.__main__ import progress_reporter
     report = progress_reporter(FakeD1(), "j1")
     report("scouting", 0, 60)
     for i in range(1, 30):
@@ -462,7 +462,7 @@ def test_pipeline_end_to_end(tmp_path):
 
 @respx.mock
 def test_cli_reports_clear_failures_to_the_control_room(monkeypatch, tmp_path):
-    from goldbar_leads.__main__ import main
+    from aetos_leads.__main__ import main
 
     for k, v in {"CLOUDFLARE_ACCOUNT_ID": "a", "D1_DATABASE_ID": "d", "CLOUDFLARE_API_TOKEN": "t"}.items():
         monkeypatch.setenv(k, v)

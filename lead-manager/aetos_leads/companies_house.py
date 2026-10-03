@@ -10,7 +10,7 @@ from difflib import SequenceMatcher
 
 import httpx
 
-from goldbar_leads.models import Lead
+from aetos_leads.models import Lead
 
 BASE = "https://api.company-information.service.gov.uk"
 MATCH_THRESHOLD = 0.85

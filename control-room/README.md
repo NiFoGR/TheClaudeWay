@@ -1,4 +1,4 @@
-# GoldBar Control Room
+# Aetos Control Room
 
 The website you log into to run everything:
 
@@ -29,19 +29,19 @@ Pressing *Find leads* records a run and starts the GitHub workflow. The page fil
 
 ### 1. Cloudflare: database and website
 1. Create a free account at cloudflare.com.
-2. **Storage & Databases → D1 → Create** a database called `goldbar`. Copy its **Database ID**.
+2. **Storage & Databases → D1 → Create** a database called `aetos`. Copy its **Database ID**.
 3. **Workers & Pages → Create → Pages → Connect to Git**, pick `NiFoGR/TheClaudeWay`, then:
    - Production branch: the branch this code is on
    - Framework preset: *None*, build command: *empty*
    - Root directory: `control-room`, build output directory: `public`
-4. In the new project: **Settings → Bindings → Add → D1 database**: variable name `DB`, database `goldbar`.
+4. In the new project: **Settings → Bindings → Add → D1 database**: variable name `DB`, database `aetos`.
 5. **Settings → Variables and Secrets**, add:
    - `CONTROL_ROOM_PASSWORD`: the password you'll log in with (type: Secret)
    - `GITHUB_TOKEN`: see step 2 (type: Secret)
    - `GITHUB_REPO`: `NiFoGR/TheClaudeWay`
    - `GITHUB_REF`: the branch name from step 3
 6. **Deployments → Retry deployment** so the settings take effect. Your Control Room is at `https://<project>.pages.dev`.
-   You can point your own domain (e.g. `control.goldbarwebsites.co.uk`) at it later under *Custom domains*.
+   You can point your own domain (e.g. `control.aetoswebsites.com`) at it later under *Custom domains*.
 
 ### 2. GitHub token (lets the Control Room press "Run" for you)
 GitHub → your profile picture → **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate**:

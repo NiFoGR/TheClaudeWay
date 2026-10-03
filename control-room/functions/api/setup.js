@@ -31,7 +31,7 @@ async function checkGitHub(env) {
     headers: {
       authorization: `Bearer ${env.GITHUB_TOKEN}`,
       accept: "application/vnd.github+json",
-      "user-agent": "goldbar-control-room",
+      "user-agent": "aetos-control-room",
     },
   });
   if (resp.ok) return { ok: true };

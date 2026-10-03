@@ -3,10 +3,10 @@
 import re
 from collections import Counter
 
-from goldbar_leads import maprank, scoring
-from goldbar_leads.audit import host_of, is_real_website
-from goldbar_leads.maprank import Scan
-from goldbar_leads.models import Lead
+from aetos_leads import maprank, scoring
+from aetos_leads.audit import host_of, is_real_website
+from aetos_leads.maprank import Scan
+from aetos_leads.models import Lead
 
 # Front-desk / gatekeeper businesses: the owner won't read our email.
 FRONT_DESK_TYPES = {

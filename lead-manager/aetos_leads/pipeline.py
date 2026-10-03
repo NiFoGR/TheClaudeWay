@@ -11,9 +11,9 @@ from dataclasses import dataclass
 
 import httpx
 
-from goldbar_leads import audit, companies_house, maprank, places, qualify
-from goldbar_leads.maprank import Scan
-from goldbar_leads.models import Lead
+from aetos_leads import audit, companies_house, maprank, places, qualify
+from aetos_leads.maprank import Scan
+from aetos_leads.models import Lead
 
 log = logging.getLogger(__name__)
 AUDIT_CONCURRENCY = 8
