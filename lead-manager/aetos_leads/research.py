@@ -56,7 +56,7 @@ def finalise(lead: Lead) -> None:
     """Once the owner is known: put the decision maker's address first, and note what Claude should do."""
     if lead.emails and lead.audit.get("email_source") != "guessed":
         last = lead.director_name.split()[-1] if len(lead.director_name.split()) > 1 else ""
-        lead.emails = contacts.rank_emails(lead.emails, host_of(lead.website or ""), lead.director_first_name, last)
+        lead.emails = contacts.rank_emails(lead.emails, host_of(lead.website or ""), lead.director_first_name, last, lead.name)
         lead.email = lead.emails[0]
     lead.audit["ai_needs"] = needs(lead)
 

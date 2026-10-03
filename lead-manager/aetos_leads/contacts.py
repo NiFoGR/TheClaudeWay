@@ -65,11 +65,26 @@ def emails_in(html: str) -> list[str]:
     candidates += [f"{user}@{DOT_RE.sub('.', domain)}" for user, domain in OBFUSCATED_RE.findall(text)]
     candidates += [decode_cfemail(h) for h in re.findall(r'data-cfemail="([0-9a-fA-F]+)"', html)]
     candidates += [decode_cfemail(h) for h in re.findall(r"/cdn-cgi/l/email-protection#([0-9a-fA-F]+)", html)]
+    credits = {m.lower() for m in EMAIL_RE.findall(text) if _is_credit(text, m)}
     for e in candidates:
         e = e.lower().strip(".").removeprefix("mailto:")
-        if e and EMAIL_RE.fullmatch(e) and not JUNK_EMAIL.search(e) and e not in found:
+        if e and EMAIL_RE.fullmatch(e) and not JUNK_EMAIL.search(e) and e not in credits and e not in found:
             found.append(e)
     return found
+
+
+CREDIT_WORDS = re.compile(r"font|typeface|glyph|\bOFL\b", re.I)
+CODE_BLOCKS = re.compile(r"<style\b.*?</style>|/\*.*?\*/", re.S | re.I)
+
+
+def _is_credit(text: str, email: str) -> bool:
+    """An address in a web font's or a stylesheet's credits (e.g. 'Copyright (c) Pablo Impallari
+    (impallari@gmail.com), with Reserved Font Name…'), not the business's. Real data: Bennies Boxing Gym."""
+    blocks = [(m.start(), m.end()) for m in CODE_BLOCKS.finditer(text)]
+    for m in re.finditer(re.escape(email), text):
+        if any(a <= m.start() < b for a, b in blocks) or CREDIT_WORDS.search(text[max(0, m.start() - 80): m.end() + 40]):
+            return True
+    return False
 
 
 def is_own(email: str, site_host: str) -> bool:
@@ -101,18 +116,21 @@ def drop_glued(emails: list[str]) -> list[str]:
     return out
 
 
-def rank_emails(emails: list[str], site_host: str, owner_first: str = "", owner_last: str = "") -> list[str]:
+def rank_emails(emails: list[str], site_host: str, owner_first: str = "", owner_last: str = "", business: str = "") -> list[str]:
     """Best address to reach whoever makes the decision, first:
     the owner's own address → a decision-maker role (director@, owner@) → in a small business, a named person
     (it's usually the owner or a partner) → the general inbox (info@, enquiries@) → named staff of a bigger company
     → anything on another domain. Departments (accounts@, careers@) come last on the domain."""
     emails = drop_glued(emails)
     first, last = owner_first.lower(), owner_last.lower()
+    words = [w for w in re.findall(r"[a-z]+", business.lower()) if w not in ("the", "and", "ltd", "limited")]
     small = staff_count(emails, site_host) <= 2
 
     def tier(e: str) -> int:
-        if not is_own(e, site_host):
-            return 7
+        if not is_own(e, site_host):  # gmail/icloud etc.: theirs if it carries their name ("benniesboxing@icloud.com")
+            local = re.sub(r"[^a-z]", "", e.split("@")[0])
+            mine = any(len(w) > 3 and w in local for w in words) or (first and first in local)
+            return 6 if mine else 7
         parts = re.split(r"[._-]", e.split("@")[0])
         if first and (parts[0] == first or (len(parts) > 1 and last and parts[0][:1] == first[:1] and parts[1] == last)):
             return 0

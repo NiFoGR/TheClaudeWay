@@ -83,3 +83,13 @@ def test_guesses_info_only_when_the_domain_receives_email():
     assert found.pop("htmls") and found == {"emails": ["info@smith.co.uk"], "source": "guessed", "socials": {}, "pages_checked": 1}
     none = run(lambda c: contacts.find(c, "<p>call us</p>", "https://nomail.co.uk/"))
     assert none["emails"] == [] and none["source"] == ""
+
+
+def test_font_credit_emails_ignored_and_their_own_gmail_preferred():
+    # real data: Bennies Boxing Gym (GoDaddy site) got impallari@gmail.com, a web font designer's address
+    html = ("<style>/* Copyright (c) 2010, Pablo Impallari (www.impallari.com|impallari@gmail.com), "
+            "with Reserved Font Name Libre Baskerville. Rodrigo Fuenzalida (hello@rfuenzalida.com) */</style>"
+            "<p>Email us: benniesboxing@icloud.com</p>")
+    assert contacts.emails_in(html) == ["benniesboxing@icloud.com"]
+    ranked = contacts.rank_emails(["coach123@gmail.com", "benniesboxing@icloud.com"], "benniesboxing.co.uk", business="Bennies Boxing Gym")
+    assert ranked[0] == "benniesboxing@icloud.com"
