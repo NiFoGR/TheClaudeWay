@@ -285,3 +285,25 @@ def test_pipeline_end_to_end(tmp_path):
     assert "No Site Roofing" in paths["call_list"].read_text()
     assert "Gone Roofing" in paths["excluded"].read_text()
     assert "3 worth pitching" in pipeline.summary(leads)
+
+
+# ---------------------------------------------------------------- command line
+
+
+@respx.mock
+def test_cli_reports_clear_failures_to_the_control_room(monkeypatch, tmp_path):
+    from goldbar_leads.__main__ import main
+
+    for k, v in {"CLOUDFLARE_ACCOUNT_ID": "a", "D1_DATABASE_ID": "d", "CLOUDFLARE_API_TOKEN": "t"}.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("GOOGLE_PLACES_API_KEY", raising=False)
+    d1 = respx.post(store.D1("a", "d", "t").url).mock(return_value=httpx.Response(200, json={"success": True, "result": []}))
+    assert main(["--trade", "roofer", "--town", "Leeds", "--job-id", "j1", "--out", str(tmp_path)]) == 2
+    last = json.loads(d1.calls[-1].request.content)
+    assert last["params"][0] == "failed" and "GOOGLE_PLACES_API_KEY" in last["params"][3]
+
+    monkeypatch.setenv("GOOGLE_PLACES_API_KEY", "bad")
+    respx.post(places.SEARCH_URL).mock(return_value=httpx.Response(403, text="API not enabled"))
+    assert main(["--trade", "roofer", "--town", "Leeds", "--job-id", "j1", "--out", str(tmp_path)]) == 2
+    last = json.loads(d1.calls[-1].request.content)
+    assert "Google refused the search" in last["params"][3]

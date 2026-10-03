@@ -50,6 +50,18 @@ input:focus, select:focus, textarea:focus { border-color: var(--gold); }
 .hint { color: var(--muted); font-size: 12px; margin: 10px 0 0; }
 .error { color: var(--bad); margin: 10px 0 0; }
 
+.cap::first-letter { text-transform: uppercase; }
+
+/* how it works + setup */
+.steps { margin: 0; padding-left: 20px; display: grid; gap: 8px; }
+.checks { display: grid; gap: 14px; }
+.check { display: grid; grid-template-columns: 28px 1fr; gap: 12px; align-items: start; }
+.check .small { color: var(--muted); font-size: 13px; }
+.dot { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; }
+.dot.ok { background: rgba(63, 182, 123, 0.15); color: var(--good); }
+.dot.no { background: rgba(229, 96, 79, 0.15); color: var(--bad); }
+code { background: var(--panel-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 13px; }
+
 /* runs */
 .runs { display: flex; flex-direction: column; gap: 8px; }
 .run { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); cursor: pointer; }
@@ -103,6 +115,7 @@ tr.detail td { background: var(--panel-2); }
   .brand { padding: 0 8px 0 0; }
   .nav { display: flex; gap: 2px; flex-wrap: wrap; }
   .nav span, .side .spacer { display: none; }
+  .side > .nav:last-child { margin-left: auto; }
   .form { grid-template-columns: 1fr 1fr; }
   .tiles { grid-template-columns: repeat(2, 1fr); }
   .detail-grid { grid-template-columns: 1fr; }

@@ -69,8 +69,9 @@ function leadsTable() {
       <input class="grow" id="search" placeholder="Search name, town, email…" value="${esc(state.search)}">
       <button class="btn ghost" id="csv">Download CSV</button>
     </div>
+    <p class="hint" style="margin:0 0 10px"><b>Score</b> = how much we can help them: 100 means no website at all, 0 means their site is already fine. Best leads are at the top. Click a lead for full details and notes.</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Score</th><th>Business</th><th>Contact</th><th>Problems</th><th>Google</th><th>Website</th><th>Status</th></tr></thead>
+      <thead><tr><th>Score</th><th>Business</th><th>Contact</th><th>What's wrong online</th><th>Google rating</th><th>Website</th><th>Status</th></tr></thead>
       <tbody>${body}</tbody>
     </table></div>`;
 }
@@ -88,7 +89,7 @@ function leadRow(l) {
       <td data-label="Contact">${l.phone ? `<a href="tel:${esc(l.phone.replace(/\s/g, ""))}">${esc(l.phone)}</a>` : ""}
           <div class="small">${l.email ? `<a href="mailto:${esc(l.email)}">${esc(l.email)}</a>` : "no email found"}</div></td>
       <td data-label="Problems"><ul class="problems">${shown}${more}</ul></td>
-      <td data-label="Google">${l.rating ? `${esc(l.rating)}★` : "–"}<div class="small">${esc(l.review_count || 0)} reviews${l.rank ? ` · #${esc(l.rank)}` : ""}</div></td>
+      <td data-label="Google">${l.rating ? `${esc(l.rating)}★` : "–"}<div class="small">${esc(l.review_count || 0)} reviews${l.rank ? ` · #${esc(l.rank)} on Google` : ""}</div></td>
       <td data-label="Website">${site ? `<a href="${esc(site)}" target="_blank" rel="noopener noreferrer">open</a>` : `<span class="small">none</span>`}</td>
       <td data-label="Status"><select data-status="${esc(l.place_id)}">${status}</select></td>
     </tr>`;
@@ -181,7 +182,7 @@ function scraperPage() {
       <datalist id="trades">${TRADES.map((t) => `<option value="${esc(t)}">`).join("")}</datalist>
     </form>
     <p class="error" id="scrape-error" hidden></p>
-    <div class="card"><h2>Runs</h2><div class="runs">${state.jobs.length ? state.jobs.map(runRow).join("") : `<div class="empty">No runs yet. Start one above.</div>`}</div></div>
+    ${state.jobs.length ? `<div class="card"><h2>Your runs</h2><p class="hint" style="margin:-6px 0 12px">Click a run to see its leads.</p><div class="runs">${state.jobs.map(runRow).join("")}</div></div>` : howItWorks()}
     ${job ? jobResults(job) : ""}`;
 
   view.querySelector("#scrape").onsubmit = startScrape;
@@ -192,6 +193,14 @@ function scraperPage() {
 const STUCK_MINUTES = 40;
 const isStuck = (j) => (j.status === "queued" || j.status === "running") && Date.now() - Date.parse(j.created_at) > STUCK_MINUTES * 60000;
 const inProgress = (j) => (j.status === "queued" || j.status === "running") && !isStuck(j);
+
+function howItWorks() {
+  return `<div class="card"><h2>How it works</h2><ol class="steps">
+    <li><b>Type a niche and a town</b>, choose how many leads, press <b>Find leads</b>.</li>
+    <li>It searches Google Maps, checks every business's website, finds their email and director's name, and skips chains and franchises. Takes 2–6 minutes; you can leave the page.</li>
+    <li><b>Your leads appear here</b>, best first: the businesses whose online presence needs us most. Use the tabs to see who to email and who to call.</li>
+  </ol><p class="hint">First time? Check <a href="#/setup">Setup</a> shows everything connected.</p></div>`;
+}
 
 function runRow(j) {
   const stuck = isStuck(j);
@@ -211,10 +220,10 @@ function jobResults(job) {
     return `<div class="card"><h2>That run looks stuck</h2><p class="error">Open GitHub → Actions → Scrape leads to see what happened, then start it again.</p></div>`;
   }
   if (inProgress(job)) {
-    return `<div class="card"><h2>${esc(job.trade)} in ${esc(job.town)}</h2><p class="sub" style="margin:0">Working on it. This usually takes 2–6 minutes; the page updates by itself.</p></div>`;
+    return `<div class="card"><h2 class="cap">${esc(job.trade)} in ${esc(job.town)}</h2><p class="sub" style="margin:0">Working on it. This usually takes 2–6 minutes; the page updates by itself.</p></div>`;
   }
   if (job.status === "failed") {
-    return `<div class="card"><h2>That run failed</h2><p class="error">${esc(job.error || "Unknown error")}</p></div>`;
+    return `<div class="card"><h2>That run failed</h2><p class="error">${esc(job.error || "Unknown error")}</p><p class="hint">Check <a href="#/setup">Setup</a>, fix anything red, then press Find leads again.</p></div>`;
   }
   const pitch = state.leads.filter((l) => !l.excluded);
   const tiles = [
@@ -224,7 +233,7 @@ function jobResults(job) {
     [pitch.filter((l) => l.email).length, "with an email"],
     [pitch.filter((l) => !l.email).length, "for the call list"],
   ].map(([n, t]) => `<div class="tile"><b>${n}</b><span>${t}</span></div>`).join("");
-  return `<h2 style="margin:26px 0 12px">${esc(job.trade)} in ${esc(job.town)}</h2><div class="tiles">${tiles}</div>${leadsTable()}`;
+  return `<h2 class="cap" style="margin:26px 0 12px">${esc(job.trade)} in ${esc(job.town)}</h2><div class="tiles">${tiles}</div>${leadsTable()}`;
 }
 
 async function startScrape(e) {
@@ -280,14 +289,32 @@ function leadsPage() {
   bindTable(leadsPage);
 }
 
+// ---------------------------------------------------------------- Setup page
+
+async function setupPage() {
+  view.innerHTML = `<h1>Setup</h1><p class="sub">Checking what's connected…</p>`;
+  const { checks, note } = await api("/api/setup");
+  const allOk = checks.every((c) => c.ok);
+  view.innerHTML = `
+    <h1>Setup</h1>
+    <p class="sub">${allOk ? "Everything is connected. You're ready to find leads." : "Fix anything marked red, then refresh this page."}</p>
+    <div class="card checks">${checks.map((c) => `
+      <div class="check"><span class="dot ${c.ok ? "ok" : "no"}">${c.ok ? "✓" : "✕"}</span>
+        <div><b>${esc(c.name)}</b><div class="small">${esc(c.ok ? c.detail : c.fix)}</div></div></div>`).join("")}
+    </div>
+    <p class="hint">${esc(note)} Full step-by-step guide: <code>control-room/README.md</code> in the repo.</p>`;
+}
+
 // ---------------------------------------------------------------- router
 
 async function route() {
-  const page = location.hash === "#/leads" ? "leads" : "scraper";
+  const page = { "#/leads": "leads", "#/setup": "setup" }[location.hash] || "scraper";
   document.querySelectorAll(".nav a[data-route]").forEach((a) => a.classList.toggle("active", a.dataset.route === page));
   state.open = null;
   try {
-    if (page === "leads") {
+    if (page === "setup") {
+      await setupPage();
+    } else if (page === "leads") {
       state.jobId = null;
       state.leads = (await api("/api/leads")).leads;
       leadsPage();

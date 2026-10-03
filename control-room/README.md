@@ -44,7 +44,8 @@ repository access *Only select repositories → TheClaudeWay*, permission **Acti
 | `D1_DATABASE_ID` | The Database ID from step 1.2 |
 | `CLOUDFLARE_API_TOKEN` | Cloudflare → My Profile → API Tokens → Create token → *Custom*: permission **Account → D1 → Edit** |
 
-That's it: log in, type *roofer* / *Leeds* / *60*, press **Find leads**.
+Then open the Control Room's **Setup** page: every line should be green. Log in, type *roofer* / *Leeds* / *60*,
+and press **Find leads**. If a run fails, the reason shows on the run (e.g. "Google key missing") with what to fix.
 
 ## Developing locally
 From `control-room/`, run `npx wrangler pages dev` with a `wrangler.toml` that binds a local D1 database as `DB`

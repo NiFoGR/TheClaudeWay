@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from goldbar_leads import pipeline, store
+from goldbar_leads.places import PlacesError
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -19,7 +20,7 @@ def main(argv: list[str] | None = None) -> int:
     if argv[:1] == ["--fail-job"]:
         d1 = store.d1_from_env()
         if d1 and len(argv) >= 2:
-            d1.set_job(argv[1], "failed", error=" ".join(argv[2:]) or "The run failed")
+            d1.fail_job_if_unexplained(argv[1], " ".join(argv[2:]) or "The run failed")
         return 0
 
     p = argparse.ArgumentParser(prog="goldbar_leads", description="Find and qualify local UK leads")
@@ -32,19 +33,29 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    places_key = os.environ.get("GOOGLE_PLACES_API_KEY", "")
-    if not places_key:
-        print("GOOGLE_PLACES_API_KEY is not set", file=sys.stderr)
+    d1 = store.d1_from_env()
+
+    def fail(message: str) -> int:
+        print(message, file=sys.stderr)
+        if d1 and args.job_id:
+            d1.set_job(args.job_id, "failed", error=message)
         return 2
 
-    d1 = store.d1_from_env()
     if d1 and args.job_id:
         d1.ensure_schema()
         d1.set_job(args.job_id, "running")
 
-    leads = pipeline.run(
-        args.trade, args.town, places_key, os.environ.get("COMPANIES_HOUSE_API_KEY", ""), min(args.max, 300)
-    )
+    places_key = os.environ.get("GOOGLE_PLACES_API_KEY", "")
+    if not places_key:
+        return fail("Google key missing: add GOOGLE_PLACES_API_KEY in GitHub → Settings → Secrets and variables → Actions.")
+    try:
+        leads = pipeline.run(
+            args.trade, args.town, places_key, os.environ.get("COMPANIES_HOUSE_API_KEY", ""), min(args.max, 300)
+        )
+    except PlacesError as e:
+        return fail(f"Google refused the search. Check the key and that Places API (New) is enabled. ({e})")
+    if not leads:
+        return fail(f"Google found no {args.trade} businesses in {args.town}. Check the spelling or try a bigger town.")
     paths = pipeline.write_outputs(Path(args.out), args.trade, args.town, leads)
     if args.db:
         store.save_sqlite(args.db, leads, args.job_id)

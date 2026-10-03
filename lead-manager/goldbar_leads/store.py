@@ -92,6 +92,14 @@ class D1:
         )
 
 
+    def fail_job_if_unexplained(self, job_id: str, error: str) -> None:
+        """Mark a run failed unless the scraper already recorded a clearer reason."""
+        self.query(
+            "UPDATE jobs SET status = 'failed', error = ?, updated_at = ? WHERE id = ? AND status != 'failed'",
+            [error[:500], _now(), job_id],
+        )
+
+
 def d1_from_env() -> "D1 | None":
     env = [os.environ.get(k, "") for k in ("CLOUDFLARE_ACCOUNT_ID", "D1_DATABASE_ID", "CLOUDFLARE_API_TOKEN")]
     return D1(*env) if all(env) else None
