@@ -64,7 +64,7 @@ For now: **receive** email at `hello@aetoswebsites.com` and have it land in your
 | Public details → Statement descriptor (what clients see on their bank statement) | `AETOS WEBSITES` |
 | Public details → Website | `https://aetoswebsites.com` (see the note below) |
 | Public details → Support email | `hello@aetoswebsites.com` |
-| Public details → Support phone | your business mobile |
+| Public details → Support phone | leave empty. If Stripe insists, use a cheap second SIM (£5–10), never your personal number |
 | Bank accounts / payouts | the account you want paid into (your separate sole-trader account if you opened one) |
 | Branding → Icon and Logo | upload `docs/brand/aetos-logo.png` |
 | Branding → Brand colour / Accent colour | `#1A1C20` / `#C9A13B` |
@@ -101,13 +101,17 @@ For now: **receive** email at `hello@aetoswebsites.com` and have it land in your
 
 ---
 
-## Part 5: Send me these (I need them for the website and legal pages)
+## Part 5: What the website needs (nothing personal goes public)
 
-1. **Business address** to show on the site. UK law requires a real address on a business website. Your home works;
-   if you'd rather keep it private, use a virtual office address (about £10–20 a month).
-2. **Business phone number** you're happy to show publicly.
-3. Your **full name** as it should appear: "Aetos Websites is a trading name of [your name]".
-4. Confirm **hello@aetoswebsites.com** is the contact email.
+- **No phone number** on the site. Contact is by **hello@aetoswebsites.com** and a contact form, which is enough legally.
+- **No home address.** UK online-selling rules do require a business address on the site, so get a **virtual office
+  address** (about £10–20 a month, e.g. in London or your city). It's a real address that forwards your post, and your home
+  stays private. You can also give Stripe and HMRC that address for anything public; your home address stays private with them.
+- **Your name:** as a sole trader using a trading name, the law requires your name on the site and invoices
+  ("Aetos Websites is a trading name of N. [Surname]"). An initial plus surname is fine.
+
+Send me: the virtual office address once you have it, and the name as you want it shown. Until then I'll build the site
+with those two lines as placeholders, so nothing is held up.
 
 Then I'll build **aetoswebsites.com** in the brand (white on charcoal, the eagle). It'll have:
 - the offer and prices
