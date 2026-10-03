@@ -7,6 +7,9 @@ Stripe account; a limited company comes later, e.g. Aetos Ltd / Aetos Digital Lt
 with weak online presence, shows them a demo site, sells a website + monthly retainer, and delivers it.
 The owner (Nikiforos) does sales calls, relationships and approvals; the system does everything else.
 
+Brand: logo `docs/brand/aetos-logo.png`, main theme white on Charcoal `#1A1C20`, gold accent only. Palette and rules in
+[docs/brand.md](docs/brand.md).
+
 ## Rulebooks: read before writing copy, scripts, prompts or SEO work
 
 - **General business rules** (offers, sales frame, qualifying, objections, follow-up, outreach and copy rules):
