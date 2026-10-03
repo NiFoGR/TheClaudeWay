@@ -1,6 +1,7 @@
 # CLAUDE.md
 
-Automation for **GoldBar Websites**, a UK business (invoiced via DAFNO LTD) that finds local trade businesses
+Automation for **GoldBar Websites**, a UK business (run by Nikiforos as a sole trader trading as GoldBar Websites;
+invoices in his name, not DAFNO LTD; payments via a personal Stripe account) that finds local trade businesses
 with weak online presence, shows them a demo site, sells a website + monthly retainer, and delivers it.
 The owner (Nikiforos) does sales calls, relationships and approvals; the system does everything else.
 
