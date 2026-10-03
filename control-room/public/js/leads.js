@@ -47,7 +47,7 @@ function leadRow(l) {
   const status = STATUSES.map((s) => `<option ${s === l.status ? "selected" : ""}>${esc(s)}</option>`).join("");
   return `<tr class="click ${state.drawer === l.place_id ? "sel" : ""}" data-id="${esc(l.place_id)}">
     <td class="c-score">${ring(l.excluded ? null : l.quality_score)}</td>
-    <td class="c-biz"><div class="biz">${esc(l.name)}</div><div class="sub-line">${esc([l.director_name && `Director: ${l.director_name}`, l.town].filter(Boolean).join(" · "))}</div></td>
+    <td class="c-biz"><div class="biz">${esc(l.name)}</div><div class="sub-line">${esc([l.director_name && `Owner: ${l.director_name}`, l.town].filter(Boolean).join(" · "))}</div></td>
     <td class="c-problem"><div class="problem">${esc(problems[0] || "Nothing major found")}</div>${problems.length > 1 ? `<div class="sub-line">+${problems.length - 1} more</div>` : ""}</td>
     <td class="c-contact">${l.phone ? `<a href="${tel(l.phone)}" class="num">${esc(l.phone)}</a>` : `<span class="faint">No phone</span>`}
       <div class="sub-line">${l.email ? `${esc(l.email)}${guessed(l) ? ' <span class="tag">guessed</span>' : ""}` : "No email found"}</div></td>
@@ -109,7 +109,7 @@ export async function saveLead(id, patch) {
 function downloadCsv() {
   const cols = [["Score", (l) => l.quality_score], ["Website /45", (l) => l.score_parts.website], ["Local SEO /30", (l) => l.score_parts.seo],
     ["Google Maps /25", (l) => l.score_parts.maps], ["Maps avg rank", (l) => l.map_rank.avg_rank], ["Maps top-3 %", (l) => l.map_rank.top3_pct],
-    ["Business", (l) => l.name], ["Director", (l) => l.director_name], ["Phone", (l) => l.phone], ["Email", (l) => l.email],
+    ["Business", (l) => l.name], ["Owner", (l) => l.director_name], ["Owner found via", (l) => l.audit?.owner_source || ""], ["Phone", (l) => l.phone], ["Email", (l) => l.email],
     ["Email found", (l) => l.audit?.email_source || ""], ["Website", (l) => l.website], ["Problems", (l) => l.issues.join("; ")],
     ["Rating", (l) => l.rating], ["Reviews", (l) => l.review_count], ["Google rank", (l) => l.rank], ["Town", (l) => l.town],
     ["Address", (l) => l.address], ["Status", (l) => l.status], ["Notes", (l) => l.notes], ["Excluded", (l) => l.exclude_reason]];
@@ -182,7 +182,8 @@ export function openDrawer(lead, onChange = () => {}) {
         <h3>Details</h3>
         <dl class="kv">
           ${l.phone ? `<dt>Phone</dt><dd><a href="${tel(l.phone)}">${esc(l.phone)}</a></dd>` : ""}
-          ${l.director_name ? `<dt>Director</dt><dd>${esc(l.director_name)}${l.company_number ? ` <span class="faint">(company ${esc(l.company_number)})</span>` : ""}</dd>` : ""}
+          ${l.director_name ? `<dt>Owner</dt><dd>${esc(l.director_name)}${l.audit?.owner_source ? ` <span class="faint">(from ${esc(l.audit.owner_source)})</span>` : ""}</dd>` : ""}
+          ${l.company_number ? `<dt>Company</dt><dd>${esc(l.company_number)}</dd>` : ""}
           ${l.address ? `<dt>Address</dt><dd>${esc(l.address)}</dd>` : ""}
           <dt>Rating</dt><dd>${l.rating ? `${esc(l.rating)}★ from ${esc(l.review_count || 0)} reviews` : "No Google reviews"}</dd>
           ${mapsFacts}

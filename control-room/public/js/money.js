@@ -161,7 +161,7 @@ function costsCard(s, entries) {
   const cats = Object.entries(cur.breakdown.out).sort((a, b) => b[1] - a[1]);
   const top = Math.max(1, ...cats.map(([, v]) => v));
   const g = s.thisMonth;
-  const leadSearches = g.googleSkus.text_search_enterprise || 0;
+  const leadSearches = (g.googleSkus.text_search_enterprise_atmosphere || 0) + (g.googleSkus.text_search_enterprise || 0);
   return `<div class="card">
     <div class="card-head"><h2>Costs this month</h2><span class="muted num">${money(cur.out)}</span></div>
     ${cats.length ? `<div class="cost-rows">${cats.map(([k, v]) => `

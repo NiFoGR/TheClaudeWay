@@ -25,6 +25,7 @@ FIELDS = ",".join(
         "places.userRatingCount",
         "places.businessStatus",
         "places.types",
+        "places.reviews",  # up to 5; customers often name the owner ("Dave was brilliant")
         "nextPageToken",
     ]
 )
@@ -58,6 +59,8 @@ def to_lead(place: dict, trade: str, town: str, rank: int | None) -> Lead:
         review_count=place.get("userRatingCount", 0),
         business_status=place.get("businessStatus", ""),
         types=place.get("types", []),
+        reviews=[{"author": r.get("authorAttribution", {}).get("displayName", ""), "text": (r.get("text") or r.get("originalText") or {}).get("text", "")}
+                 for r in place.get("reviews", [])],
     )
 
 
@@ -86,7 +89,7 @@ def _query(client: httpx.Client, api_key: str, text_query: str) -> list[dict]:
     found: list[dict] = []
     while len(found) < MAX_PER_QUERY:
         resp = client.post(SEARCH_URL, json=body, headers=headers)
-        usage.count(usage.TEXT_SEARCH_ENTERPRISE)
+        usage.count(usage.TEXT_SEARCH_ATMOSPHERE)
         if resp.status_code != 200:
             raise PlacesError(f"Places API {resp.status_code}: {resp.text[:300]}")
         data = resp.json()

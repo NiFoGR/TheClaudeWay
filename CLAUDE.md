@@ -78,7 +78,8 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
 - Don't overcomplicate: prefer free, simple setups (Cloudflare + GitHub free tiers). Budget for leads + mailboxes: £100/month.
 - Built so far: Control Room (Home, Lead Scraper with live progress, Map Rank heatmaps, Leads with a details drawer,
   Outreach, Money, Setup); lead score = Website 45 + Local SEO 30 + Google Maps 25 (`lead-manager/aetos_leads/scoring.py`);
-  email finding in `lead-manager/aetos_leads/contacts.py`. Next: aetoswebsites.com, Demos, Outreach sending, Onboarding, client second brain.
+  email finding in `lead-manager/aetos_leads/contacts.py`; owner's first name in `owner.py` (website → Google reviews →
+  email → business name, Companies House only as a fallback). Next: aetoswebsites.com, Demos, Outreach sending, Onboarding, client second brain.
 - Money page: clients (build fee + retainer after the free days), costs you add, and Google API cost estimated from
   calls logged per run (`aetos_leads/usage.py` → `api_usage` table; prices and free allowances in
   `control-room/functions/_lib/money.js`). Forecasts count only what's committed.

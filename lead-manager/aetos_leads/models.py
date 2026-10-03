@@ -28,8 +28,10 @@ class Lead:
     findings: list[str] = field(default_factory=list)  # finding keys (see scoring.RULES)
     issues: list[str] = field(default_factory=list)  # plain-English line per finding, quotable in outreach
     audit: dict = field(default_factory=dict)  # raw audit facts
-    director_first_name: str = ""
+    director_first_name: str = ""  # who runs it (see owner.py); the column names predate the website/review sources
     director_name: str = ""
+    reviews: list[dict] = field(default_factory=list)  # Google reviews [{author, text}], used to find the owner; not stored
+    pages_html: list[str] = field(default_factory=list)  # pages fetched during the audit; not stored
     company_number: str = ""
 
     # qualification

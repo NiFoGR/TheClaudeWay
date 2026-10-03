@@ -74,9 +74,12 @@ def find_director(client: httpx.Client, api_key: str, lead: Lead) -> None:
         resp = client.get(f"{BASE}/company/{lead.company_number}/officers", auth=(api_key, ""))
         if resp.status_code != 200:
             return
+        if lead.director_first_name:  # the website/reviews already told us who runs it
+            return
         for officer in resp.json().get("items", []):
             if officer.get("officer_role") == "director" and not officer.get("resigned_on"):
                 lead.director_first_name, lead.director_name = _first_name(officer.get("name", ""))
+                lead.audit["owner_source"] = "Companies House"
                 return
     except httpx.HTTPError:
         return

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from aetos_leads import audit, companies_house, maprank, places, qualify
+from aetos_leads import audit, companies_house, maprank, owner, places, qualify
 from aetos_leads.maprank import Scan
 from aetos_leads.models import Lead
 
@@ -60,6 +60,12 @@ def run(trade: str, town: str, places_key: str, companies_house_key: str = "", m
         keep = [l for l in leads if not l.excluded]
         progress("checking", 0, len(keep))
         asyncio.run(_audit_all(keep, progress))
+        for lead in keep:  # who runs it: their website, their reviews, their email, the business name
+            found = owner.find_owner(lead.pages_html, lead.emails, audit.host_of(lead.website or ""), lead.name, lead.reviews)
+            if found["first"]:
+                lead.director_first_name, lead.director_name = found["first"], found["full"]
+                lead.audit["owner_source"] = found["source"]
+            lead.pages_html = []  # done with them; don't hold every page in memory
         if companies_house_key:
             for i, lead in enumerate(keep, 1):
                 companies_house.find_director(client, companies_house_key, lead)
@@ -91,7 +97,7 @@ CSV_COLUMNS = [
     ("Maps avg rank", lambda l: l.map_rank.get("avg_rank", "")),
     ("Maps top-3 %", lambda l: l.map_rank.get("top3_pct", "")),
     ("Business", lambda l: l.name),
-    ("Director", lambda l: l.director_name),
+    ("Owner", lambda l: l.director_name),
     ("Phone", lambda l: l.phone),
     ("Email", lambda l: l.email),
     ("Website", lambda l: l.website),

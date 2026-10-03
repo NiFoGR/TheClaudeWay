@@ -489,7 +489,7 @@ def test_cli_reports_clear_failures_to_the_control_room(monkeypatch, tmp_path):
     failed = [q for q in sent if q["sql"].startswith("UPDATE jobs") and q["params"][0] == "failed"][-1]
     assert "Google refused the search" in failed["params"][3]
     # the refused call is still recorded for the Money page: Google may bill it
-    assert "INTO api_usage" in sent[-1]["sql"] and sent[-1]["params"][:4] == ["scrape", "j1", "text_search_enterprise", 1]
+    assert "INTO api_usage" in sent[-1]["sql"] and sent[-1]["params"][:4] == ["scrape", "j1", "text_search_enterprise_atmosphere", 1]
 
 
 # ---------------------------------------------------------------- fixes from the first real run (Warrington roofers)

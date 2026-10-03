@@ -63,6 +63,6 @@ def test_guesses_info_only_when_the_domain_receives_email():
     respx.get(contacts.DNS_URL).mock(side_effect=lambda r: httpx.Response(200, json={
         "Answer": [{"type": 15, "data": "10 mx.smith.co.uk."}]} if r.url.params["name"] == "smith.co.uk" else {}))
     found = run(lambda c: contacts.find(c, "<p>call us</p>", "https://smith.co.uk/"))
-    assert found == {"emails": ["info@smith.co.uk"], "source": "guessed", "socials": {}, "pages_checked": 1}
+    assert found.pop("htmls") and found == {"emails": ["info@smith.co.uk"], "source": "guessed", "socials": {}, "pages_checked": 1}
     none = run(lambda c: contacts.find(c, "<p>call us</p>", "https://nomail.co.uk/"))
     assert none["emails"] == [] and none["source"] == ""

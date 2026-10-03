@@ -11,7 +11,7 @@ const RUNS_SHOWN = 5;
 const STAGES = {
   scouting: ["Scouting businesses on Google Maps", 0, 20],
   checking: ["Checking every website", 20, 75],
-  directors: ["Finding directors' names", 75, 85],
+  directors: ["Checking Companies House", 75, 85],
   maps: ["Mapping Google Maps rankings across town", 85, 95],
   saving: ["Saving to your Control Room", 95, 100],
 };
@@ -25,7 +25,7 @@ export function scraperPage() {
   const job = state.jobs.find((j) => j.id === state.jobId);
   const runs = state.showAllRuns ? state.jobs : state.jobs.slice(0, RUNS_SHOWN);
   view.innerHTML = `
-    ${pageHead("Lead Scraper", "Pick a niche and a town. It searches Google Maps, checks every website, finds emails and directors, and ranks who needs us most.")}
+    ${pageHead("Lead Scraper", "Pick a niche and a town. It searches Google Maps, checks every website, finds emails and owners' names, and ranks who needs us most.")}
     <form class="card search-form" id="scrape">
       <div><label for="trade">Niche</label><input id="trade" list="trades" placeholder="roofer" required minlength="2" maxlength="60" value="${esc(state.scrapeDraft?.trade || "")}"></div>
       <div><label for="town">Town</label><input id="town" placeholder="Leeds" required minlength="2" maxlength="60" value="${esc(state.scrapeDraft?.town || "")}"></div>
@@ -51,7 +51,7 @@ export function scraperPage() {
 function howItWorks() {
   return `<div class="card" style="margin-top:16px"><div class="card-head"><h2>How it works</h2></div><ol class="steps">
     <li><b>Type a niche and a town</b>, choose how many leads, press <b>Find leads</b>.</li>
-    <li>It scouts Google Maps, checks every website against the SEO playbook, finds emails and directors, maps where they rank, and skips chains. 2–8 minutes; you can leave the page.</li>
+    <li>It scouts Google Maps, checks every website against the SEO playbook, finds emails and owners' names, maps where they rank, and skips chains. 2–8 minutes; you can leave the page.</li>
     <li><b>Your leads appear here</b>, best first. Use the tabs to see who to email and who to call.</li>
   </ol><p class="hint">First time? Check <a href="#/setup">Setup</a> shows everything connected.</p></div>`;
 }
@@ -84,7 +84,7 @@ function progressText(j) {
   const scouted = j.progress_stage === "scouting" ? j.progress_done : j.progress_scouted;
   const parts = [`Scouted: ${scouted ?? 0} / ${j.max_results}`];
   if (j.progress_stage === "checking") parts.push(`Websites checked: ${j.progress_done} / ${j.progress_total}`);
-  if (j.progress_stage === "directors") parts.push(`Directors: ${j.progress_done} / ${j.progress_total}`);
+  if (j.progress_stage === "directors") parts.push(`Companies House: ${j.progress_done} / ${j.progress_total}`);
   if (j.progress_stage === "maps") parts.push("Mapping rankings…");
   if (j.progress_stage === "saving") parts.push("Saving…");
   return parts.join(" · ");

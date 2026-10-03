@@ -1,7 +1,7 @@
 # Aetos lead manager
 
 Type a trade and a UK town; get back every local business Google Maps shows, with what's wrong with their
-website, their email, the director's first name, and a quality score (how much we can help, 0–100).
+website, their email, the owner's first name, and a quality score (how much we can help, 0–100).
 Chains, franchises, closed businesses and front-desk businesses (dentists, clinics, solicitors) are filtered out.
 
 ## What you get per run

@@ -30,6 +30,10 @@ export function report(data, breakdown) {
       lines.push("", `### ${v.name}`, `Hypothesis: ${v.hypothesis || "–"}`, "", `Subject: ${v.subject}`, "", "```", v.body, "```");
     }
   }
+  const rejected = data.versions.filter((v) => v.status === "rejected");
+  lines.push("", "## Rejected by the owner (he didn't want these sent; don't write like this)");
+  if (!rejected.length) lines.push("None yet.");
+  for (const v of rejected) lines.push(`- **${v.name}** (${v.author}): ${v.hypothesis || "–"}`, "", "```", `${v.subject ? `Subject: ${v.subject}\n\n` : ""}${v.body}`, "```");
   lines.push("", "## Past tests (don't retest these ideas)");
   if (!data.tests.length) lines.push("None yet.");
   for (const t of data.tests) lines.push(`- ${t.ended_at.slice(0, 10)}: ${t.summary}`);

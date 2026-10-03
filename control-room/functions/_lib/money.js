@@ -7,7 +7,8 @@
 // Google Places API (New) list prices, USD per 1,000 calls, and the free calls each SKU gets every month.
 // SKUs match lead-manager/aetos_leads/usage.py. Check https://developers.google.com/maps/billing-and-pricing/pricing
 export const GOOGLE_SKUS = {
-  text_search_enterprise: { usdPer1000: 35, freePerMonth: 1000, label: "Lead searches" },
+  text_search_enterprise_atmosphere: { usdPer1000: 40, freePerMonth: 1000, label: "Lead searches (with reviews)" },
+  text_search_enterprise: { usdPer1000: 35, freePerMonth: 1000, label: "Lead searches (older runs)" },
   text_search_pro: { usdPer1000: 32, freePerMonth: 5000, label: "Finding town centres" },
   text_search_ids: { usdPer1000: 0, freePerMonth: Infinity, label: "Map Rank grid points (free)" },
   place_details_enterprise: { usdPer1000: 20, freePerMonth: 1000, label: "Competitor names on heatmaps" },

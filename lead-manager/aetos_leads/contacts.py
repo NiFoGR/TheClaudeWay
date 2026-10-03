@@ -5,7 +5,7 @@
 2. Visit the pages most likely to list contact details (contact, about, team, privacy, terms…), best first,
    and stop the moment we have an address on the business's own domain.
 3. Nothing on the site? Check the domain actually receives email (its MX record, free via DNS-over-HTTPS)
-   and suggest info@ (plus firstname@ once Companies House gives the director), clearly marked "guessed".
+   and suggest info@, clearly marked "guessed".
 
 Facebook and Instagram are deliberately not scraped: contact details there sit behind a login and automated
 scraping breaks their terms. Their links are collected from every page so the owner can check them in one click.
@@ -35,6 +35,7 @@ GENERIC_INBOXES = ("info", "contact", "hello", "enquiries", "enquiry", "office",
 # pages most likely to hold contact details, in the order worth trying
 PAGE_HINTS = ("contact", "get-in-touch", "enquir", "quote", "about", "team", "meet", "privacy", "terms", "legal", "imprint")
 MAX_EXTRA_PAGES = 6
+ABOUT_HINTS = ("about", "team", "meet", "who-we-are", "our-story")
 DNS_URL = "https://cloudflare-dns.com/dns-query"
 
 
@@ -108,9 +109,13 @@ async def find(client: httpx.AsyncClient, first_html: str, final_url: str) -> di
     def has_own(es: list[str]) -> bool:
         return any(e.endswith("@" + site_host) or e.endswith("." + site_host) for e in es)
 
-    for url in contact_pages(soup, final_url):
-        if has_own(emails):  # efficient: stop as soon as we have an address on their own domain
-            break
+    htmls = [first_html]
+    links = contact_pages(soup, final_url)
+    about = [u for u in links if any(h in u.lower() for h in ABOUT_HINTS)]
+    for url in links:
+        # efficient: stop once we have an own-domain address, but still read one about/team page for the owner's name
+        if has_own(emails) and (url not in about[:1] or len(htmls) > 1):
+            continue
         try:
             resp = await client.get(url, timeout=12)
         except httpx.HTTPError:
@@ -118,12 +123,13 @@ async def find(client: httpx.AsyncClient, first_html: str, final_url: str) -> di
         checked += 1
         if resp.status_code != 200:
             continue
+        htmls.append(resp.text)
         emails += [e for e in emails_in(resp.text) if e not in emails]
         for k, v in extract_socials(BeautifulSoup(resp.text, "html.parser")).items():
             socials.setdefault(k, v)
 
     if emails:
-        return {"emails": rank_emails(emails, site_host), "source": "website", "socials": socials, "pages_checked": checked}
+        return {"emails": rank_emails(emails, site_host), "source": "website", "socials": socials, "pages_checked": checked, "htmls": htmls}
     if site_host and await receives_email(client, site_host):
-        return {"emails": [f"info@{site_host}"], "source": "guessed", "socials": socials, "pages_checked": checked}
-    return {"emails": [], "source": "", "socials": socials, "pages_checked": checked}
+        return {"emails": [f"info@{site_host}"], "source": "guessed", "socials": socials, "pages_checked": checked, "htmls": htmls}
+    return {"emails": [], "source": "", "socials": socials, "pages_checked": checked, "htmls": htmls}
