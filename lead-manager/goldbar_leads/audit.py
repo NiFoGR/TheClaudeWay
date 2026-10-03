@@ -6,11 +6,12 @@ Every issue string here can be quoted (politely) in outreach, so keep them factu
 import re
 import time
 from datetime import date
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
 
+from goldbar_leads import contacts
 from goldbar_leads.models import Lead
 
 # look like a normal browser: many small-business sites block anything that announces itself as a bot
@@ -48,15 +49,6 @@ CHAT_WIDGETS = [
     "olark", "freshchat", "chatra", "smartsupp", "jivosite", "chatbot", "elfsight", "getbutton",
     "wa.me", "whatsapp", "messenger", "botpress", "voiceflow", "manychat",
 ]
-CONTACT_HINTS = ("contact", "get-in-touch", "about", "quote")
-
-EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-JUNK_EMAIL = re.compile(
-    r"(example|sentry|wixpress|domain\.com|email\.com|yourdomain|mysite|yoursite|sitename|website\.com|"
-    r"company\.com|\.(png|jpe?g|gif|svg|webp)$|@2x|godaddy|squarespace|wordpress|noreply|no-reply|"
-    r"^(test|name|email|user|your|yourname|someone)@)",
-    re.I,
-)
 COPYRIGHT_RE = re.compile(r"(?:©|&copy;|copyright)\s*(?:\d{4}\s*[-–]\s*)?(\d{4})", re.I)
 
 
@@ -71,17 +63,8 @@ def is_real_website(url: str) -> bool:
 
 
 def extract_emails(html: str, site_host: str = "") -> list[str]:
-    found = []
-    for m in EMAIL_RE.findall(html):
-        e = m.lower().strip(".")
-        if JUNK_EMAIL.search(e) or e in found:
-            continue
-        found.append(e)
-    # same-domain addresses first, then generic inboxes like info@ / contact@
-    def rank(e: str) -> tuple[int, int]:
-        return (0 if site_host and e.endswith("@" + site_host) else 1, 0 if e.split("@")[0] in ("info", "contact", "hello", "enquiries", "office") else 1)
-
-    return sorted(found, key=rank)
+    """Every real email in a page (hidden ones too), own-domain and generic inboxes first."""
+    return contacts.rank_emails(contacts.emails_in(html), site_host)
 
 
 def extract_socials(soup: BeautifulSoup) -> dict[str, str]:
@@ -251,16 +234,6 @@ async def count_pages(client: httpx.AsyncClient, site_url: str) -> int | None:
     return None
 
 
-def _contact_links(soup: BeautifulSoup, base_url: str) -> list[str]:
-    base_host = host_of(base_url)
-    links = []
-    for a in soup.find_all("a", href=True):
-        href = urljoin(base_url, a["href"])
-        if host_of(href) == base_host and any(h in href.lower() for h in CONTACT_HINTS) and href not in links:
-            links.append(href)
-    return links[:3]
-
-
 def _set(lead: Lead, findings: list[tuple[str, str]], audit: dict) -> None:
     lead.findings = [k for k, _ in findings]
     lead.issues = [t for _, t in findings]
@@ -307,20 +280,11 @@ async def audit_lead(client: httpx.AsyncClient, lead: Lead) -> None:
         findings.append(("some_pages", f"Only {pages} pages on the site (top-ranking sites usually have 30+)"))
     _set(lead, findings, {"status": "ok", **facts})
 
-    soup = BeautifulSoup(resp.text, "html.parser")
-    lead.socials = extract_socials(soup)
-    site_host = host_of(final_url)
-    emails = extract_emails(resp.text, site_host)
-    for link in _contact_links(soup, final_url):
-        if emails and emails[0].endswith("@" + site_host):
-            break
-        try:
-            page = await client.get(link)
-            emails += [e for e in extract_emails(page.text, site_host) if e not in emails]
-        except httpx.HTTPError:
-            continue
-    lead.emails = extract_emails(" ".join(emails), site_host)
+    found = await contacts.find(client, resp.text, final_url)
+    lead.socials = found["socials"]
+    lead.emails = found["emails"]
     lead.email = lead.emails[0] if lead.emails else ""
+    lead.audit.update(email_source=found["source"], pages_checked=found["pages_checked"])
 
 
 def make_client(timeout: float = 15.0) -> httpx.AsyncClient:

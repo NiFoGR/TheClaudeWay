@@ -49,6 +49,17 @@ No website, a Facebook/Checkatrade page only, or a broken site maxes Website + L
 our checker scores 0 there (unknown, look yourself). "No chat" and "DIY builder" are listed but worth 0 points.
 Ties are broken by Google rating, then review count.
 
+## How emails are found (`goldbar_leads/contacts.py`)
+
+1. The homepage, then up to 6 pages most likely to list contacts (contact, quote, about, team, privacy, terms),
+   best first. Stops as soon as an address on the business's own domain turns up.
+2. Every page is read for hidden emails too: `mailto:` links, "info [at] site [dot] co.uk", Cloudflare email
+   protection, and emails inside schema.
+3. Nothing on the site: if the domain has mail servers (free MX lookup), it suggests `info@domain`, plus
+   `firstname@domain` when Companies House gives the director. These are marked **guessed**.
+
+Facebook/Instagram aren't scraped (login walls, against their terms). Their links are collected so you can check them in one click.
+
 ## Map Rank (heatmap)
 
 Every scrape also runs a 5×5 grid (1 mile apart) of Google searches for the trade, each as if standing at that point,

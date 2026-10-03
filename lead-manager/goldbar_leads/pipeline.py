@@ -65,6 +65,11 @@ def run(trade: str, town: str, places_key: str, companies_house_key: str = "", m
                 companies_house.find_director(client, companies_house_key, lead)
                 if i % 5 == 0 or i == len(keep):
                     progress("directors", i, len(keep))
+            for lead in keep:  # Hunter-style: a director's first name gives a second guess on their domain
+                if lead.audit.get("email_source") == "guessed" and lead.director_first_name and lead.email:
+                    guess = f"{lead.director_first_name.lower()}@{lead.email.split('@')[1]}"
+                    if guess not in lead.emails:
+                        lead.emails.append(guess)
         scan = None
         if map_scan:  # free (IDs-only searches); a failure here only means no Maps part in the score
             progress("maps", 0, AUTO_SCAN_GRID ** 2)
