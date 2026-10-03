@@ -11,27 +11,27 @@ def lead(**kw) -> Lead:
 
 def test_only_what_automation_missed_goes_to_claude():
     done = lead(website="https://smith.co.uk", email="dave@smith.co.uk", emails=["dave@smith.co.uk"], quality_score=60,
-                director_first_name="Dave", director_name="Dave Smith", audit={"email_source": "website", "owner_source": "website"})
+                director_first_name="Dave", director_name="Dave Smith", audit={"email_source": "website", "owner_source": "website", "owner_confident": True})
     assert research.needs(done) == ["review"]  # found everything for free; Claude only judges the site
     bare = lead(quality_score=80, findings=["no_website"], audit={})
     assert research.needs(bare) == ["email", "owner", "website"]
     assert research.needs(lead(quality_score=20, audit={})) == []          # decent already: not worth tokens
     assert research.needs(lead(quality_score=90, excluded=True)) == []      # chains etc.
     blocked = lead(website="https://x.co.uk", quality_score=10, findings=["not_checked"], email="info@x.co.uk",
-                   emails=["info@x.co.uk"], director_first_name="Al", audit={"email_source": "website", "owner_source": "website"})
+                   emails=["info@x.co.uk"], director_first_name="Al", audit={"email_source": "website", "owner_source": "website", "owner_confident": True})
     assert research.needs(blocked) == ["review"]  # our checker was blocked: Claude looks instead
 
 
 def test_big_team_and_unclear_best_email_flagged():
     emails = ["enquiries@eddiestobart.com", "jack.quayle@eddiestobart.com", "qamar.zamir@eddiestobart.com", "sean.french@eddiestobart.com"]
     l = lead(website="https://eddiestobart.com", email=emails[0], emails=emails, quality_score=50, review_count=900,
-             audit={"email_source": "website", "owner_source": "website"}, director_first_name="Jack")
+             audit={"email_source": "website", "owner_source": "website", "owner_confident": True}, director_first_name="Jack")
     assert research.needs(l)[:2] == ["size", "best"]
 
 
 def test_finalise_puts_the_owners_email_first():
     l = lead(website="https://smith.co.uk", email="info@smith.co.uk", emails=["info@smith.co.uk", "dave@smith.co.uk"],
-             director_first_name="Dave", director_name="Dave Smith", quality_score=50, audit={"email_source": "website", "owner_source": "website"})
+             director_first_name="Dave", director_name="Dave Smith", quality_score=50, audit={"email_source": "website", "owner_source": "website", "owner_confident": True})
     research.finalise(l)
     assert l.email == "dave@smith.co.uk"
     assert l.audit["ai_needs"] == ["review"]

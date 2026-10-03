@@ -61,10 +61,12 @@ def run(trade: str, town: str, places_key: str, companies_house_key: str = "", m
         progress("checking", 0, len(keep))
         asyncio.run(_audit_all(keep, progress))
         for lead in keep:  # who runs it: their website, their reviews, their email, the business name
-            found = owner.find_owner(lead.pages_html, lead.emails, audit.host_of(lead.website or ""), lead.name, lead.reviews)
+            found = owner.find_owner(lead.pages_html, lead.emails, audit.host_of(lead.website or ""), lead.name, lead.reviews,
+                                     towns=[town, lead.town])
             if found["first"]:
                 lead.director_first_name, lead.director_name = found["first"], found["full"]
                 lead.audit["owner_source"] = found["source"]
+                lead.audit["owner_confident"] = found["confident"]
             lead.pages_html = []  # done with them; don't hold every page in memory
         if companies_house_key:
             for i, lead in enumerate(keep, 1):

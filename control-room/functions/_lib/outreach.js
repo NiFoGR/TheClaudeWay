@@ -81,7 +81,9 @@ export function facts(lead, extra = {}) {
   const business = cleanBusiness(lead.name);
   const town = titleCase(lead.town || lead.search_town || "");
   const trade = String(lead.trade || "").toLowerCase();
-  const f = { business, town, trade, greeting: lead.director_first_name ? `Hi ${titleCase(lead.director_first_name)},` : "Hi," };
+  // a guessed name is worse than none ("Hi Diamond,"): only a confirmed one is used
+  const f = { business, town, trade,
+    greeting: lead.director_first_name && lead.audit?.owner_confident ? `Hi ${titleCase(lead.director_first_name)},` : "Hi," };
   const problem = topProblem(lead.findings || lead.audit?.findings || []);
   if (problem) f.problem = fill(problem, f);
   const m = lead.map_rank || lead.audit?.map_rank || {};

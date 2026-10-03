@@ -32,7 +32,7 @@ test("found emails fill an empty or guessed email; a weaker owner name gets repl
 
 test("a real email from the website and a website-found owner are kept", () => {
   const lead = { email: "office@smith.co.uk", emails: ["office@smith.co.uk"], director_first_name: "Rachel", director_name: "Rachel Smith",
-    audit: { email_source: "website", owner_source: "website" } };
+    audit: { email_source: "website", owner_source: "website", owner_confident: true } };
   const m = mergeResearch(lead, cleanResearch({ emails: [{ email: "dave@smith.co.uk", source_url: "https://x.co.uk" }],
     owner: { first: "Dave", source_url: "https://x.co.uk" } }).clean);
   assert.equal(m.email, "office@smith.co.uk");
@@ -65,4 +65,14 @@ test("a best email Claude didn't actually find is ignored; a silly score is refu
   const m = mergeResearch(lead, cleanResearch({ best_email: "dave@smith.co.uk" }).clean);
   assert.equal(m.email, "info@smith.co.uk");
   assert.match(cleanResearch({ website_score: 80 }).error, /0 to 45/);
+});
+
+test("Claude replaces a guessed owner, or clears one it can see is wrong", () => {
+  const lead = { director_first_name: "Diamond", director_name: "Diamond Kickboxing", audit: { owner_source: "business name" } };
+  const fixed = mergeResearch(lead, cleanResearch({ owner: { first: "Mark", full: "Mark Matthews", source_url: "https://facebook.com/diamondkickboxing" } }).clean);
+  assert.equal(fixed.director_name, "Mark Matthews");
+  assert.equal(fixed.audit.owner_confident, true);
+  const cleared = mergeResearch(lead, cleanResearch({ owner_wrong: true }).clean);
+  assert.equal(cleared.director_first_name, "");
+  assert.equal(cleared.audit.owner_confident, false);
 });

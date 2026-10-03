@@ -6,7 +6,7 @@ Find-leads run finishes) only gets leads worth pitching, and only the jobs the a
   size     looks like a big company, not owner-operated (3+ named staff emails, or 400+ reviews): check, exclude if so
   email    no email, or only a guessed one: find a real one
   best     several addresses and none is clearly the decision maker's: pick the one that reaches the owner/director
-  owner    no owner's name, or only a weak guess (business name, Companies House): find who runs it
+  owner    no owner's name, or only a guess (not their own words or email): find or confirm who runs it: find who runs it
   website  Google Maps has no website (or only a Facebook page): find their real one, if any
   review   they have a website: rate it as an expert would, how much we can help, and correct false alarms
 
@@ -20,7 +20,6 @@ from aetos_leads.models import Lead
 
 MIN_SCORE = 35          # below this, they don't need us much; Claude doesn't look
 BIG_REVIEW_COUNT = 400  # a sole trader rarely has this many
-WEAK_OWNER = {"", "business name", "Companies House"}
 NO_SITE = {"no_website", "profile_only"}
 
 
@@ -38,7 +37,7 @@ def needs(lead: Lead) -> list[str]:
         todo.append("email")
     elif len([e for e in lead.emails if contacts.is_own(e, host)]) >= 2 and not owner_email(lead):
         todo.append("best")
-    if not lead.director_first_name or lead.audit.get("owner_source", "") in WEAK_OWNER:
+    if not lead.director_first_name or not lead.audit.get("owner_confident"):
         todo.append("owner")
     if not lead.website or not is_real_website(lead.website) or NO_SITE & set(lead.findings):
         todo.append("website")
@@ -80,6 +79,10 @@ def carry_over(lead: Lead, prev: dict) -> None:
     if audit.get("owner_source") == "AI research":
         lead.director_first_name, lead.director_name = prev.get("director_first_name", ""), prev.get("director_name", "")
         lead.audit["owner_source"] = "AI research"
+        lead.audit["owner_confident"] = True
+    elif r.get("owner_wrong"):
+        lead.director_first_name = lead.director_name = ""
+        lead.audit.pop("owner_source", None)
     lead.socials = {**lead.socials, **(r.get("socials") or {})}
     wrong = set(r.get("wrong_findings") or [])
     lead.issues = [i for i in lead.issues if i not in wrong]

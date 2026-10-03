@@ -9,7 +9,7 @@ const LEAD = {
   place_id: "p1", name: "SMITH ROOFING LTD - Roofer in Leeds", town: "LEEDS", trade: "roofer", director_first_name: "DAVID",
   email: "info@smithroofing.co.uk", company_number: "123", status: "new", rating: 4.7, review_count: 23,
   findings: ["not_mobile", "maps_rarely_found"], map_rank: { top3_pct: 8 },
-  audit: { email_source: "website", company: { type: "ltd", match_basis: "postcode" } },
+  audit: { email_source: "website", owner_source: "website", owner_confident: true, company: { type: "ltd", match_basis: "postcode" } },
 };
 const F = facts(LEAD, { competitor: { name: "Apex Roofing Ltd", top3_pct: 76 }, spots: 25, sender: { first: "Nik" } });
 
@@ -17,6 +17,8 @@ test("facts are cleaned up and only true", () => {
   assert.equal(F.business, "Smith Roofing");
   assert.equal(F.town, "Leeds");
   assert.equal(F.greeting, "Hi David,");
+  // a guessed name is never used ("Hi Diamond,")
+  assert.equal(facts({ ...LEAD, director_first_name: "Diamond", audit: { owner_source: "business name" } }).greeting, "Hi,");
   assert.equal(F.competitor, "Apex Roofing");
   assert.match(F.problem, /only showed up in a few spots/);
   // a competitor who isn't ahead of them isn't a "leader"

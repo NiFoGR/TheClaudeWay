@@ -47,7 +47,7 @@ function leadRow(l) {
   const status = STATUSES.map((s) => `<option ${s === l.status ? "selected" : ""}>${esc(s)}</option>`).join("");
   return `<tr class="click ${state.drawer === l.place_id ? "sel" : ""}" data-id="${esc(l.place_id)}">
     <td class="c-score">${ring(l.excluded ? null : l.quality_score)}</td>
-    <td class="c-biz"><div class="biz">${esc(l.name)}</div><div class="sub-line">${esc([l.director_name && `Owner: ${l.director_name}`, l.town].filter(Boolean).join(" · "))}</div></td>
+    <td class="c-biz"><div class="biz">${esc(l.name)}</div><div class="sub-line">${esc([l.director_name && `Owner: ${l.director_name}${l.audit?.owner_confident ? "" : " (unconfirmed)"}`, l.town].filter(Boolean).join(" · "))}</div></td>
     <td class="c-problem"><div class="problem">${esc(problems[0] || "Nothing major found")}</div>${problems.length > 1 ? `<div class="sub-line">+${problems.length - 1} more</div>` : ""}</td>
     <td class="c-contact">${l.phone ? `<a href="${tel(l.phone)}" class="num">${esc(l.phone)}</a>` : `<span class="faint">No phone</span>`}
       <div class="sub-line">${l.email ? `${esc(l.email)}${guessed(l) ? ' <span class="tag">guessed</span>' : l.audit?.email_source === "ai" ? ' <span class="tag ai">AI found</span>' : ""}` : l.audit?.ai_research ? "No email (AI searched too)" : "No email found"}</div></td>
@@ -183,7 +183,7 @@ export function openDrawer(lead, onChange = () => {}) {
         <h3>Details</h3>
         <dl class="kv">
           ${l.phone ? `<dt>Phone</dt><dd><a href="${tel(l.phone)}">${esc(l.phone)}</a></dd>` : ""}
-          ${l.director_name ? `<dt>Owner</dt><dd>${esc(l.director_name)}${l.audit?.owner_source ? ` <span class="faint">(from ${esc(l.audit.owner_source)})</span>` : ""}</dd>` : ""}
+          ${l.director_name ? `<dt>Owner</dt><dd>${esc(l.director_name)}${l.audit?.owner_source ? ` <span class="faint">(from ${esc(l.audit.owner_source)}${l.audit?.owner_confident ? "" : ", unconfirmed: emails say \"Hi,\""})</span>` : ""}</dd>` : ""}
           ${l.company_number ? `<dt>Company</dt><dd>${esc(l.company_number)}</dd>` : ""}
           ${l.address ? `<dt>Address</dt><dd>${esc(l.address)}</dd>` : ""}
           <dt>Rating</dt><dd>${l.rating ? `${esc(l.rating)}★ from ${esc(l.review_count || 0)} reviews` : "No Google reviews"}</dd>

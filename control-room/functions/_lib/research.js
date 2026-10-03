@@ -41,6 +41,7 @@ export function cleanResearch(body) {
       website_score: score ?? null,
       score_reason: clip(body.score_reason, 300),
       too_big: body.too_big === true,
+      owner_wrong: body.owner_wrong === true,
       too_big_reason: clip(body.too_big_reason, 200),
       wrong_findings: (body.wrong_findings || []).slice(0, 10).map((p) => clip(p, 300)).filter(Boolean),
       website: isUrl(body.website) ? clip(body.website, 300) : "",
@@ -77,11 +78,17 @@ export function mergeResearch(lead, r, now = new Date().toISOString()) {
   if (email) emails.splice(0, emails.length, email, ...emails.filter((e) => e !== email));
   let first = lead.director_first_name || "";
   let full = lead.director_name || "";
-  const weakOwner = !first || ["email", "business name", "Companies House"].includes(audit.owner_source);
-  if (r.owner && weakOwner) {
+  // Claude's name (with proof) wins over anything the scraper only guessed; a confirmed name stays
+  const guessedOwner = !first || !audit.owner_confident;
+  if (r.owner && guessedOwner) {
     first = r.owner.first;
     full = r.owner.full;
     audit.owner_source = "AI research";
+    audit.owner_confident = true;
+  } else if (r.owner_wrong && guessedOwner) {
+    first = full = "";
+    delete audit.owner_source;
+    audit.owner_confident = false;
   }
   audit.ai_research = { ...r, done_at: now };
   audit.ai_needs = [];

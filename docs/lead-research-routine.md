@@ -14,7 +14,7 @@ owner-run business).
 | `size` | 3+ named staff emails, or 400+ Google reviews | 0–1 search |
 | `email` | No email, or only a guessed `info@` | up to 3 searches/pages |
 | `best` | Several addresses on their domain, none clearly the owner's | 0–1 page |
-| `owner` | No owner's name, or only a weak guess (business name, Companies House) | up to 2 (shared with email) |
+| `owner` | No owner's name, or only a guess (not their own words or their own email) | up to 2 (shared with email) |
 | `website` | Google Maps has no website, or only Facebook | 1 search |
 | `review` | They have a working website | homepage + 1 page |
 
@@ -51,7 +51,11 @@ cheap: do only each lead's `todo`, within its budget, and don't read repository 
    - **best:** from the addresses we have (or that you find), pick the one that reaches the most senior decision maker:
      owner → managing director/director → partner → the general inbox. Never pick a department (accounts, careers) or
      junior staff. Set `best_email` and `best_email_why` (e.g. "Owner, named on the About page").
-   - **owner:** who runs it: their site's own words, reviews naming them, Facebook, Companies House officers, LinkedIn.
+   - **owner:** who runs it. `owner_so_far` is only the scraper's guess and may be wrong (it can't read Facebook). Check
+     their Facebook page's intro/bio (search `"<name>" facebook` and read the snippet if the page needs a login: e.g.
+     "…led by Mark Matthews"), their site's own words, reviews naming them, Companies House officers, LinkedIn. Post
+     `owner` with the real person; if the guess is clearly not the person who runs it and you can't find who is, post
+     `"owner_wrong": true`. Never a business name, a town, or a famous person they mention.
    - **website:** find their real website if one exists (not a directory listing). If you find one, also do `review`.
    - **review:** open the homepage (plus one more page if needed) and judge it as an expert web designer and local
      search specialist: modern and trustworthy on a phone? obvious in 5 seconds what they do and where? tap-to-call?
@@ -69,7 +73,7 @@ cheap: do only each lead's `todo`, within its budget, and don't read repository 
    {
      "emails": [{"email": "dave@smithroofing.co.uk", "source_url": "https://…", "where": "Facebook About"}],
      "best_email": "dave@smithroofing.co.uk", "best_email_why": "Owner",
-     "owner": {"first": "Dave", "full": "Dave Smith", "source_url": "https://…"},
+     "owner": {"first": "Dave", "full": "Dave Smith", "source_url": "https://…"}, "owner_wrong": false,
      "socials": {"facebook": "https://…"},
      "website": "https://… (only if Google Maps didn't have it)",
      "website_score": 32, "score_reason": "…",
