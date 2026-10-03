@@ -1,6 +1,6 @@
 // Password gate for the whole Control Room. One password (CONTROL_ROOM_PASSWORD), a signed cookie for 30 days.
 const COOKIE = "cr_session";
-const PUBLIC_PATHS = new Set(["/login", "/login.html", "/style.css", "/favicon.svg"]);
+const PUBLIC_PATHS = new Set(["/login", "/login.html", "/style.css", "/favicon.svg", "/robots.txt"]);
 
 async function sessionToken(password) {
   const enc = new TextEncoder();
