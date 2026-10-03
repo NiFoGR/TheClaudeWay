@@ -46,5 +46,14 @@ export async function onRequest({ request, env, next }) {
     if (url.pathname.startsWith("/api/")) return new Response(JSON.stringify({ error: "Not logged in" }), { status: 401 });
     return redirect("/login");
   }
-  return next();
+  try {
+    return await next();
+  } catch (err) {
+    // show the real reason in the Control Room instead of a bare "500"
+    const message = err && err.message ? err.message : String(err);
+    if (url.pathname.startsWith("/api/")) {
+      return new Response(JSON.stringify({ error: message }), { status: 500, headers: { "content-type": "application/json" } });
+    }
+    return new Response(`Control Room error: ${message}`, { status: 500 });
+  }
 }

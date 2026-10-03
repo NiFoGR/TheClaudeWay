@@ -325,7 +325,7 @@ async function route() {
       poll();
     }
   } catch (err) {
-    view.innerHTML = `<h1>Something's not set up</h1><p class="error">${esc(err.message)}</p>`;
+    view.innerHTML = `<h1>Something's not set up</h1><p class="error">${esc(err.message)}</p><p class="hint">Open <a href="#/setup">Setup</a> to see what's connected.</p>`;
   }
 }
 

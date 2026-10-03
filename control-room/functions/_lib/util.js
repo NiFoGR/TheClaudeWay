@@ -4,7 +4,9 @@ let schemaReady = false;
 
 /** Create tables on first use, so a fresh D1 database needs no manual setup. */
 export async function db(env) {
-  if (!env.DB) throw new Error("No D1 database bound as DB. See control-room/README.md.");
+  if (!env.DB) {
+    throw new Error("The database isn't connected. In Cloudflare: your Pages project → Settings → Bindings → add D1 database, variable name DB, then redeploy.");
+  }
   if (!schemaReady) {
     await env.DB.batch(SCHEMA.map((sql) => env.DB.prepare(sql)));
     schemaReady = true;
