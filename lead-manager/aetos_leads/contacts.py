@@ -31,7 +31,16 @@ JUNK_EMAIL = re.compile(
     r"^(test|name|email|user|your|yourname|someone)@)",
     re.I,
 )
-GENERIC_INBOXES = ("info", "contact", "hello", "enquiries", "enquiry", "office", "admin", "sales", "bookings", "mail")
+GENERIC_INBOXES = ("info", "contact", "hello", "enquiries", "enquiry", "office", "admin", "sales", "bookings", "mail",
+                   "contactus", "general", "reception", "team", "studio", "quotes", "booking")
+# addresses that reach whoever makes the decisions, even without a name
+DECISION_ROLES = ("owner", "director", "directors", "md", "ceo", "founder", "boss", "proprietor", "managingdirector")
+# inboxes that reach a department, not the decision maker
+DEPARTMENTS = ("accounts", "finance", "invoices", "billing", "payroll", "hr", "careers", "jobs", "recruitment", "marketing",
+               "press", "media", "support", "service", "parts", "workshop", "orders", "customerservice", "customer",
+               "customers", "web", "webmaster", "privacy", "dpo", "gdpr", "complaints", "help", "accountspayable",
+               "purchasing", "procurement", "dispatch", "transport", "operations", "ops", "it", "noreply", "news",
+               "newsletter")
 # pages most likely to hold contact details, in the order worth trying
 PAGE_HINTS = ("contact", "get-in-touch", "enquir", "quote", "about", "team", "meet", "privacy", "terms", "legal", "imprint")
 MAX_EXTRA_PAGES = 6
@@ -63,13 +72,59 @@ def emails_in(html: str) -> list[str]:
     return found
 
 
-def rank_emails(emails: list[str], site_host: str) -> list[str]:
-    """Own-domain addresses first, generic inboxes (info@, contact@…) before personal ones."""
-    def key(e: str) -> tuple[int, int]:
-        own = site_host and (e.endswith("@" + site_host) or e.endswith("." + site_host))
-        return (0 if own else 1, 0 if e.split("@")[0] in GENERIC_INBOXES else 1)
+def is_own(email: str, site_host: str) -> bool:
+    return bool(site_host) and (email.endswith("@" + site_host) or email.endswith("." + site_host))
 
-    return sorted(emails, key=key)
+
+def is_personal(email: str) -> bool:
+    """dave@, dave.smith@, j.smith@: a person, not a department inbox."""
+    first = re.split(r"[._-]", email.split("@")[0])[0]
+    return first not in GENERIC_INBOXES and first not in DEPARTMENTS and first not in DECISION_ROLES and not first.isdigit()
+
+
+def staff_count(emails: list[str], site_host: str) -> int:
+    """How many different people have an address on the business's own domain (3+ = a staffed company)."""
+    return sum(1 for e in emails if is_own(e, site_host) and is_personal(e))
+
+
+def drop_glued(emails: list[str]) -> list[str]:
+    """'enquiries.eddiestobart@eddiestobart.com' next to 'enquiries@eddiestobart.com' is a scraping artefact
+    (the site's name glued onto a real address), not a real inbox."""
+    out = []
+    for e in emails:
+        local, _, domain = e.partition("@")
+        brand = domain.split(".")[0]
+        bare = re.sub(rf"(^{re.escape(brand)}[._-]|[._-]{re.escape(brand)}$)", "", local)
+        if bare != local and f"{bare}@{domain}" in emails:
+            continue
+        out.append(e)
+    return out
+
+
+def rank_emails(emails: list[str], site_host: str, owner_first: str = "", owner_last: str = "") -> list[str]:
+    """Best address to reach whoever makes the decision, first:
+    the owner's own address → a decision-maker role (director@, owner@) → in a small business, a named person
+    (it's usually the owner or a partner) → the general inbox (info@, enquiries@) → named staff of a bigger company
+    → anything on another domain. Departments (accounts@, careers@) come last on the domain."""
+    emails = drop_glued(emails)
+    first, last = owner_first.lower(), owner_last.lower()
+    small = staff_count(emails, site_host) <= 2
+
+    def tier(e: str) -> int:
+        if not is_own(e, site_host):
+            return 7
+        parts = re.split(r"[._-]", e.split("@")[0])
+        if first and (parts[0] == first or (len(parts) > 1 and last and parts[0][:1] == first[:1] and parts[1] == last)):
+            return 0
+        if parts[0] in DECISION_ROLES:
+            return 1
+        if is_personal(e):
+            return 2 if small else 4
+        if parts[0] in GENERIC_INBOXES:
+            return 3
+        return 5  # departments
+
+    return sorted(emails, key=tier)
 
 
 def contact_pages(soup: BeautifulSoup, base_url: str) -> list[str]:

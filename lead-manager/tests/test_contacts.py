@@ -26,9 +26,26 @@ def test_cloudflare_decode():
     assert contacts.decode_cfemail("zz") == ""
 
 
-def test_ranking_prefers_own_domain_then_generic_inbox():
-    ranked = contacts.rank_emails(["bob@gmail.com", "dave@smith.co.uk", "info@smith.co.uk"], "smith.co.uk")
-    assert ranked == ["info@smith.co.uk", "dave@smith.co.uk", "bob@gmail.com"]
+def test_ranking_small_business_person_before_inbox():
+    ranked = contacts.rank_emails(["bob@gmail.com", "info@smith.co.uk", "accounts@smith.co.uk", "dave@smith.co.uk"], "smith.co.uk")
+    assert ranked == ["dave@smith.co.uk", "info@smith.co.uk", "accounts@smith.co.uk", "bob@gmail.com"]
+
+
+def test_ranking_owner_then_decision_role_first():
+    emails = ["info@smith.co.uk", "director@smith.co.uk", "kasia@smith.co.uk", "d.smith@smith.co.uk"]
+    assert contacts.rank_emails(emails, "smith.co.uk", "dave", "smith")[0] == "d.smith@smith.co.uk"
+    assert contacts.rank_emails(emails, "smith.co.uk")[0] == "director@smith.co.uk"
+
+
+def test_eddie_stobart_real_data():
+    # real run (transport, Widnes): the glued address is a scraping artefact; four named staff = a staffed company,
+    # so the general inbox leads (Claude then decides who the decision maker is, or excludes it as too big)
+    emails = ["enquiries@eddiestobart.com", "enquiries.eddiestobart@eddiestobart.com", "jack.quayle@eddiestobart.com",
+              "qamar.zamir@eddiestobart.com", "sean.french@eddiestobart.com", "sarah.rayment@eddiestobart.com"]
+    ranked = contacts.rank_emails(emails, "eddiestobart.com")
+    assert "enquiries.eddiestobart@eddiestobart.com" not in ranked
+    assert ranked[0] == "enquiries@eddiestobart.com"
+    assert contacts.staff_count(ranked, "eddiestobart.com") == 4
 
 
 def test_contact_pages_best_first_same_site_only():

@@ -39,6 +39,7 @@ jobs:
           cache-dependency-path: lead-manager/requirements.txt
       - run: pip install -r requirements.txt
       - name: Find and qualify leads
+        id: scrape
         env:
           GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
           COMPANIES_HOUSE_API_KEY: ${{ secrets.COMPANIES_HOUSE_API_KEY }}
@@ -52,6 +53,28 @@ jobs:
         run: |
           set -o pipefail
           python -m aetos_leads --trade "$TRADE" --town "$TOWN" --max "$MAX" --job-id "$JOB_ID" --out output | tee output-summary.txt
+      # One Claude run per Find-leads press, only if some leads need it (docs/lead-research-routine.md).
+      # Uses the owner's Claude subscription via a Routine's API trigger. Never fails the scrape.
+      - name: Hand the hard cases to Claude
+        if: success() && steps.scrape.outputs.for_claude != '0' && steps.scrape.outputs.for_claude != ''
+        continue-on-error: true
+        env:
+          ROUTINE_URL: ${{ secrets.CLAUDE_ROUTINE_URL }}
+          ROUTINE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_TOKEN }}
+          JOB_ID: ${{ inputs.job_id }}
+          N: ${{ steps.scrape.outputs.for_claude }}
+        run: |
+          if [ -z "$ROUTINE_URL" ] || [ -z "$ROUTINE_TOKEN" ]; then
+            echo "Claude research not set up yet (add CLAUDE_ROUTINE_URL and CLAUDE_ROUTINE_TOKEN secrets). Skipping."
+            exit 0
+          fi
+          JOB="${JOB_ID//[^a-zA-Z0-9-]/}"
+          curl -fsS -X POST "$ROUTINE_URL" \
+            -H "Authorization: Bearer $ROUTINE_TOKEN" \
+            -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d "{\"text\": \"job_id=${JOB} leads=${N}\"}"
       - name: Tell the Control Room the run failed
         if: failure() && inputs.job_id != ''
         env:

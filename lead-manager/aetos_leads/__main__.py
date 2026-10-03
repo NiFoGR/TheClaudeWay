@@ -181,6 +181,11 @@ def scrape(args, d1, places_key: str, fail) -> int:
         print("Saved to the Control Room database (D1)")
 
     print(pipeline.summary(leads))
+    for_claude = sum(1 for l in leads if l.audit.get("ai_needs"))
+    print(f"{for_claude} leads need Claude (the rest were fully handled for free or aren't worth it)")
+    if out := os.environ.get("GITHUB_OUTPUT"):  # tells the workflow whether to wake Claude
+        with open(out, "a") as f:
+            f.write(f"for_claude={for_claude}\n")
     print("\nFiles:", *[str(v) for v in paths.values()], sep="\n  ")
     return 0
 

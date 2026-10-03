@@ -90,10 +90,14 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
   is emailed (sole traders included; he accepts the PECR risk); no name/address footer, just a "reply no thanks" opt-out. "Write it your way" briefs (owner's rough wording per step) are turned into versions by Claude. Claude's part runs on the owner's subscription as a daily Routine (full review weekly)
   (`docs/outreach-weekly-review.md`) via `/api/agent/*` with `OUTREACH_AGENT_TOKEN`; the owner approves every version.
   Sending (Gmail API + a cron Worker) is built when the mailboxes exist.
-- AI lead research: a Claude Routine on the owner's subscription (Sonnet, hourly, `docs/lead-research-routine.md`)
-  researches each lead on the web (Facebook, Instagram, directories, Google), finds emails/owner/unlinked websites with a
-  source URL for each, and reviews the website as an expert; posts to `/api/agent/leads/:id` (merge: `_lib/research.js`).
-  The automated audit stays for measurable facts (speed, mobile, HTTPS); Claude adds the judgement.
+- AI lead research (80/20): the scraper does everything free first, then `aetos_leads/research.py` flags only leads
+  worth pitching (score ≥ 35) with a to-do list (size / email / best email / owner / website / review). The scrape
+  workflow fires a Claude Routine (API trigger, owner's subscription, Sonnet) once per Find-leads run if any are flagged;
+  Claude does only those to-dos within a budget (`docs/lead-research-routine.md`) and posts to `/api/agent/leads/:id`
+  (merge: `_lib/research.js`): emails/owner with source URLs, the decision maker's email, its website rating (replaces
+  the automated Website /45), false alarms removed, big firms excluded. Research carries over on re-scrapes
+  (`store.carry_over`). Email order (`contacts.rank_emails`): owner's → director@/owner@ → a named person in a small
+  business → info@ → named staff of a bigger firm → departments.
 - Stripe (`functions/_lib/stripe.js`, `stripe-events.js`): Setup's button creates products, payment links and the webhook
   from `STRIPE_SECRET_KEY` (Cloudflare secret); ids + webhook secret live in the `settings` table. Webhook payloads are
   pinned to API version 2024-06-20. Card clients' income = actual `payments`; their schedule is only the forecast.

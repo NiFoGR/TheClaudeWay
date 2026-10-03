@@ -10,6 +10,7 @@ from pathlib import Path
 
 import httpx
 
+from aetos_leads import research
 from aetos_leads.maprank import Scan
 from aetos_leads.models import Lead
 
@@ -81,10 +82,29 @@ def insert_sql(table: str, columns: list[str], n_rows: int) -> str:
     return f"INSERT OR REPLACE INTO {table} ({', '.join(columns)}) VALUES {', '.join([one] * n_rows)}"
 
 
+def prior_sql(n: int) -> str:
+    """Leads Claude already researched, to carry its work over when a town is scraped again."""
+    return ("SELECT place_id, email, emails, socials, director_first_name, director_name, audit FROM leads "
+            f"WHERE json_extract(audit, '$.ai_research') IS NOT NULL AND place_id IN ({', '.join('?' for _ in range(n))})")
+
+
+def carry_over(leads: list[Lead], rows: list[dict]) -> None:
+    by_id = {l.place_id: l for l in leads}
+    for r in rows:
+        if r["place_id"] in by_id:
+            prev = {**r, **{k: json.loads(r[k] or "null") or ({} if k != "emails" else []) for k in ("emails", "socials", "audit")}}
+            research.carry_over(by_id[r["place_id"]], prev)
+
+
 def save_sqlite(path: str | Path, leads: list[Lead], job_id: str = "") -> None:
     now = _now()
     with sqlite3.connect(path) as db:
         db.executescript(SCHEMA)
+        db.row_factory = sqlite3.Row
+        ids = [l.place_id for l in leads]
+        for i in range(0, len(ids), D1_MAX_PARAMS):
+            chunk = ids[i:i + D1_MAX_PARAMS]
+            carry_over(leads, [dict(r) for r in db.execute(prior_sql(len(chunk)), chunk)])
         db.executemany(UPSERT, [row(l, now, job_id) for l in leads])
 
 
@@ -109,6 +129,10 @@ class D1:
 
     def save(self, leads: list[Lead], job_id: str = "") -> None:
         self.ensure_schema()
+        ids = [l.place_id for l in leads]
+        for i in range(0, len(ids), D1_MAX_PARAMS):
+            chunk = ids[i:i + D1_MAX_PARAMS]
+            carry_over(leads, (self.query(prior_sql(len(chunk)), chunk).get("result") or [{}])[0].get("results", []))
         now = _now()
         for lead in leads:
             self.query(UPSERT, row(lead, now, job_id))

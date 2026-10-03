@@ -217,6 +217,10 @@ function aiCard(l) {
       ${rv.verdict || rv.summary ? `<p style="margin:0 0 8px">${rv.verdict ? `<b>${esc(rv.verdict)}.</b> ` : ""}${esc(rv.summary || "")}</p>` : ""}
       ${rv.problems?.length ? `<ul class="issues">${rv.problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
       ${rv.good?.length ? `<p class="small muted" style="margin:8px 0 0">Good: ${rv.good.map(esc).join(" · ")}</p>` : ""}
+      ${r.website_score != null ? `<p class="small" style="margin:8px 0 0">Website rated <b>${esc(r.website_score)}/45</b> for how much we can help${r.score_reason ? `: ${esc(r.score_reason)}` : ""}</p>` : ""}
+      ${r.too_big ? `<p class="small" style="margin:6px 0 0"><b>Excluded:</b> ${esc(r.too_big_reason || "not owner-operated")}</p>` : ""}
+      ${r.best_email ? `<p class="small" style="margin:6px 0 0">Best email: ${esc(r.best_email)}${r.best_email_why ? ` (${esc(r.best_email_why)})` : ""}</p>` : ""}
+      ${r.wrong_findings?.length ? `<p class="small faint" style="margin:6px 0 0">Removed as wrong: ${r.wrong_findings.map(esc).join(" · ")}</p>` : ""}
       ${r.emails?.length ? `<p class="small" style="margin:8px 0 0">${r.emails.map((e) => `${esc(e.email)} (${link(e.source_url, e.where || "source")})`).join("<br>")}</p>` : ""}
       ${r.owner ? `<p class="small" style="margin:6px 0 0">Owner: ${esc(r.owner.full)} (${link(r.owner.source_url, "source")})</p>` : ""}
       ${r.website ? `<p class="small" style="margin:6px 0 0">Website not linked on Google: ${link(r.website, r.website)}</p>` : ""}

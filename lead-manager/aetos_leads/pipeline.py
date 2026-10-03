@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from aetos_leads import audit, companies_house, maprank, owner, places, qualify
+from aetos_leads import audit, companies_house, maprank, owner, places, qualify, research
 from aetos_leads.maprank import Scan
 from aetos_leads.models import Lead
 
@@ -81,6 +81,8 @@ def run(trade: str, town: str, places_key: str, companies_house_key: str = "", m
                 log.warning("map rank scan skipped: %s", e)
             progress("maps", AUTO_SCAN_GRID ** 2, AUTO_SCAN_GRID ** 2)
     qualify.score(keep, scan)
+    for lead in keep:  # decision maker's email first; what's left for Claude (research.py)
+        research.finalise(lead)
     return Result(sorted(leads, key=sort_key), scan)
 
 

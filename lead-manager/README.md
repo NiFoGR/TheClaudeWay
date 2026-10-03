@@ -51,6 +51,9 @@ Ties are broken by Google rating, then review count.
 
 ## How emails are found (`aetos_leads/contacts.py`)
 
+Best address first: the owner's own → director@/owner@ → in a small business, a named person → info@/enquiries@
+→ named staff of a bigger company → departments (accounts@…). Scraping artefacts like `enquiries.brand@brand.com` are dropped.
+
 1. The homepage, then up to 6 pages most likely to list contacts (contact, quote, about, team, privacy, terms),
    best first. Stops as soon as an address on the business's own domain turns up.
 2. Every page is read for hidden emails too: `mailto:` links, "info [at] site [dot] co.uk", Cloudflare email

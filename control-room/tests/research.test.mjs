@@ -39,3 +39,30 @@ test("a real email from the website and a website-found owner are kept", () => {
   assert.equal(m.director_name, "Rachel Smith");
   assert.ok(m.emails.includes("dave@smith.co.uk"));
 });
+
+test("Claude picks the decision maker's email, rates the website, drops false alarms, excludes big firms", () => {
+  const lead = { email: "enquiries@eddiestobart.com", emails: ["enquiries@eddiestobart.com", "jack.quayle@eddiestobart.com"],
+    website: "https://eddiestobart.com", quality_score: 50, issues: ["Not mobile-friendly", "No contact form"],
+    audit: { email_source: "website", score: { total: 50, website: 20, seo: 18, maps: 12 }, ai_needs: ["size", "best", "review"] } };
+  const { clean } = cleanResearch({ best_email: "Jack.Quayle@eddiestobart.com", best_email_why: "Managing director",
+    website_score: 6, score_reason: "Modern, fast site", wrong_findings: ["Not mobile-friendly"],
+    too_big: true, too_big_reason: "National logistics firm, 200+ depots" });
+  const m = mergeResearch(lead, clean);
+  assert.equal(m.email, "jack.quayle@eddiestobart.com");
+  assert.equal(m.emails[0], "jack.quayle@eddiestobart.com");
+  assert.equal(m.audit.email_choice, "ai");
+  assert.equal(m.audit.email_source, "website"); // it was on their site, Claude only chose it
+  assert.equal(m.quality_score, 36); // 6 (Claude) + 18 + 12
+  assert.equal(m.audit.score.website_by, "claude");
+  assert.deepEqual(m.issues, ["No contact form"]);
+  assert.equal(m.excluded, 1);
+  assert.match(m.exclude_reason, /National logistics/);
+  assert.deepEqual(m.audit.ai_needs, []);
+});
+
+test("a best email Claude didn't actually find is ignored; a silly score is refused", () => {
+  const lead = { email: "info@smith.co.uk", emails: ["info@smith.co.uk"], audit: {} };
+  const m = mergeResearch(lead, cleanResearch({ best_email: "dave@smith.co.uk" }).clean);
+  assert.equal(m.email, "info@smith.co.uk");
+  assert.match(cleanResearch({ website_score: 80 }).error, /0 to 45/);
+});
