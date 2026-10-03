@@ -1,0 +1,57 @@
+name: Scrape leads
+
+# Runs in GitHub's cloud, so your PC can be off. Start it from the Actions tab (or the GitHub app):
+# Actions → Scrape leads → Run workflow → type a trade and a town.
+on:
+  workflow_dispatch:
+    inputs:
+      trade:
+        description: 'Trade, e.g. "roofer"'
+        required: true
+      town:
+        description: 'UK town, e.g. "Leeds"'
+        required: true
+      max:
+        description: "Max businesses (Google caps one search at about 60)"
+        required: false
+        default: "60"
+
+permissions:
+  contents: read
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: lead-manager
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: lead-manager/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Find and qualify leads
+        env:
+          GOOGLE_PLACES_API_KEY: ${{ secrets.GOOGLE_PLACES_API_KEY }}
+          COMPANIES_HOUSE_API_KEY: ${{ secrets.COMPANIES_HOUSE_API_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TRADE: ${{ inputs.trade }}
+          TOWN: ${{ inputs.town }}
+          MAX: ${{ inputs.max }}
+        run: python -m goldbar_leads --trade "$TRADE" --town "$TOWN" --max "$MAX" --out output | tee output-summary.txt
+      - name: Show summary on the run page
+        run: |
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          cat output-summary.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: leads-${{ inputs.trade }}-${{ inputs.town }}
+          path: lead-manager/output/
+          retention-days: 30
