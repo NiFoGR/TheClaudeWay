@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#1F2124"/>
+  <g transform="translate(-22 -14)">
+    <!-- head, facing left: straight cuts only -->
+    <path fill="#FFFFFF" d="M100 336 L84 226 L118 176 L204 150 L236 118 L300 96 L388 120 L440 184 L456 280 L472 444
+      L418 410 L390 446 L334 410 L298 446 L246 410 L184 440 L208 380 L214 328 L192 276 L132 268 Z"/>
+    <g fill="#1F2124">
+      <!-- mouth line -->
+      <path d="M122 256 L196 248 L266 230 L258 244 L198 260 L128 264 Z"/>
+      <!-- nostril -->
+      <path d="M148 196 L188 184 L178 200 Z"/>
+      <!-- brow and eye socket -->
+      <path d="M206 176 L328 138 L356 150 L314 160 L332 178 L278 208 L240 208 L224 190 Z"/>
+      <!-- neck cut -->
+      <path d="M456 300 L404 336 L460 326 Z"/>
+    </g>
+    <!-- eye and pupil -->
+    <path fill="#FFFFFF" d="M246 196 L310 171 L320 186 L274 208 Z"/>
+    <path fill="#1F2124" d="M282 182 L302 175 L306 192 L287 198 Z"/>
+  </g>
+</svg>
