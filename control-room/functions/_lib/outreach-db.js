@@ -134,11 +134,15 @@ export async function loadOutreach(DB, { apply = true } = {}) {
   const loadStats = async () => {
     if (!test) return [];
     const testVersions = versions.filter((v) => v.step === 1 && v.test_id === test.id);
-    const [sends, replies] = await Promise.all([
+    const [sends, replies, demoWins] = await Promise.all([
       DB.prepare("SELECT version_id, place_id, sent_at FROM outreach_sends WHERE step = 1 AND status = 'sent' AND test_id = ?").bind(test.id).all().then((r) => r.results),
       DB.prepare("SELECT r.place_id, r.received_at, r.owner_class, r.auto_class FROM outreach_replies r JOIN outreach_sends s ON s.place_id = r.place_id AND s.step = 1 AND s.test_id = ?").bind(test.id).all().then((r) => r.results),
+      // a view of their demo or an order is a win too (the email's whole job)
+      DB.prepare(`SELECT e.place_id, e.at AS received_at, CASE e.kind WHEN 'ordered' THEN 'ordered' ELSE 'demo_view' END AS cls
+        FROM demo_events e JOIN outreach_sends s ON s.place_id = e.place_id AND s.step = 1 AND s.test_id = ?
+        WHERE e.kind IN ('view', 'ordered')`).bind(test.id).all().then((r) => r.results),
     ]);
-    return withChances(versionStats(testVersions, sends, replies.map((r) => ({ ...r, cls: replyClass(r) }))));
+    return withChances(versionStats(testVersions, sends, [...replies.map((r) => ({ ...r, cls: replyClass(r) })), ...demoWins]));
   };
   let stats = await loadStats();
   let actions = [];

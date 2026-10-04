@@ -248,3 +248,20 @@ CREATE TABLE IF NOT EXISTS owner_questions (
   asked_at    TEXT NOT NULL,
   answered_at TEXT
 );
+
+-- Demo sites: one link per lead (/d/<slug>), up until expires_at. Built when the lead is added to outreach.
+CREATE TABLE IF NOT EXISTS demos (
+  slug        TEXT PRIMARY KEY,
+  place_id    TEXT NOT NULL,
+  created_at  TEXT NOT NULL,
+  expires_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS demos_place ON demos (place_id);
+-- What prospects do on their demo: view (a real person, counted after a few seconds on the page), order_page, ordered.
+CREATE TABLE IF NOT EXISTS demo_events (
+  slug        TEXT NOT NULL,
+  place_id    TEXT NOT NULL,
+  kind        TEXT NOT NULL,
+  at          TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS demo_events_place ON demo_events (place_id, kind);

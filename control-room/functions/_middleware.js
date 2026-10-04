@@ -1,6 +1,7 @@
 // Password gate for the whole Control Room. One password (CONTROL_ROOM_PASSWORD), a signed cookie for 30 days.
 const COOKIE = "cr_session";
 // /api/stripe/webhook is called by Stripe, not you: it checks Stripe's signature instead of the login cookie.
+// /d/<slug> are the prospects' demo sites (public, unguessable links, never indexed).
 const PUBLIC_PATHS = new Set(["/login", "/login.html", "/style.css", "/favicon.png", "/logo.png", "/apple-touch-icon.png", "/robots.txt", "/api/stripe/webhook"]);
 
 async function sessionToken(password) {
@@ -42,6 +43,7 @@ export async function onRequest({ request, env, next }) {
     return redirect("/login", { "set-cookie": `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}` });
   }
   if (PUBLIC_PATHS.has(url.pathname)) return next();
+  if (url.pathname.startsWith("/d/")) return next(); // demo sites: prospects open these from our emails
   if (url.pathname.startsWith("/api/agent/")) return next(); // checked against OUTREACH_AGENT_TOKEN in the function itself
 
   if (!safeEqual(readCookie(request, COOKIE), token)) {

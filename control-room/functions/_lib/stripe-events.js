@@ -19,7 +19,9 @@ async function checkoutCompleted(DB, s) {
   const name = String(business || s.customer_details?.name || s.customer_details?.email || "New client").trim().slice(0, 120);
   const id = crypto.randomUUID();
   const paidOn = day(s.created);
-  const lead = await DB.prepare("SELECT place_id FROM leads WHERE lower(name) = lower(?) AND excluded = 0 LIMIT 1").bind(name).first();
+  // ordered from their demo's order page: the link carries their lead id; otherwise match by business name
+  const lead = (s.client_reference_id && await DB.prepare("SELECT place_id FROM leads WHERE place_id = ?").bind(s.client_reference_id).first())
+    || await DB.prepare("SELECT place_id FROM leads WHERE lower(name) = lower(?) AND excluded = 0 LIMIT 1").bind(name).first();
   const stmts = [
     DB.prepare(`INSERT INTO clients (id, name, place_id, package, build_fee_pence, monthly_pence, free_days, paid_on, notes, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
@@ -28,7 +30,13 @@ async function checkoutCompleted(DB, s) {
     DB.prepare("INSERT OR REPLACE INTO client_links (client_id, stripe_customer, stripe_subscription, email) VALUES (?, ?, ?, ?)")
       .bind(id, s.customer, s.subscription || null, s.customer_details?.email || null),
   ];
-  if (lead) stmts.push(DB.prepare("UPDATE leads SET status = 'won', updated_at = ? WHERE place_id = ?").bind(now(), lead.place_id));
+  if (lead) {
+    stmts.push(DB.prepare("UPDATE leads SET status = 'won', updated_at = ? WHERE place_id = ?").bind(now(), lead.place_id));
+    // counts as a win for the email version that brought them in
+    stmts.push(DB.prepare(`INSERT INTO demo_events (slug, place_id, kind, at)
+      SELECT COALESCE((SELECT slug FROM demos WHERE place_id = ? ORDER BY created_at DESC LIMIT 1), ''), ?, 'ordered', ?`)
+      .bind(lead.place_id, lead.place_id, new Date(s.created * 1000).toISOString()));
+  }
   // one-off (Website Only) payments have no invoice: record the money here
   if (s.mode === "payment" && s.amount_total > 0) {
     stmts.push(DB.prepare(`INSERT OR IGNORE INTO payments (id, stripe_customer, name, category, amount_pence, paid_on, created_at)

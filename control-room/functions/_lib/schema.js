@@ -24,5 +24,9 @@ export const SCHEMA = [
   "CREATE TABLE IF NOT EXISTS outreach_replies (\n  id             TEXT PRIMARY KEY,\n  place_id       TEXT NOT NULL,\n  send_id        TEXT,\n  received_at    TEXT NOT NULL,\n  snippet        TEXT,\n  auto_class     TEXT,   \n  owner_class    TEXT,   \n  classified_by  TEXT    \n)",
   "CREATE TABLE IF NOT EXISTS suppression (\n  value       TEXT PRIMARY KEY,  \n  kind        TEXT NOT NULL,     \n  reason      TEXT NOT NULL,\n  created_at  TEXT NOT NULL\n)",
   "CREATE TABLE IF NOT EXISTS outreach_briefs (\n  id          TEXT PRIMARY KEY,\n  step        INTEGER NOT NULL,\n  text        TEXT NOT NULL,\n  status      TEXT NOT NULL DEFAULT 'waiting',  \n  created_at  TEXT NOT NULL,\n  done_at     TEXT\n)",
-  "CREATE TABLE IF NOT EXISTS owner_questions (\n  id          TEXT PRIMARY KEY,\n  topic       TEXT NOT NULL DEFAULT 'outreach',\n  question    TEXT NOT NULL,\n  why         TEXT NOT NULL DEFAULT '',          \n  options     TEXT NOT NULL DEFAULT '[]',        \n  answer      TEXT,\n  asked_at    TEXT NOT NULL,\n  answered_at TEXT\n)"
+  "CREATE TABLE IF NOT EXISTS owner_questions (\n  id          TEXT PRIMARY KEY,\n  topic       TEXT NOT NULL DEFAULT 'outreach',\n  question    TEXT NOT NULL,\n  why         TEXT NOT NULL DEFAULT '',          \n  options     TEXT NOT NULL DEFAULT '[]',        \n  answer      TEXT,\n  asked_at    TEXT NOT NULL,\n  answered_at TEXT\n)",
+  "CREATE TABLE IF NOT EXISTS demos (\n  slug        TEXT PRIMARY KEY,\n  place_id    TEXT NOT NULL,\n  created_at  TEXT NOT NULL,\n  expires_at  TEXT NOT NULL\n)",
+  "CREATE INDEX IF NOT EXISTS demos_place ON demos (place_id)",
+  "CREATE TABLE IF NOT EXISTS demo_events (\n  slug        TEXT NOT NULL,\n  place_id    TEXT NOT NULL,\n  kind        TEXT NOT NULL,\n  at          TEXT NOT NULL\n)",
+  "CREATE INDEX IF NOT EXISTS demo_events_place ON demo_events (place_id, kind)"
 ];

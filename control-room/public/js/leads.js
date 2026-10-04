@@ -72,7 +72,11 @@ function selectionBar(rows) {
 export async function enrol(ids, action = "start") {
   const out = await api("/api/outreach/enrol", { method: "POST", body: JSON.stringify({ place_ids: ids, action }) });
   const done = new Set(ids.filter((id) => !out.skipped.some((s) => s.place_id === id)));
-  state.leads = state.leads.map((l) => (done.has(l.place_id) ? { ...l, status: out.status } : l));
+  state.leads = state.leads.map((l) => {
+    if (!done.has(l.place_id)) return l;
+    const d = out.demos?.[l.place_id];
+    return { ...l, status: out.status, ...(d ? { demo_slug: d.slug, demo_expires: d.expires_at } : {}) };
+  });
   const skipped = out.skipped.length ? ` Skipped ${out.skipped.length}: ${[...new Set(out.skipped.map((s) => s.reason))].join("; ")}.` : "";
   toast(action === "start"
     ? `${out.added} added to outreach.${skipped} The first email goes once sending is switched on.`
@@ -220,7 +224,7 @@ export function openDrawer(lead, onChange = () => {}) {
         ${l.map_scan_id ? `<a class="btn secondary sm" href="#/maprank?scan=${encodeURIComponent(l.map_scan_id)}&biz=${encodeURIComponent(l.place_id)}">${icon("grid")} Heatmap</a>` : ""}
       </div>
       <div class="drawer-body">
-        ${l.excluded ? "" : `<p class="hint" style="margin-top:0">Coming here soon: their demo site. <a href="#/roadmap">Roadmap</a></p>`}
+        ${l.excluded ? "" : demoCard(l)}
         ${l.excluded || !l.phone ? "" : scriptCard(l)}
         <h3>Status</h3>
         <select id="d-status" class="status-select" style="width:100%;border-radius:8px;padding:8px 12px;font-size:14px">${status}</select>
@@ -249,6 +253,23 @@ export function openDrawer(lead, onChange = () => {}) {
     const saved = await saveLead(l.place_id, { status: e.target.value });
     if (saved) { l.status = saved.status; onChange(); }
   };
+  const make = root().querySelector("[data-demo-make]");
+  if (make) make.onclick = async () => {
+    make.disabled = true;
+    try {
+      const { demo } = await api("/api/demos", { method: "POST", body: JSON.stringify({ place_id: l.place_id }) });
+      Object.assign(l, { demo_slug: demo.slug, demo_expires: demo.expires_at, demo_views: 0, demo_order_views: 0 });
+      state.leads = state.leads.map((x) => (x.place_id === l.place_id ? { ...x, ...l } : x));
+      openDrawer(l, onChange);
+    } catch (err) {
+      alert(err.message);
+      make.disabled = false;
+    }
+  };
+  const copy = root().querySelector("[data-demo-copy]");
+  if (copy) copy.onclick = async () => {
+    try { await navigator.clipboard.writeText(demoUrl(l)); toast("Demo link copied."); } catch { prompt("Copy the link:", demoUrl(l)); }
+  };
   const ob = root().querySelector("[data-outreach]");
   if (ob) ob.onclick = async () => {
     ob.disabled = true;
@@ -268,9 +289,27 @@ export function openDrawer(lead, onChange = () => {}) {
   };
 }
 
+const demoLive = (l) => l.demo_slug && Date.parse(l.demo_expires) > Date.now();
+const demoUrl = (l) => (demoLive(l) ? `${location.origin}/d/${l.demo_slug}` : "");
+
+/** Their demo site: open it, copy the link, see whether they've looked. Made automatically on Start outreach. */
+function demoCard(l) {
+  if (!demoLive(l)) {
+    return `<div class="demo-card"><div><b>Demo site</b><div class="muted small">${l.demo_slug ? "Their last preview has ended." : "Made automatically when you press Start outreach."}</div></div>
+      <button class="btn secondary sm" data-demo-make>${icon("layout")} ${l.demo_slug ? "Make a new one" : "Make demo now"}</button></div>`;
+  }
+  const views = Number(l.demo_views || 0);
+  const orders = Number(l.demo_order_views || 0);
+  return `<div class="demo-card"><div><b>Demo site</b> <span class="badge ${views ? "good" : ""}">${views ? `Viewed ${views}×` : "Not viewed yet"}</span>
+      ${orders ? ` <span class="badge gold">Opened the order page${orders > 1 ? ` ${orders}×` : ""}</span>` : ""}
+      <div class="muted small">Up until ${esc(new Date(l.demo_expires).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }))}</div></div>
+    <div class="actions"><a class="btn secondary sm" href="${esc(demoUrl(l))}" target="_blank" rel="noopener">${icon("external")} Open</a>
+      <button class="btn secondary sm" data-demo-copy>Copy link</button></div></div>`;
+}
+
 /** The call script, filled for this lead (callscript.js). Open it before you dial. */
 function scriptCard(l) {
-  const sections = callScript(l, { sender: state.outreach?.sender?.first || "Nik" });
+  const sections = callScript({ ...l, demo_url: demoUrl(l) }, { sender: state.outreach?.sender?.first || "Nik" });
   const block = (s) => `<div class="script-sec"><h4>${esc(s.title)}</h4><ul>${s.lines.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>`;
   return `<details class="script"${l.email ? "" : " open"}><summary>${icon("phone")} Call script</summary>
     ${sections.filter((s) => !s.objection).map(block).join("")}

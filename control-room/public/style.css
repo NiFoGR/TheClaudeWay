@@ -430,3 +430,7 @@ details.script[open] > summary { border-bottom: 1px solid var(--line); }
 .script-sec li { margin-bottom: 4px; }
 details.script-obj { margin: 6px 14px 12px; }
 details.script-obj > summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--text-2); padding: 6px 0; }
+
+/* demo site card in the lead drawer */
+.demo-card { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 14px; margin: 0 0 12px;
+  border: 1px solid var(--line); border-radius: var(--r); background: var(--surface-2); }

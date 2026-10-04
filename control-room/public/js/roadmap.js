@@ -18,12 +18,12 @@ const ROADMAP = [
     ["built", "Call script per lead", "In every lead's details: who to ask for, opener, qualifying questions, pitch from their real problems, close with today's price (weekend deal on Sat–Sun), and answers to 6 common objections."],
   ]],
   ["The funnel (decide first)", [
-    ["next", "The exact closing funnel", "Every step from first email to paid client, written down: what they see, what we send when, what triggers a call, how each objection is handled, how fast. Built to close by email + demo; calls only when needed."],
+    ["you", "The exact closing funnel", "Draft ready: docs/funnel.md, with 7 decisions for you. Every step from first email to paid client, written down: what they see, what we send when, what triggers a call, how each objection is handled, how fast. Built to close by email + demo; calls only when needed."],
   ]],
   ["Demo sites (the email's whole point)", [
-    ["next", "Demo template for the first trade", "Modelled on the UK's top-ranking sites in that trade, filled in from each lead's data, one link per lead."],
-    ["next", "View tracking and expiry", "Who opened their demo, how often, which day; the preview comes down on a stated date."],
-    ["next", "Order page", "Full Package vs Website Only side by side, weekend deal on Sat–Sun, guarantees, no contract, Order → steps → Stripe payment."],
+    ["built", "Demo sites (first template)", "One link per lead (/d/…), built automatically on Start outreach: their name, real Google rating, tap-to-call, services for their trade, placeholders for their photos. One neutral template for now: approve the look, then one per trade."],
+    ["built", "View tracking and expiry", "Counts real views only (after 4 seconds in a browser, so email scanners don't count), order-page visits, and orders; the preview ends after 14 days with a polite page."],
+    ["built", "Order page", "Full Package vs Website Only, weekend deal switches on Sat–Sun by itself, guarantees, no contract, answers to the usual questions, straight to your Stripe links (the payment is tied back to the lead)."],
     ["next", "Request-a-call form", "On the demo, for people who want to talk first: pre-filled, plus 5 quick questions."],
     ["later", "Recent builds / testimonials section", "Concept sites until real clients exist, then real testimonials per trade."],
   ]],
