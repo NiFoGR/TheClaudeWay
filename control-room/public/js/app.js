@@ -11,7 +11,7 @@ import { scraperRoute } from "./scraper.js";
 const NAV = [
   [null, [["home", "Home", "home"]]],
   ["Find", [["scraper", "Lead Scraper", "search"], ["maprank", "Map Rank", "map"]]],
-  ["Sell", [["leads", "Leads", "users"], [null, "Demos", "layout"], ["outreach", "Outreach", "send"], [null, "Call scripts", "phone"], [null, "Replies", "mail"]]],
+  ["Sell", [["leads", "Leads", "users"], [null, "Demos", "layout"], ["outreach", "Outreach", "send"], [null, "Replies", "mail"]]],
   ["Business", [["money", "Money", "pound"], [null, "Onboarding", "briefcase"], [null, "Monthly care", "spark"], [null, "Website", "globe"]]],
 ];
 

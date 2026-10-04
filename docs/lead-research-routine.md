@@ -51,11 +51,13 @@ cheap: do only each lead's `todo`, within its budget, and don't read repository 
    - **best:** from the addresses we have (or that you find), pick the one that reaches the most senior decision maker:
      owner → managing director/director → partner → the general inbox. Never pick a department (accounts, careers) or
      junior staff. Set `best_email` and `best_email_why` (e.g. "Owner, named on the About page").
-   - **owner:** who runs it. `owner_so_far` is only the scraper's guess and may be wrong (it can't read Facebook). Check
-     their Facebook page's intro/bio (search `"<name>" facebook` and read the snippet if the page needs a login: e.g.
-     "…led by Mark Matthews"), their site's own words, reviews naming them, Companies House officers, LinkedIn. Post
-     `owner` with the real person; if the guess is clearly not the person who runs it and you can't find who is, post
-     `"owner_wrong": true`. Never a business name, a town, or a famous person they mention.
+   - **owner:** who runs it. `owner_so_far` is only the scraper's guess and may be wrong (it can't read Facebook).
+     **Always start with one web search for `"<name>" <town> facebook`** and read the result snippets: the page's bio
+     shows there even when the page needs a login (e.g. "…Academy led by Mark Matthews"). Then, if still unknown: their
+     site's own words ("I'm…", "founded by…", "head coach"), reviews naming them, Companies House officers, LinkedIn.
+     Do this even when the website won't load. Post `owner` with the real person; if the guess is clearly not the
+     person who runs it and you can't find who is, post `"owner_wrong": true`. Never a business name, a town, or a
+     famous person they mention. A Companies House company that is **dissolved** doesn't count: say so in `notes`.
    - **website:** find their real website if one exists (not a directory listing). If you find one, also do `review`.
    - **review:** open the homepage (plus one more page if needed) and judge it as an expert web designer and local
      search specialist: modern and trustworthy on a phone? obvious in 5 seconds what they do and where? tap-to-call?

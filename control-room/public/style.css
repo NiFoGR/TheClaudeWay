@@ -419,3 +419,14 @@ input.sel, #sel-all { width: 16px; height: 16px; accent-color: var(--gold); curs
 .road-row { display: grid; grid-template-columns: 92px 1fr; gap: 12px; align-items: start; padding: 10px 0; border-top: 1px solid var(--line); }
 .road-row:first-child { border-top: 0; padding-top: 0; }
 .road-row .badge { justify-self: start; }
+
+/* call script in the lead drawer */
+details.script { margin: 12px 0 4px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface-2); }
+details.script > summary { cursor: pointer; padding: 10px 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+details.script[open] > summary { border-bottom: 1px solid var(--line); }
+.script-sec { padding: 10px 14px 0; }
+.script-sec h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--gold); }
+.script-sec ul { margin: 0 0 6px; padding-left: 18px; font-size: 13.5px; line-height: 1.55; }
+.script-sec li { margin-bottom: 4px; }
+details.script-obj { margin: 6px 14px 12px; }
+details.script-obj > summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--text-2); padding: 6px 0; }

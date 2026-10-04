@@ -1,4 +1,5 @@
 // The lead table (Lead Scraper results and All Leads) and the lead details drawer.
+import { callScript } from "./callscript.js";
 import { ago, api, esc, icon, pageHead, ring, safeUrl, state, toast, view } from "./lib.js";
 
 export const STATUSES = ["new", "in outreach", "contacted", "replied", "call booked", "won", "lost", "not interested"];
@@ -219,7 +220,8 @@ export function openDrawer(lead, onChange = () => {}) {
         ${l.map_scan_id ? `<a class="btn secondary sm" href="#/maprank?scan=${encodeURIComponent(l.map_scan_id)}&biz=${encodeURIComponent(l.place_id)}">${icon("grid")} Heatmap</a>` : ""}
       </div>
       <div class="drawer-body">
-        ${l.excluded ? "" : `<p class="hint" style="margin-top:0">Coming here soon: their demo site and a call script. <a href="#/roadmap">Roadmap</a></p>`}
+        ${l.excluded ? "" : `<p class="hint" style="margin-top:0">Coming here soon: their demo site. <a href="#/roadmap">Roadmap</a></p>`}
+        ${l.excluded || !l.phone ? "" : scriptCard(l)}
         <h3>Status</h3>
         <select id="d-status" class="status-select" style="width:100%;border-radius:8px;padding:8px 12px;font-size:14px">${status}</select>
         ${l.excluded ? "" : parts}
@@ -264,6 +266,16 @@ export function openDrawer(lead, onChange = () => {}) {
     const saved = await saveLead(l.place_id, { notes: e.target.value });
     if (saved) { l.notes = saved.notes; root().querySelector("#d-saved").textContent = "Saved."; }
   };
+}
+
+/** The call script, filled for this lead (callscript.js). Open it before you dial. */
+function scriptCard(l) {
+  const sections = callScript(l, { sender: state.outreach?.sender?.first || "Nik" });
+  const block = (s) => `<div class="script-sec"><h4>${esc(s.title)}</h4><ul>${s.lines.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>`;
+  return `<details class="script"${l.email ? "" : " open"}><summary>${icon("phone")} Call script</summary>
+    ${sections.filter((s) => !s.objection).map(block).join("")}
+    <details class="script-obj"><summary>Objections and answers</summary>${sections.filter((s) => s.objection).map(block).join("")}</details>
+  </details>`;
 }
 
 /** Start outreach (only the owner's click puts a lead into the email sequence). */
