@@ -57,3 +57,11 @@ def test_sitrep_reports_the_day_and_what_needs_the_owner():
     assert "**1 lead ready for outreach**" in md          # only the one with a real email and status new
     assert "Biz 2 · 2 visits" in md                        # hot lead
     assert "Tomorrow's search:** landscaper in" in md
+
+
+def test_sitrep_says_a_search_is_still_running():
+    d1 = FakeD1()
+    d1.query("INSERT INTO jobs (id, trade, town, max_results, status, created_at, updated_at) "
+             "VALUES ('j', 'landscaper', 'Widnes', 60, 'queued', '2026-10-14T06:00:00Z', 'x')")
+    md = autopilot.sitrep(d1, datetime(2026, 10, 14, 7, 0, tzinfo=timezone.utc))
+    assert "landscaper in Widnes: still running" in md

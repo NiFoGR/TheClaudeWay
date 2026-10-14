@@ -122,8 +122,11 @@ def sitrep(d1, now: datetime | None = None) -> str:
          "Written automatically every morning from the Control Room's database. No AI, no cost.", ""]
     L += ["## Last 24 hours", "",
           f"- **Lead search:** " + ("; ".join(
-              f"{r['trade']} in {r['town']}: {r.get('found') or 0} found, {r.get('pitchable') or 0} worth pitching"
-              + (f" (FAILED: {r['error']})" if r.get("status") == "failed" else "") for r in runs) or "no search ran"),
+              f"{r['trade']} in {r['town']}: " + (
+                  "still running (results in tomorrow's SITREP)" if r.get("status") in ("queued", "running")
+                  else f"FAILED: {r.get('error') or 'see the Lead Scraper page'}" if r.get("status") == "failed"
+                  else f"{r.get('found') or 0} found, {r.get('pitchable') or 0} worth pitching")
+              for r in runs) or "no search ran"),
           f"- **New leads:** {stats['new_leads']} (total worth pitching: {stats['leads']})",
           f"- **Claude researched:** {stats['researched']} leads" + (f"; {stats['waiting_claude']} still waiting" if stats["waiting_claude"] else ""),
           f"- **Emails sent:** {stats['sent']} · **replies:** {stats['replies']}",
