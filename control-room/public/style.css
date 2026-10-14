@@ -434,3 +434,10 @@ details.script-obj > summary { cursor: pointer; font-weight: 600; font-size: 13p
 /* demo site card in the lead drawer */
 .demo-card { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 14px; margin: 0 0 12px;
   border: 1px solid var(--line); border-radius: var(--r); background: var(--surface-2); }
+
+/* autopilot + today's picks */
+.card.autopilot { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 12px; }
+.pick-row { display: flex; gap: 12px; align-items: flex-start; padding: 8px 0; border-top: 1px solid var(--line); cursor: pointer; }
+.pick-row:first-child { border-top: 0; }
+.pick-row input { margin-top: 4px; }
+label.check { display: flex; gap: 8px; align-items: center; font-weight: 600; margin-bottom: 8px; }

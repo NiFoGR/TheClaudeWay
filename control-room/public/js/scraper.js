@@ -1,6 +1,6 @@
 // Lead Scraper page: start a search, watch it live, see the results.
 import { bindTable, leadsTable, NO_SITE } from "./leads.js";
-import { ago, api, esc, icon, kpi, pageHead, state, view } from "./lib.js";
+import { ago, api, esc, icon, kpi, modal, pageHead, state, toast, view } from "./lib.js";
 
 export const TRADES = ["roofer", "plumber", "electrician", "heating engineer", "builder", "landscaper", "painter and decorator",
   "locksmith", "pest control", "removals", "mechanic", "car dealer", "driving school", "martial arts gym",
@@ -35,6 +35,7 @@ export function scraperPage() {
       ${tradeList()}
     </form>
     <p class="error" id="scrape-error" hidden></p>
+    <div id="autopilot"></div>
     ${job ? jobResults(job) : ""}
     ${state.jobs.length ? `
       <div class="section-title"><h2>Your searches</h2>${state.jobs.length > RUNS_SHOWN ? `<button class="btn ghost sm" id="all-runs">${state.showAllRuns ? "Show fewer" : `Show all ${state.jobs.length}`}</button>` : ""}</div>
@@ -46,6 +47,46 @@ export function scraperPage() {
   const all = view.querySelector("#all-runs");
   if (all) all.onclick = () => { state.showAllRuns = !state.showAllRuns; scraperPage(); };
   if (job && job.status === "done") bindTable(scraperPage);
+  autopilotCard();
+}
+
+/** The daily autopilot: one town a morning from your list, then Claude, then the SITREP. */
+async function autopilotCard() {
+  const el = view.querySelector("#autopilot");
+  if (!el) return;
+  let a;
+  try { a = await api("/api/autopilot"); } catch { return; }
+  const t = a.territory;
+  el.innerHTML = `<div class="card autopilot"><div><b>${icon("spark")} Autopilot ${t.on ? '<span class="badge good">On</span>' : '<span class="badge">Off</span>'}</b>
+      <div class="muted small">${t.on ? `Every morning: ${esc(t.trade)} in the next town on your list (${t.towns.length} towns, ${esc(t.max)} leads each). Next: <b>${esc(a.upcoming)}</b>.` : "Switched off: nothing is searched automatically."}
+      ${a.last ? ` Last: ${esc(a.last.town)}, ${esc(ago(a.last.created_at))}.` : ""}</div></div>
+    <button class="btn secondary sm" id="ap-edit">Edit</button></div>`;
+  el.querySelector("#ap-edit").onclick = () => {
+    const m = modal(`<div class="modal-head"><h2>Autopilot</h2><button class="icon-btn" data-close aria-label="Close">${icon("x")}</button></div>
+      <form class="modal-body" id="ap-form">
+        <label class="check"><input type="checkbox" name="on" ${t.on ? "checked" : ""}> Search one town every morning</label>
+        <label for="ap-trade">Niche</label><input id="ap-trade" name="trade" list="trades" value="${esc(t.trade)}" required>
+        <label for="ap-towns">Towns, in order (one per line). A town searched in the last 30 days is skipped.</label>
+        <textarea id="ap-towns" name="towns" rows="10">${esc(t.towns.join("\n"))}</textarea>
+        <label for="ap-max">Leads per search</label><input id="ap-max" name="max" type="number" min="10" max="300" value="${esc(t.max)}">
+        <p class="error" id="ap-error" hidden></p>
+        <button class="btn" type="submit">Save</button>${tradeList()}
+      </form>`);
+    m.querySelector("#ap-form").onsubmit = async (e) => {
+      e.preventDefault();
+      const f = e.target;
+      try {
+        await api("/api/autopilot", { method: "PUT", body: JSON.stringify({ on: f.on.checked, trade: f.trade.value, towns: f.towns.value, max: Number(f.max.value) }) });
+        m.close();
+        toast("Autopilot saved.");
+        autopilotCard();
+      } catch (err) {
+        const box = m.querySelector("#ap-error");
+        box.textContent = err.message;
+        box.hidden = false;
+      }
+    };
+  };
 }
 
 function howItWorks() {

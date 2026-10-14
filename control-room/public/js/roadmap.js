@@ -11,6 +11,8 @@ const STATUS = {
 
 const ROADMAP = [
   ["Find leads", [
+    ["built", "Daily autopilot", "Every morning: searches your niche in the next town on your list (Lead Scraper page → Autopilot), hands the gaps to Claude, and writes SITREP.md. Starts with landscapers."],
+    ["built", "SITREP", "SITREP.md in the repo, rewritten every morning: what happened, what's hot, what needs you, tomorrow's town. No AI, no cost."],
     ["built", "Lead Scraper", "Trade + town → every business on Google Maps, website audit, email, owner, quality score; chains and front-desk businesses filtered out."],
     ["built", "Map Rank heatmaps", "Where each business shows on Google Maps across town; feeds the score and the emails."],
     ["built", "Sharper owner search", "Claude always checks the Facebook bio through search results first, even when the website is down, and flags dissolved companies."],
@@ -21,21 +23,22 @@ const ROADMAP = [
     ["you", "The exact closing funnel", "Draft ready: docs/funnel.md, with 7 decisions for you. Every step from first email to paid client, written down: what they see, what we send when, what triggers a call, how each objection is handled, how fast. Built to close by email + demo; calls only when needed."],
   ]],
   ["Demo sites (the email's whole point)", [
-    ["built", "Demo sites (first template)", "One link per lead (/d/…), built automatically on Start outreach: their name, real Google rating, tap-to-call, services for their trade, placeholders for their photos. One neutral template for now: approve the look, then one per trade."],
+    ["built", "Demo sites that look like theirs", "One link per lead (/d/…), built on approval: their logo, brand colour and photos from their own website, their best real Google reviews, tap-to-call, services for their trade. Landscaper look first."],
     ["built", "View tracking and expiry", "Counts real views only (after 4 seconds in a browser, so email scanners don't count), order-page visits, and orders; the preview ends after 14 days with a polite page."],
     ["built", "Order page", "Full Package vs Website Only, weekend deal switches on Sat–Sun by itself, guarantees, no contract, answers to the usual questions, straight to your Stripe links (the payment is tied back to the lead)."],
     ["next", "Request-a-call form", "On the demo, for people who want to talk first: pre-filled, plus 5 quick questions."],
     ["later", "Recent builds / testimonials section", "Concept sites until real clients exist, then real testimonials per trade."],
   ]],
   ["Outreach", [
+    ["built", "Today's picks", "Outreach page: the best leads ready for a day's sending. Untick anyone, approve the rest: demos are built and they join the sequence. You always have the final say."],
     ["built", "Start outreach button", "Nothing is emailed until you press Start outreach on a lead (or several ticked at once)."],
     ["built", "Self-improving first email", "Versions compete (Thompson sampling); a win is a demo view, an interested reply or an order. Claude proposes challengers; you approve every one."],
     ["built", "Write it your way", "Your own wording for any email; Claude turns it into a proper version."],
     ["built", "Claude's questions for you", "Claude asks how you'd handle things; your answers become rules for every email and reply."],
-    ["you", "Mailboxes", "Buy the 3 mailboxes on aetoswebsites.com, then they warm up for about 2 weeks."],
+    ["you", "Mailboxes", "Buy the mailboxes on aetoswebsites.com (Namecheap Private Email), then about 2 weeks of warm-up. Sending will go through them from Cloudflare (free)."],
     ["later", "Sending", "Gmail API + a scheduled worker, spread across the 3 mailboxes, daily limits, follow-ups on day 3, 7 and 14."],
-    ["later", "Replies answered by Claude", "Each inbox triggers Claude when a reply lands (same trick as Find leads), so answers go out fast. Haggling, anger, legal or unsure: drafted, not sent, your phone pinged. Unsure → Claude offers a call."],
-    ["later", "Warmth score and phone pings", "Demo views, replies and orders rank who to chase; 3+ demo views pings your phone."],
+    ["later", "Replies answered by Claude", "Free rules handle bounces, out-of-office and opt-outs. Real replies fire a Routine: Haiku for simple ones (send the link, basic questions), Sonnet for judgement. Haggling, anger, legal: drafted for you and flagged in the SITREP. Unsure → Claude offers a call."],
+    ["later", "Automatic chasing of hot leads", "3+ demo views or the order page opened but not paid → Claude emails them (no phone pings: hot leads are listed in the SITREP)."],
     ["later", "Weekly outreach review Routine", "Claude's weekly look at the test, on your subscription; switched on once emails are going out."],
   ]],
   ["Closing and paperwork", [

@@ -18,7 +18,7 @@ import time
 import uuid
 from pathlib import Path
 
-from aetos_leads import maprank, pipeline, store, usage
+from aetos_leads import autopilot, maprank, pipeline, store, usage
 from aetos_leads.places import PlacesError
 
 PROGRESS_EVERY_S = 2.0  # how often to push the progress bar to the Control Room
@@ -104,6 +104,29 @@ def map_rank_main(argv: list[str]) -> int:
         save_usage(d1, "scan", scan_id)
 
 
+def autopilot_main(argv: list[str]) -> int:
+    """autopilot: record today's run and hand trade/town/job_id to the workflow. sitrep: write SITREP.md."""
+    d1 = store.d1_from_env()
+    if not d1:
+        print("Database not configured (CLOUDFLARE_ACCOUNT_ID / D1_DATABASE_ID / CLOUDFLARE_API_TOKEN).", file=sys.stderr)
+        return 2
+    d1.ensure_schema()
+    if argv[0] == "sitrep":
+        path = Path(argv[argv.index("--out") + 1]) if "--out" in argv else Path("SITREP.md")
+        path.write_text(autopilot.sitrep(d1))
+        print(f"Wrote {path}")
+        return 0
+    job = autopilot.next_run(d1)
+    if not job:
+        print("Autopilot: nothing to search today (switched off, or every town searched in the last 30 days).")
+        return 0
+    print(f"Autopilot: {job['trade']} in {job['town']} (run {job['id']})")
+    if out := os.environ.get("GITHUB_OUTPUT"):
+        with open(out, "a") as f:
+            f.write(f"trade={job['trade']}\ntown={job['town']}\njob_id={job['id']}\nmax={job['max']}\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv[:1] in (["--fail-job"], ["--fail-scan"]):
@@ -115,6 +138,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 d1.query("UPDATE scans SET status = 'failed', error = ? WHERE id = ? AND status != 'failed'", [reason, argv[1]])
         return 0
+    if argv[:1] in (["autopilot"], ["sitrep"]):
+        return autopilot_main(argv)
     if argv[:1] == ["map-rank"]:
         logging.basicConfig(level=logging.INFO, format="%(message)s")
         return map_rank_main(argv[1:])

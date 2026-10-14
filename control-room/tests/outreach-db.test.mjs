@@ -74,3 +74,32 @@ test("Claude can ask the owner up to 3 questions at a time; answers reach the re
   assert.equal(d.questions.find((q) => q.id === id).answer, "Never");
   assert.deepEqual(d.questions.find((q) => q.id !== id).options, ["Yes", "No"]);
 });
+
+import { onRequestGet as getAutopilot, onRequestPut as putAutopilot } from "../functions/api/autopilot.js";
+import { onRequestGet as getPicks } from "../functions/api/outreach/picks.js";
+
+test("autopilot settings: defaults to landscapers, keeps its place, rejects nonsense", async () => {
+  const DB = fakeD1();
+  const env = { DB };
+  const a = await (await getAutopilot({ env })).json();
+  assert.equal(a.territory.trade, "landscaper");
+  assert.equal(a.upcoming, "Warrington");
+  const put = (body) => putAutopilot({ request: new Request("https://x", { method: "PUT", body: JSON.stringify(body) }), env });
+  assert.equal((await put({ on: true, trade: "landscaper", towns: "", max: 60 })).status, 400);
+  const saved = await (await put({ on: false, trade: "landscaper", towns: "Leeds\nYork\nLeeds", max: 40 })).json();
+  assert.deepEqual(saved.territory.towns, ["Leeds", "York"]);
+  assert.equal(saved.territory.on, false);
+});
+
+test("today's picks: real emails only, never contacted, best first", async () => {
+  const DB = fakeD1();
+  const add = DB.raw.prepare("INSERT INTO leads (place_id, name, trade, search_town, email, status, excluded, quality_score, audit, first_seen_at, updated_at) VALUES (?, ?, 'landscaper', 'Leeds', ?, ?, 0, ?, ?, 'x', 'x')");
+  add.run("a", "Best", "a@a.co.uk", "new", 90, "{}");
+  add.run("b", "Guessed", "info@b.co.uk", "new", 95, '{"email_source":"guessed"}');
+  add.run("c", "Contacted", "c@c.co.uk", "contacted", 99, "{}");
+  add.run("d", "Low", "d@d.co.uk", "new", 20, "{}");
+  add.run("e", "Second", "e@e.co.uk", "new", 60, "{}");
+  const p = await (await getPicks({ env: { DB } })).json();
+  assert.deepEqual(p.picks.map((l) => l.name), ["Best", "Second"]);
+  assert.equal(p.waiting, 2);
+});

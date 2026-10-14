@@ -1,4 +1,4 @@
-# The closing funnel (DRAFT for Nik to review)
+# The closing funnel
 
 Goal: turn a scraped lead into a paying client **by email and demo, without a call where possible**, as fast as
 possible. Calls only happen when they help close (a warm lead, or someone unsure). Built from the System Plan, the
@@ -48,3 +48,15 @@ Delivered → demo viewed → order page opened → paid; and replies → calls 
 6. **Founding-client deal** for the first 3–5 clients in exchange for a testimonial: what's it worth to you?
    (e.g. first month of the retainer free on top, or £150 off.)
 7. **Demo look:** one template per trade (as planned) starting with which trade?
+
+## Decided (14 Oct)
+
+- **Nik has the final call** on who's emailed: the system suggests **Today's picks** each morning; one click approves.
+- **Demos use their own assets, free:** logo, colour and photos from their website, their best real Google reviews.
+  No paid Google photos. The final site is the demo plus their onboarding content, never a redesign.
+- **Claude replies on its own** to simple replies; free rules first, then Haiku for simple, Sonnet for judgement.
+- **No phone pings:** a daily `SITREP.md` (and hot leads in it) instead.
+- **Landscapers first** (autopilot territory around Warrington; editable on the Lead Scraper page).
+- **Mailboxes:** Namecheap Private Email (keep volume low; weaker inbox placement than Google).
+- Still open: preview length (14 days for now), call-back link on the order page, chasing unpaid order-page visits,
+  founding-client deal.

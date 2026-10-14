@@ -24,6 +24,7 @@ export async function outreachPage() {
       ${kpi("Versions in the test", live1.length, live1.length < 2 ? "Approve 2 to start testing" : "Competing for new leads")}
       ${kpi("Waiting for you", proposals.length, proposals.length ? "Approve or reject below" : "Nothing to approve")}
     </div>
+    <div id="picks"></div>
     ${questionsCard(d)}
     ${testCard(d)}
     ${proposals.length ? `<div class="section-title"><h2>Waiting for your approval</h2><span class="muted small">Each is shown on your real leads with the quality check</span></div>
@@ -38,6 +39,40 @@ export async function outreachPage() {
 ${esc(d.footer)}</pre>
       <p class="hint">An easy opt-out line, so people reply instead of hitting "spam" (which hurts your inbox reputation).</p></div>`;
   bind(d);
+  picksCard();
+}
+
+/** Today's picks: the best leads ready for outreach, as many as a day's sending. You have the final say. */
+async function picksCard() {
+  const el = view.querySelector("#picks");
+  if (!el) return;
+  let p;
+  try { p = await api("/api/outreach/picks"); } catch { return; }
+  if (!p.picks.length) {
+    el.innerHTML = `<div class="card" style="margin-top:16px"><div class="card-head"><h2>Today's picks</h2></div>
+      <p class="muted" style="margin:0">No new leads ready. The autopilot searches a new town every morning (Lead Scraper page).</p></div>`;
+    return;
+  }
+  el.innerHTML = `<div class="card" style="margin-top:16px"><div class="card-head"><h2>Today's picks</h2>
+      <span class="muted small">Best ${p.picks.length} of ${p.waiting} ready · a day's sending</span></div>
+    <p class="hint" style="margin-top:0">Untick anyone you don't want. Approving builds their demo site straight away and puts them in the email sequence.</p>
+    <div class="cost-rows">${p.picks.map((l) => `<label class="pick-row"><input type="checkbox" class="sel" data-pick="${esc(l.place_id)}" checked>
+      <span><b>${esc(l.name)}</b> <span class="muted small">· ${esc(l.town || l.search_town || "")} · score ${esc(l.quality_score)}</span>
+      <div class="small muted">${esc(l.issues[0] || "")}${l.director_name && l.audit?.owner_confident ? ` · owner ${esc(l.director_name)}` : ""} · ${esc(l.email)}</div></span></label>`).join("")}</div>
+    <p style="margin-bottom:0"><button class="btn" id="picks-go">${icon("send")} Approve and start</button></p></div>`;
+  el.querySelector("#picks-go").onclick = async (e) => {
+    const ids = [...el.querySelectorAll("[data-pick]:checked")].map((b) => b.dataset.pick);
+    if (!ids.length) return toast("Nothing ticked.");
+    e.target.disabled = true;
+    try {
+      const out = await api("/api/outreach/enrol", { method: "POST", body: JSON.stringify({ place_ids: ids }) });
+      toast(`${out.added} added to outreach, demos built.${out.skipped.length ? ` ${out.skipped.length} skipped.` : ""}`);
+      outreachPage();
+    } catch (err) {
+      alert(err.message);
+      e.target.disabled = false;
+    }
+  };
 }
 
 function senderCard(sender) {
