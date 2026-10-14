@@ -88,3 +88,24 @@ def test_guesses_are_marked_unconfirmed():
     reviews = [{"author": "A", "text": "Kasia was brilliant"}, {"author": "B", "text": "Thanks Kasia!"}]
     assert owner.find_owner([], [], "", "Apex Roofing", reviews)["confident"] is False
     assert owner.find_owner([], [], "", "Dave's Plumbing", [])["confident"] is False
+
+
+def test_brand_and_reviews_for_the_demo():
+    from aetos_leads import brand
+    html = """<html><head><meta name="theme-color" content="#2e7d32"><meta property="og:image" content="/img/garden-hero.jpg">
+      <link rel="icon" href="/favicon.ico"></head><body>
+      <img src="/wp-content/uploads/logo-green.png" alt="Green Acres logo">
+      <img src="/img/patio-1.jpg" width="800"><img src="/img/tiny.jpg" width="40"><img src="/img/icon-phone.png">
+      <img src="https://www.checkatrade.com/badge.png"><img data-src="/img/lawn.webp"></body></html>"""
+    b = brand.extract([html], "https://greenacres.co.uk/")
+    assert b["logo"] == "https://greenacres.co.uk/wp-content/uploads/logo-green.png"
+    assert b["colour"] == "#2e7d32"
+    assert b["photos"] == ["https://greenacres.co.uk/img/garden-hero.jpg", "https://greenacres.co.uk/img/patio-1.jpg",
+                           "https://greenacres.co.uk/img/lawn.webp"]
+    # white/black/grey are never "the brand colour"
+    assert brand.extract(["<style>body{color:#ffffff;background:#000;border:#cccccc}</style>"], "https://x.co.uk")["colour"] == ""
+    reviews = [{"author": "Sarah Kennedy", "rating": 5, "text": "Gary and the team transformed our garden, new patio and lawn, could not be happier with it."},
+               {"author": "Bob", "rating": 2, "text": "Turned up late and left a mess everywhere in the back garden afterwards."},
+               {"author": "Al", "rating": 5, "text": "Great"}]
+    top = brand.top_reviews(reviews)
+    assert [r["author"] for r in top] == ["Sarah K."]

@@ -284,7 +284,7 @@ async def audit_lead(client: httpx.AsyncClient, lead: Lead) -> None:
     lead.socials = found["socials"]
     lead.emails = found["emails"]
     lead.email = lead.emails[0] if lead.emails else ""
-    lead.audit.update(email_source=found["source"], pages_checked=found["pages_checked"])
+    lead.audit.update(email_source=found["source"], pages_checked=found["pages_checked"], final_url=final_url)
     lead.pages_html = found["htmls"]
 
 

@@ -59,7 +59,8 @@ def to_lead(place: dict, trade: str, town: str, rank: int | None) -> Lead:
         review_count=place.get("userRatingCount", 0),
         business_status=place.get("businessStatus", ""),
         types=place.get("types", []),
-        reviews=[{"author": r.get("authorAttribution", {}).get("displayName", ""), "text": (r.get("text") or r.get("originalText") or {}).get("text", "")}
+        reviews=[{"author": r.get("authorAttribution", {}).get("displayName", ""), "rating": r.get("rating"),
+                  "text": (r.get("text") or r.get("originalText") or {}).get("text", "")}
                  for r in place.get("reviews", [])],
     )
 

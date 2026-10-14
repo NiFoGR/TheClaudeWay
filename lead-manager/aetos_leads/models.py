@@ -30,7 +30,7 @@ class Lead:
     audit: dict = field(default_factory=dict)  # raw audit facts
     director_first_name: str = ""  # who runs it (see owner.py); the column names predate the website/review sources
     director_name: str = ""
-    reviews: list[dict] = field(default_factory=list)  # Google reviews [{author, text}], used to find the owner; not stored
+    reviews: list[dict] = field(default_factory=list)  # Google reviews [{author, rating, text}]: owner finding; the best 3 are kept in audit['reviews'] for the demo
     pages_html: list[str] = field(default_factory=list)  # pages fetched during the audit; not stored
     company_number: str = ""
 

@@ -27,6 +27,8 @@ export function slugFor(name, rand = () => Math.random()) {
 
 // services people search for, per trade (what the top-ranking sites in each trade list); a fallback for others
 const SERVICES = {
+  landscap: ["Garden design", "Patios & paving", "Turfing & lawns", "Fencing", "Decking", "Garden clearance"],
+  garden: ["Garden maintenance", "Lawn care", "Hedge cutting", "Planting", "Patios & paving", "Garden clearance"],
   roof: ["New roofs", "Roof repairs", "Flat roofs", "Chimney work", "Guttering & fascias", "Emergency leaks"],
   plumb: ["Leaks & burst pipes", "Bathroom installs", "Boiler repairs", "Taps, toilets & showers", "Blocked drains", "Emergency call-outs"],
   heat: ["Boiler installs", "Boiler repairs & servicing", "Central heating", "Gas safety certificates", "Radiators", "Emergency call-outs"],
@@ -71,7 +73,23 @@ a{color:inherit}.wrap{max-width:1080px;margin:0 auto;padding:0 20px}
 @media(max-width:600px){.ae-bar .wrap{flex-wrap:nowrap;padding:8px 14px}.ae-bar span{font-size:12.5px;line-height:1.35}.ae-btn{padding:8px 12px;font-size:13px}}
 `;
 
-/** The demo page for one lead. demo: {slug, expires_at}. */
+const safeHttp = (u) => (/^https?:\/\/[^\s"'<>]+$/i.test(String(u || "")) ? String(u) : "");
+const isHex = (c) => /^#[0-9a-f]{6}$/i.test(String(c || ""));
+/** Darken (negative) or lighten a #rrggbb colour by a fraction. */
+function shade(hex, f) {
+  const n = parseInt(hex.slice(1), 16);
+  const ch = (v) => Math.round(f < 0 ? v * (1 + f) : v + (255 - v) * f);
+  return `#${[n >> 16, (n >> 8) & 255, n & 255].map((v) => ch(v).toString(16).padStart(2, "0")).join("")}`;
+}
+// the colour a trade's top sites tend to use, when we couldn't find theirs
+const TRADE_COLOUR = [[/landscap|garden|tree|lawn|fenc/i, "#2f6b3a"], [/roof|plumb|heat|gas|boiler/i, "#1e4f86"],
+  [/electric/i, "#b45309"], [/kickbox|boxing|martial|muay|mma|gym/i, "#9b1c1c"], [/removal/i, "#0f766e"], [/pest/i, "#3f6212"]];
+const auditOf = (lead) => {
+  if (lead.audit && typeof lead.audit === "object") return lead.audit;
+  try { return JSON.parse(lead.audit || "{}") || {}; } catch { return {}; }
+};
+
+/** The demo page for one lead. demo: {slug, expires_at}. Their logo, colour, photos and real reviews when we have them. */
 export function renderDemo(lead, demo) {
   const name = shortName(lead.name);
   const trade = String(lead.trade || "").toLowerCase();
@@ -83,50 +101,71 @@ export function renderDemo(lead, demo) {
   const classes = isClass(trade);
   const rating = Number(lead.rating) || 0;
   const reviews = Number(lead.review_count) || 0;
+  const audit = auditOf(lead);
+  const brand = audit.brand || {};
+  const logo = safeHttp(brand.logo);
+  const photos = (brand.photos || []).map(safeHttp).filter(Boolean).slice(0, 6);
+  const quotes = (audit.reviews || []).filter((r) => r && r.text).slice(0, 3);
+  const main = isHex(brand.colour) ? brand.colour : (TRADE_COLOUR.find(([re]) => re.test(trade)) || [0, "#0f2a4a"])[1];
+  const dark = shade(main, -0.45);
   const cta = classes ? "Book a free trial class" : "Get a free quote";
   const headline = classes ? `${Trade} in ${town || "your area"}, for every level` : `Trusted ${trade} in ${town || "your area"}`;
   const sub = classes
     ? `Friendly, expert coaching at ${name}. Beginners welcome, no experience needed.`
-    : `Fast, reliable and fairly priced. Call ${name} today for a free, no-obligation quote.`;
+    : `Call ${name} today for a free, no-obligation quote.`;
+  const hero = photos[0]
+    ? `background:linear-gradient(rgba(10,14,20,.62),rgba(10,14,20,.62)),url("${esc(photos[0])}") center/cover`
+    : `background:linear-gradient(135deg,${dark},${main})`;
+  const gallery = photos.length > 1 ? photos.slice(1) : [];
   return `<!doctype html><html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex,nofollow"><title>${esc(name)} · ${esc(Trade)}${town ? ` in ${esc(town)}` : ""}</title>
+<meta name="robots" content="noindex,nofollow"><meta name="referrer" content="no-referrer"><title>${esc(name)} · ${esc(Trade)}${town ? ` in ${esc(town)}` : ""}</title>
 <style>${BASE_CSS}
-.hero{background:linear-gradient(135deg,#0f2a4a,#1e4f86);color:#fff;padding:72px 0 64px}
-.hero h1{font-size:clamp(30px,5vw,48px);line-height:1.15;margin:0 0 12px}.hero p{font-size:19px;opacity:.92;max-width:620px;margin:0 0 26px}
-.rate{display:inline-flex;gap:8px;align-items:center;background:rgba(255,255,255,.12);padding:6px 12px;border-radius:99px;margin-bottom:18px;font-size:15px}
+:root{--main:${main};--dark:${dark}}
+.top{background:#fff;border-bottom:1px solid #e6e9f0}.top .wrap{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 20px}
+.top img{max-height:52px;max-width:200px;object-fit:contain}.top .nm{font-weight:800;font-size:20px;color:var(--dark)}
+.top a.ph{font-weight:700;color:var(--main);text-decoration:none;white-space:nowrap}
+.hero{${hero};color:#fff;padding:80px 0 72px}
+.hero h1{font-size:clamp(30px,5vw,50px);line-height:1.12;margin:0 0 12px}.hero p{font-size:19px;opacity:.95;max-width:620px;margin:0 0 26px}
+.rate{display:inline-flex;gap:8px;align-items:center;background:rgba(255,255,255,.15);padding:6px 12px;border-radius:99px;margin-bottom:18px;font-size:15px}
 .rate .s{color:#ffc93c;letter-spacing:1px}.btns{display:flex;gap:12px;flex-wrap:wrap}
-.b1{background:#ff7a1a;color:#fff;text-decoration:none;font-weight:700;padding:14px 22px;border-radius:10px}
+.b1{background:var(--main);color:#fff;text-decoration:none;font-weight:700;padding:14px 22px;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.25)}
 .b2{border:2px solid #fff;color:#fff;text-decoration:none;font-weight:700;padding:12px 20px;border-radius:10px}
-section{padding:56px 0}h2{font-size:30px;margin:0 0 8px}.lead{color:#5b6476;margin:0 0 28px}
+section{padding:56px 0}h2{font-size:30px;margin:0 0 8px;color:var(--dark)}.lead{color:#5b6476;margin:0 0 28px}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
-.card{border:1px solid #e6e9f0;border-radius:12px;padding:22px;background:#fff}.card h3{margin:0 0 6px;font-size:18px}.card p{margin:0;color:#5b6476;font-size:15px}
-.alt{background:#f5f7fb}.why{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px}
-.why div{padding:18px;border-left:4px solid #ff7a1a;background:#fff;border-radius:8px}
-.ph{border:2px dashed #c9d1e0;border-radius:12px;min-height:150px;display:grid;place-items:center;color:#8a93a6;font-size:14px;text-align:center;padding:12px}
+.card{border:1px solid #e6e9f0;border-top:4px solid var(--main);border-radius:12px;padding:22px;background:#fff}.card h3{margin:0 0 6px;font-size:18px}.card p{margin:0;color:#5b6476;font-size:15px}
+.alt{background:#f5f7f6}.why{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px}
+.why div{padding:18px;border-left:4px solid var(--main);background:#fff;border-radius:8px}
+.pics{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.pics img{width:100%;height:220px;object-fit:cover;border-radius:12px;background:#eef1ee}
+.revs{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}.rev{background:#fff;border-radius:12px;padding:20px;border:1px solid #e6e9f0}
+.rev .s{color:#f5a700;letter-spacing:1px}.rev p{margin:8px 0;font-size:15px}.rev b{font-size:14px;color:#5b6476}
 .quote{display:grid;gap:12px;max-width:560px}.quote input,.quote textarea{font:inherit;padding:12px 14px;border:1px solid #cfd6e3;border-radius:8px}
-.quote button{background:#ff7a1a;color:#fff;border:0;font:inherit;font-weight:700;padding:14px;border-radius:10px;cursor:pointer}
-.note{font-size:13px;color:#8a93a6}footer{background:#0f2a4a;color:#c9d6ea;padding:28px 0;font-size:14px}
-.callfab{position:fixed;right:16px;bottom:16px;background:#ff7a1a;color:#fff;text-decoration:none;font-weight:700;padding:14px 18px;border-radius:99px;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+.quote button{background:var(--main);color:#fff;border:0;font:inherit;font-weight:700;padding:14px;border-radius:10px;cursor:pointer}
+.note{font-size:13px;color:#8a93a6}footer{background:var(--dark);color:#e6ece8;padding:28px 0;font-size:14px}
+.callfab{position:fixed;right:16px;bottom:16px;background:var(--main);color:#fff;text-decoration:none;font-weight:700;padding:14px 18px;border-radius:99px;box-shadow:0 6px 20px rgba(0,0,0,.25)}
 @media(min-width:900px){.callfab{display:none}}
 </style></head><body>
 <div class="ae-bar"><div class="wrap"><span>Your new website, built for <b>${esc(name)}</b> · preview until ${esc(fmtDay(demo.expires_at))}</span>
 <a class="ae-btn" href="/d/${esc(demo.slug)}/order" data-ev="order_page">Make it mine →</a></div></div>
+<div class="top"><div class="wrap">${logo ? `<img src="${esc(logo)}" alt="${esc(name)}" onerror="this.style.display='none';this.nextElementSibling.hidden=false"><span class="nm" hidden>${esc(name)}</span>` : `<span class="nm">${esc(name)}</span>`}
+${tel ? `<a class="ph" href="tel:${esc(tel)}">${esc(phone)}</a>` : ""}</div></div>
 <header class="hero"><div class="wrap">
 ${rating ? `<div class="rate"><span class="s">${stars(rating)}</span><b>${esc(rating.toFixed(1))}</b> from ${esc(reviews)} Google reviews</div>` : ""}
 <h1>${esc(headline)}</h1><p>${esc(sub)}</p>
 <div class="btns">${tel ? `<a class="b1" href="tel:${esc(tel)}">Call ${esc(phone)}</a>` : ""}<a class="${tel ? "b2" : "b1"}" href="#quote">${esc(cta)}</a></div>
 </div></header>
 <section><div class="wrap"><h2>${classes ? "Classes" : "Services"}</h2><p class="lead">${classes ? `What you can train at ${esc(name)}.` : `What ${esc(name)} can do for you${town ? ` across ${esc(town)} and nearby` : ""}.`}</p>
-<div class="grid">${services.map((s) => `<div class="card"><h3>${esc(s)}</h3><p>${classes ? "Ask about times and prices." : "Free quote, no obligation."}</p></div>`).join("")}</div></div></section>
-<section class="alt"><div class="wrap"><h2>Why ${esc(name)}</h2><p class="lead">Local, trusted, and easy to reach.</p><div class="why">
+<div class="grid">${services.map((x) => `<div class="card"><h3>${esc(x)}</h3><p>${classes ? "Ask about times and prices." : "Free quote, no obligation."}</p></div>`).join("")}</div></div></section>
+${gallery.length ? `<section class="alt"><div class="wrap"><h2>Our work</h2><p class="lead">A few recent jobs.</p>
+<div class="pics">${gallery.map((u) => `<img src="${esc(u)}" alt="Work by ${esc(name)}" loading="lazy" onerror="this.remove()">`).join("")}</div></div></section>` : ""}
+${quotes.length ? `<section${gallery.length ? "" : ' class="alt"'}><div class="wrap"><h2>What customers say</h2><p class="lead">Real reviews from Google.</p>
+<div class="revs">${quotes.map((r) => `<div class="rev"><span class="s">${stars(r.rating || 5)}</span><p>“${esc(r.text)}”</p><b>${esc(r.author)}</b></div>`).join("")}</div></div></section>` : ""}
+<section${quotes.length && !gallery.length ? "" : ' class="alt"'}><div class="wrap"><h2>Why ${esc(name)}</h2><p class="lead">Local, trusted, and easy to reach.</p><div class="why">
 ${rating ? `<div><b>${esc(rating.toFixed(1))}★ on Google</b><br>From ${esc(reviews)} real reviews.</div>` : ""}
 <div><b>Local to ${esc(town || "you")}</b><br>${classes ? "Easy to get to, friendly faces." : "Quick to reach you when you need us."}</div>
 <div><b>${classes ? "All levels welcome" : "Clear prices"}</b><br>${classes ? "From first timers to fighters." : "A proper quote before any work starts."}</div>
 ${tel ? `<div><b>Talk to a real person</b><br><a href="tel:${esc(tel)}">${esc(phone)}</a></div>` : ""}
 </div></div></section>
-<section><div class="wrap"><h2>Our work</h2><p class="lead">Your own photos go here, so customers see the real thing.</p>
-<div class="grid"><div class="ph">Your photo</div><div class="ph">Your photo</div><div class="ph">Your photo</div></div></div></section>
-<section class="alt" id="quote"><div class="wrap"><h2>${esc(cta)}</h2><p class="lead">On your live site, this goes straight to your phone and inbox.</p>
+<section id="quote"${quotes.length && !gallery.length ? ' class="alt"' : ""}><div class="wrap"><h2>${esc(cta)}</h2><p class="lead">On your live site, this goes straight to your phone and inbox.</p>
 <form class="quote" onsubmit="event.preventDefault();this.querySelector('.note').textContent='Preview only: on your live site, this enquiry would reach you instantly.'">
 <input placeholder="Your name" required><input placeholder="Phone number" required><textarea rows="3" placeholder="${classes ? "Which class are you interested in?" : "What do you need doing?"}"></textarea>
 <button>${esc(cta)}</button><p class="note"></p></form></div></section>

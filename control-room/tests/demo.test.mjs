@@ -84,3 +84,25 @@ test("Start outreach builds their demo straight away", async () => {
   assert.match(out.demos.p1.slug, /^smith-roofing-/);
   assert.equal(DB.raw.prepare("SELECT COUNT(*) AS n FROM demos").get().n, 1);
 });
+
+test("their own logo, colour, photos and real reviews make it theirs; unsafe values are dropped", () => {
+  const lead = { ...LEAD, name: "Green Acres Landscaping", trade: "landscaper", audit: JSON.stringify({
+    brand: { logo: "https://greenacres.co.uk/logo.png", colour: "#2e7d32", photos: ["https://greenacres.co.uk/a.jpg", "https://greenacres.co.uk/b.jpg", "javascript:alert(1)"] },
+    reviews: [{ author: "Sarah K.", rating: 5, text: "Gary transformed our garden, new patio and lawn." }] }) };
+  const html = renderDemo(lead, DEMO);
+  assert.match(html, /<img src="https:\/\/greenacres\.co\.uk\/logo\.png"/);
+  assert.match(html, /--main:#2e7d32/);
+  assert.match(html, /url\("https:\/\/greenacres\.co\.uk\/a\.jpg"\)/); // hero photo
+  assert.match(html, /Work by Green Acres Landscaping/);
+  assert.match(html, /Gary transformed our garden/);
+  assert.match(html, /Patios &amp; paving/);
+  assert.doesNotMatch(html, /javascript:alert/);
+  // nothing found: no empty photo boxes, trade colour instead
+  const plain = renderDemo({ ...LEAD, trade: "landscaper", audit: "{}" }, DEMO);
+  assert.doesNotMatch(plain, /Your photo|Our work/);
+  assert.match(plain, /--main:#2f6b3a/);
+  // a hostile business name can't break out of the logo fallback
+  const evil = renderDemo({ ...lead, name: "x';alert(1);' <b>" }, DEMO);
+  assert.doesNotMatch(evil, /alert\(1\);'/);
+  assert.match(evil, /x&#39;;alert\(1\);&#39; &lt;b&gt;/);
+});

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from aetos_leads import audit, companies_house, maprank, owner, places, qualify, research
+from aetos_leads import audit, brand, companies_house, maprank, owner, places, qualify, research
 from aetos_leads.maprank import Scan
 from aetos_leads.models import Lead
 
@@ -67,6 +67,9 @@ def run(trade: str, town: str, places_key: str, companies_house_key: str = "", m
                 lead.director_first_name, lead.director_name = found["first"], found["full"]
                 lead.audit["owner_source"] = found["source"]
                 lead.audit["owner_confident"] = found["confident"]
+            # their look and their best reviews, for the demo site (brand.py)
+            lead.audit["brand"] = brand.extract(lead.pages_html, lead.audit.get("final_url") or lead.website or "")
+            lead.audit["reviews"] = brand.top_reviews(lead.reviews)
             lead.pages_html = []  # done with them; don't hold every page in memory
         if companies_house_key:
             for i, lead in enumerate(keep, 1):
