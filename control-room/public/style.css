@@ -441,3 +441,17 @@ details.script-obj > summary { cursor: pointer; font-weight: 600; font-size: 13p
 .pick-row:first-child { border-top: 0; }
 .pick-row input { margin-top: 4px; }
 label.check { display: flex; gap: 8px; align-items: center; font-weight: 600; margin-bottom: 8px; }
+
+/* What to do (Home) */
+.card.todo { margin-bottom: 16px; border-color: var(--gold); }
+.todo-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.todo-row .grow { min-width: 0; flex: 1; }
+.todo-row.is-done b { color: var(--text-3); font-weight: 500; }
+.todo-mark { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px;
+  background: var(--surface-3); color: var(--text-2); }
+.todo-mark.gold { background: var(--gold); color: var(--gold-ink); }
+.todo-mark.good { background: var(--good-soft); color: var(--good); }
+.todo-mark.bad { background: var(--bad-soft); color: var(--bad); }
+.todo-setup { margin-top: 8px; }
+.todo-setup > summary { cursor: pointer; font-weight: 600; padding: 8px 0; color: var(--text-2); }
+label.tick { display: flex; gap: 6px; align-items: center; white-space: nowrap; cursor: pointer; }

@@ -1,6 +1,6 @@
 // Home: the important numbers and who to contact next, on one screen.
 import { openDrawer } from "./leads.js";
-import { api, esc, icon, kpi, money, pageHead, ring, view } from "./lib.js";
+import { api, esc, icon, kpi, money, pageHead, ring, toast, view } from "./lib.js";
 import { runRow } from "./scraper.js";
 
 export async function homePage() {
@@ -20,6 +20,7 @@ export async function homePage() {
   view.innerHTML = `
     ${pageHead(`${hello}, Nikiforos`, new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" }),
       `<a class="btn" href="#/scraper">${icon("search")} Find leads</a>`)}
+    <div id="todo"></div>
     <div class="kpis">
       ${kpi("Profit this month", money(m.thisMonth.profit), `${money(m.thisMonth.in)} in · ${money(m.thisMonth.out)} out`, "accent")}
       ${kpi("Monthly recurring", `${money(m.mrr)}<span class="faint" style="font-size:14px;font-weight:500">/mo</span>`, m.mrrSoon ? `+${money(m.mrrSoon)} when free periods end` : `goal ${money(m.goal)}/mo`)}
@@ -51,4 +52,43 @@ export async function homePage() {
     openDrawer(next[Number(el.dataset.i)], () => homePage());
   });
   view.querySelectorAll(".run").forEach((r) => r.onclick = () => { location.hash = `#/scraper?job=${encodeURIComponent(r.dataset.id)}`; });
+  todoCard();
+}
+
+// ---------------------------------------------------------------- What to do (functions/_lib/today.js)
+
+const MARK = { done: ["good", "✓"], todo: ["gold", "•"], optional: ["", "○"], warn: ["bad", "!"] };
+
+/** Your steps for today, in order, then the one-time setup still left. Loaded after the page so Home stays fast. */
+async function todoCard() {
+  const el = view.querySelector("#todo");
+  if (!el) return;
+  let t;
+  try { t = await api("/api/today"); } catch { return; }
+  const left = t.daily.filter((s) => s.status === "todo" || s.status === "warn").length;
+  const step = (s, i) => {
+    const [cls, mark] = MARK[s.status];
+    const done = s.status === "done";
+    return `<div class="todo-row ${done ? "is-done" : ""}"><span class="todo-mark ${cls}">${done ? mark : i + 1}</span>
+      <div class="grow"><b>${esc(s.title)}</b><div class="muted small">${esc(done ? s.doneText || "Done." : s.why)}</div></div>
+      ${done ? "" : `<a class="btn ${s.status === "todo" || s.status === "warn" ? "" : "secondary"} sm" href="${esc(s.href)}"${s.external ? ' target="_blank" rel="noopener"' : ""}>${esc(s.cta)}</a>`}</div>`;
+  };
+  const setupRow = (s) => `<div class="todo-row ${s.done ? "is-done" : ""}"><span class="todo-mark ${s.done ? "good" : ""}">${s.done ? "✓" : "○"}</span>
+      <div class="grow"><b>${esc(s.title)}</b><div class="muted small">${esc(s.how)}</div></div>
+      ${s.auto ? (s.done || !s.href ? "" : `<a class="btn secondary sm" href="${esc(s.href)}">Open</a>`)
+        : `<label class="small muted tick"><input type="checkbox" data-setup="${esc(s.key)}" ${s.done ? "checked" : ""}> Done</label>`}</div>`;
+  el.innerHTML = `<div class="card todo"><div class="card-head"><div><h2>What to do</h2>
+      <div class="muted small">${left ? `${left} thing${left === 1 ? "" : "s"} for you today, top to bottom. Everything else runs by itself.` : "You're clear for today. Everything else runs by itself."}</div></div></div>
+    ${t.daily.map(step).join("")}
+    ${t.setupLeft ? `<details class="todo-setup"><summary>One-time setup: ${t.setupLeft} left</summary>${t.setup.map(setupRow).join("")}</details>` : ""}
+  </div>`;
+  el.querySelectorAll("[data-setup]").forEach((box) => box.onchange = async () => {
+    try {
+      await api("/api/today", { method: "POST", body: JSON.stringify({ key: box.dataset.setup, done: box.checked }) });
+      toast(box.checked ? "Ticked off." : "Unticked.");
+      todoCard();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
 }

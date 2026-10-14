@@ -11,6 +11,7 @@ const STATUS = {
 
 const ROADMAP = [
   ["Find leads", [
+    ["built", "What to do (Home)", "Your steps for today in order, each ticked when there's nothing to do, plus the one-time setup still left. Warns if Claude stops researching."],
     ["built", "Daily autopilot", "Every morning: searches your niche in the next town on your list (Lead Scraper page → Autopilot), hands the gaps to Claude, and writes SITREP.md. Starts with landscapers."],
     ["built", "SITREP", "SITREP.md in the repo, rewritten every morning: what happened, what's hot, what needs you, tomorrow's town. No AI, no cost."],
     ["built", "Lead Scraper", "Trade + town → every business on Google Maps, website audit, email, owner, quality score; chains and front-desk businesses filtered out."],
