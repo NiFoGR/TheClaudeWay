@@ -662,7 +662,7 @@ callTodoTitle({first, business, slot_at, phone}) → string
 **Files:** Create `control-room/functions/_lib/replies.js`. Test `control-room/tests/replies.test.mjs`.
 
 **Interfaces:** Consumes `inUkWindow`, `nextUkWindowStart`, `ukToUtc`, `ukDate` (ukTime.js), `makeMessageId(domain)`
-(compose.js). Produces:
+(compose.js), `businessName` (stage 5–6's `_lib/mail/rules.js`; not redefined here). Produces:
 ```js
 REPLY_HOURS = {start: "07:00", end: "23:30", days: [0,1,2,3,4,5,6]}
 INTENTS = ["interested","question","price","more_info","call_request","proposes_time","confirms_slot",
@@ -671,12 +671,11 @@ ESCALATE_INTENTS = ["angry","legal","unclear","other"]
 intentEffects(intent) → {event: string|null, lost_reason: string|null, bodyRequired: boolean, todo: "checkback"|"call_time"|null}
 sendTime(now: Date) → Date
 shouldFireReply({waiting, newestAt, lastFireAt, now, paused}) → boolean
-replyLight({waiting, oldestAt, now, paused}) → {key: "replies", color: "green"|"red"|"grey", text}
+replyLight({waiting, oldestAt, now, paused}) → {name: "replies", level: "green"|"red"|"grey", detail, fix}
 stripQuoted(text) → string                       // ≤ 4000 chars
-businessName(name) → string                      // same rules as callscript.js shortName
 reSubject(subject) → string
-signature(mailbox) → "Nik\nAetos Websites"
-buildReply({inbound, prospect, mailbox, body, author, now}) → messages row (no id)
+signature(senderName) → "<senderName>\nAetos Websites"   // senderName = setting business:sender_name
+buildReply({inbound, prospect, mailbox, senderName, body, author, now}) → messages row (no id)
 escalationTitle(intent, business) → string
 medianReplyMinutes(pairs: [{received_at, sent_at}]) → number|null
 ```

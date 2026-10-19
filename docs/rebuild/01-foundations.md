@@ -1223,9 +1223,18 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
   - "limit": 5 due replies with limit 2 means exactly 2 sends.
   - "suppressed": `suppress(DB,"bob@x.com",…)` then a reply to `Bob@x.com` becomes `cancelled`, with the error
     starting `Suppressed:`, and `send` is not called.
+  - "system mail ignores suppression": a `system` message to the suppressed `bob@x.com` is sent.
   - "missing footer": a `first` whose body lacks `OPT_OUT_LINE` becomes `failed` with
     `Missing the "no thanks" line`.
-  - "paused mailbox sends nothing": a reply stays `queued`.
+  - "paused mailbox holds a `first`, sends a `reply`": with `m1` paused, a due `first` stays `queued` (held 1) and a
+    due `reply` is sent.
+  - "kinds": a due `first` and a due `reply`; `dispatchDue(…, {kinds:["reply"]})` sends only the reply and leaves
+    the `first` `queued` without counting it as held.
+  - "follow-ups first": with `limit:1`, a `first` due 08:00 and a `followup` due 08:05 (both inside the window),
+    the `followup` is sent.
+  - "keeps the row's headers": a `reply` queued with `message_id "<x@aetoswebsites.com>"`, `in_reply_to "<r@y>"`
+    and `refs "<q@y> <r@y>"` reaches `send` with exactly those `Message-ID`, `In-Reply-To` and `References`, and
+    its `message_id` is unchanged.
   - "failure is recorded": `send` returns `{ok:false, error:"x"}`, so the row is `failed` with `error='x'` and
     there's no second attempt on the next call.
   - "stuck sending": a row `sending` with `created_at` 11 min ago becomes `failed` with the spec text.
@@ -1234,9 +1243,12 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
 - [ ] **Step 2: Run it to verify it fails.** `node --test control-room/tests/outbox.test.mjs` fails with "Cannot find module".
 - [ ] **Step 3: Implement `outbox.js`.**
   - Mark stuck rows first.
-  - Select up to `limit*10` queued rows with `due_at <= now`, ordered by `due_at`.
-  - For each row, check in order: footer, suppression, mailbox (assign for cold kinds), paused, window, cap,
-    password.
+  - Select up to `limit*10` queued rows with `due_at <= now` (and `kind IN (…)` when `kinds` is set), ordered by
+    `CASE kind WHEN 'followup' THEN 0 WHEN 'first' THEN 1 ELSE 2 END, due_at`.
+  - For each row, check in order: footer, suppression (`first`/`followup`/`reply` only), mailbox (assign for cold
+    kinds), paused (`first`/`followup` only), window, cap, password.
+  - Compose with the row's `message_id`/`in_reply_to`/`refs`; call `makeMessageId` only when `message_id` is null,
+    and store the generated id.
   - Claim with `UPDATE … SET status='sending' WHERE id=? AND status='queued'`, compose, send, and record.
   - A missing password holds the row.
 - [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/outbox.test.mjs` passes.
@@ -1302,11 +1314,14 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
 - Consumes `parseHeaders`, `extractText`, `bounceInfo`, `classifyInbound`, `applyStageEvent`, `suppress`,
   `addTodo`, `getSetting` and `fakeD1`.
 - Produces:
-  - `processInbound(DB, now, {limit = 10} = {}) → Promise<{[outcome]: number}>`;
+  - `processInbound(DB, now, {limit = 10, maxQueries = 30} = {}) → Promise<{[outcome]: number}>`. It counts its own
+    D1 queries (with Task 16's `countingDB`) and doesn't start another row once it has made `maxQueries`;
   - `inboundStep = {name:"inbound", everyMinutes:0, run}`, which returns e.g. `"3 processed: 1 human, 1 auto, 1 bounce"`;
   - `BOUNCE_PAUSE = {count:2, days:7}`.
 
-  The mailbox resume time is read from the setting `mailbox:<id>:resumed_at`.
+  The mailbox resume time is read from the setting `mailbox:<id>:resumed_at`. When the linked prospect is `won`, or
+  the sender matches only a `client_links.email`, an `opt_out` class is handled as `human` (Part A). Stage 7 calls
+  its `onHumanInbound` from the human branch of `processInbound`.
 
 - [ ] **Step 1: Write the failing test.** Seed a prospect `p1` (`emailed`, `email: "bob@x.com"`, mailbox `m1`) and
   an out message with `message_id "<orig@aetoswebsites.com>"`. Insert `inbound_raw` rows from the Task 14

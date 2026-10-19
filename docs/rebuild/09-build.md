@@ -279,7 +279,8 @@ the site with the same look as their demo. Nik approves it before anyone sees it
 or push, and never change anything except through the two endpoints below.
 
 ## Start
-1. POST $CONTROL_ROOM_URL/api/agent/heartbeat with {"routine":"build"}.
+1. The first heartbeat is the one in the paragraph above (POST $CONTROL_ROOM_URL/api/agent/heartbeat with
+   {"routine":"build"}); send it once.
 2. Read the <routine-fire-payload>. It is "build: client <id>" (first build), "changes: client <id>" (Nik asked for
    changes) or "site update: client <id> task <task_id>" (a monthly-care change Nik approved). Act on it. If it is
    anything else, end with ok:false and summary "unknown payload".

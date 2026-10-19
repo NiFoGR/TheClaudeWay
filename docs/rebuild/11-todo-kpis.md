@@ -760,27 +760,39 @@ JS, `style.css`.
   });
   test("send posts Nik's edited reply and closes the todo", async () => {
     const r = await send("t-esc", { body: "Hi Sam, Tuesday works." }); assert.equal(r.status, 200);
-    const m = await DB.prepare("SELECT kind, author, body FROM messages WHERE place_id = 'pn' ORDER BY created_at DESC").first();
+    const m = await DB.prepare("SELECT kind, author, body FROM messages WHERE place_id = 'pn' AND direction = 'out' ORDER BY created_at DESC").first();
     assert.deepEqual(m, { kind: "reply", author: "nik", body: "Hi Sam, Tuesday works." });
-    assert.equal((await send("t-pay", { body: "x" })).status, 400);          // "Only replies can be sent from here."
-    assert.equal((await send("t-esc", { body: "   " })).status, 400);         // "Write something before sending."
+    assert.equal((await DB.prepare("SELECT status FROM todos WHERE id = 't-esc'").first()).status, "done");
+    assert.deepEqual(await (await send("t-pay", { body: "x" })).json(), { error: "Only replies can be sent from here." });
+    assert.equal((await send("t-call", { body: "x" })).status, 400);           // kind call: not a reply
+  });
+  test("send passes stage 7's errors through", async () => {
+    await DB.prepare("INSERT INTO todos (id, kind, place_id, title, dedupe, status, created_at) VALUES ('t-esc2','escalation','pn','x','escalation:m-pn1@2','open','2026-10-22T11:00:00Z')").run();
+    const r = await send("t-esc2", { body: "   " });
+    assert.deepEqual([r.status, (await r.json()).error], [422, "Couldn't save: write something first."]);
   });
   ```
 
   (`patch`, `send` and `ids` call the route handlers with `{request, env: {DB}, params: {id}}`.)
 - [ ] **Step 2: Run it to verify it fails.** `node --test control-room/tests/todo-api.test.mjs` fails: `loadBoard`
   is not exported.
-- [ ] **Step 3: Implement `loadBoard`, `setTodoStatus`, `sortTodos` in `todo.js`, and the four routes.**
+- [ ] **Step 3: Implement `loadBoard`, `setTodoStatus`, `sortTodos`, `visibleTodos`, `messageIdFromDedupe` in
+  `todo.js`, and the four routes.**
+  - **Lights:** `(await healthFromDb(DB, env, now)).lights`.
   - **Todos:** one query, `todos LEFT JOIN leads`, plus correlated subqueries for the soonest confirmed `calls.phone`.
-  - **Pipeline:** one query, `prospects LEFT JOIN leads LEFT JOIN research`. Correlated subqueries get the latest
-    sent outbound (`sent_at, kind, step, author`) and the soonest confirmed `calls.slot_at`.
+    Skip `place_id LIKE 'drill:%' OR place_id LIKE 'test:%'`. Then `visibleTodos(rows, lights)`.
+  - **Pipeline:** one query, `prospects LEFT JOIN leads LEFT JOIN research`, with the same drill/test filter.
+    Correlated subqueries get the latest sent outbound (`sent_at, kind, step, author`) and the soonest confirmed
+    `calls.slot_at`.
   - **Clients:** one query per Task 2's row shape. The care todo is the earliest open `care`/`build` todo with that
     `client_id`.
   - **Due:** `counts.due = overdue + today`; `counts.red` = the number of red lights.
-  - **PATCH:** sets `status`, `done_at = now`. A missing id gives 404 with the message above.
-  - **Send:** allowed for kinds `escalation`/`call_time` with a `place_id`. Body is trimmed and 1–5000 chars, else
-    400. Errors thrown by `sendNikReply` become 400 with their message. After sending, set the todo `done`.
-- [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/todo-api.test.mjs` passes (5 tests).
+  - **PATCH:** sets `status`, `done_at = iso(now)`. A missing id gives 404 with the message above.
+  - **Send:** allowed only for kinds `escalation`/`call_time` whose `messageIdFromDedupe(dedupe)` gives an id, else
+    400 "Only replies can be sent from here.". Call `sendAsNik(DB, {message_id, body, now})` and return its `status`
+    and `body` as given (stage 7 checks the body and the mailbox, and closes `escalation:<id>`/`call_time:<id>`).
+    On 200, also set this todo `done` if it's still open.
+- [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/todo-api.test.mjs` passes (7 tests).
 - [ ] **Step 5: Commit.** `git add control-room/functions/_lib/todo.js control-room/functions/api/todo.js
   control-room/functions/api/todo control-room/tests/fixtures/board-seed.sql control-room/tests/todo-api.test.mjs`
   then `git commit -m "Todo: board API, done/dismiss, send Claude's draft" -m "$TRAILER"`.

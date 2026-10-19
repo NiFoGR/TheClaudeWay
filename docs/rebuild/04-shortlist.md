@@ -631,29 +631,37 @@ return title
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/shortlist-db.js control-room/functions/_lib/tick.js control-room/tests/pick.test.mjs`
   + `git commit -m "Shortlist: morning pick todo" -m "$TRAILER"`.
 
-### Task 8: Call script update and the pure panel renderer
+### Task 7: Call script update and the pure panel renderer
 
 **Files:** Create `control-room/public/js/html.js`, `control-room/public/js/leadview.js`; Modify
 `control-room/public/js/lib.js` (re-export from `html.js`), `control-room/public/js/callscript.js`; Test
 `control-room/tests/callscript.test.mjs` (update), `control-room/tests/leadview.test.mjs`.
 
 **Interfaces:**
-- Consumes: the `Detail` and row shapes (Tasks 4–5); `offer` object shape (Task 1); `STAGE_LABELS` values (copied as
-  data in the payload: `stage_label`).
+- Consumes: the `Detail` and row shapes (Tasks 3–4); stage 0's `offerFor(date)` shape `{weekend, full: {label,
+  build, monthly, freeDays, wasBuild?}, website, banner}` (pence) and `GUARANTEE {headline, section}` (both arrive in
+  the payload as `offer` and `guarantee`; browser files never import `functions/`); `STAGE_LABELS` values (copied as
+  data in the payload: `stage_label`); stage 2's `researchCard({research, waiting}, {esc, safeUrl}) → string` from
+  `./researchcard.js`.
 - Produces:
   - `html.js`: `esc(v)`, `safeUrl(u)`, `icon(name)` (moved verbatim from `lib.js`; `lib.js` does
     `export { esc, safeUrl, icon } from "./html.js"`).
-  - `callscript.js`: `callScript(lead, {sender = "Nik", offer, today = new Date()}) → [{title, lines, objection?}]`
-    where `lead = {name, trade, town, rating, review_count, findings, map_rank, owner_first, email, demo_url, angle}`;
-    throws `Error("callScript needs opts.offer from /api/leads/:id")` without `offer`. `shortName` unchanged.
-  - `leadview.js`: `POINT_LABELS = {need: "Needs help online", means: "Can afford it", reach: "We can reach the owner", fit: "Our kind of business"}`,
-    `gradeBadge(grade) → html`, `leadRowHtml(row, {selected}) → html`, `bannerHtml(banner) → html`,
+  - `callscript.js`: `callScript(lead, {sender = "Nik", offer, guarantee, today = new Date()}) → [{title, lines, objection?}]`
+    where `lead = {name, trade, town, rating, review_count, findings, map_rank, owner_first, email, demo_url, angle}`,
+    `offer = offerFor(date)` and `guarantee = GUARANTEE`; throws
+    `Error("callScript needs opts.offer and opts.guarantee from /api/leads/:id")` when either is missing. `shortName`
+    unchanged.
+  - `leadview.js`: `gradeBadge(grade) → html`, `leadRowHtml(row, {selected}) → html`, `bannerHtml(banner) → html`,
     `filterBarHtml(query, data) → html`, `scriptLead(detail, origin) → object`,
-    `drawerHtml(detail, {capacity, sender, origin, now}) → html`, `threadHtml(messages) → html`.
+    `drawerHtml(detail, {capacity, sender, origin, now}) → html` (embeds `researchCard({research: detail.research,
+    waiting: detail.research_waiting}, {esc, safeUrl})` for the grade, points with `points.reasons`, angle, opener,
+    owner/emails and site review; renders the empty mount points `<div id="d-demo"></div>`, `<div id="d-email"></div>`
+    and `<div id="d-call"></div>` where Part A places them), `threadHtml(messages) → html`.
 
 - [ ] **Step 1: Write the failing tests**
   - `callscript.test.mjs` (update): `LEAD` gains `owner_first: "Mark"`, drops `director_first_name`/`audit`; every
-    call passes `offer: offerFor(day)` (import from `../functions/_lib/offer.js`); the old `/front page of Google/` assertion is removed.
+    call passes `offer: offerFor(day), guarantee: GUARANTEE` (import both from `../functions/_lib/offer.js`); the old
+    `/front page of Google/` assertion is removed.
     - name: `owner_first: null` → no "Mark", has "whoever runs".
     - weekday (`2026-10-07T10:00:00Z`): `/£1,950/`, `/first 60 days free/`, `/£249/`.
     - weekend (`2026-10-10T10:00:00Z`): `/around £2,000/`, `/£1,750/`, `/90 days free/`.
@@ -670,9 +678,16 @@ return title
     - buttons: stage `ready` + `capacity.room 3` → contains `Write first email` and `Not a fit`; stage `emailed` →
       neither; stage `ready` + room 0 → `No room left today` and the button is `disabled`; `capacity.mailboxes 0` →
       `Add a mailbox first`.
-    - grade card: `points {need:4, means:3, reach:5, fit:4}` → contains `Needs help online` and `5/5`; `research
-      null` → `Not graded yet. Claude researches new leads every morning at 06:47.`
-    - owner: `confident: false` → `Name not confirmed: emails say "Hi,"` (escaped quotes) and `scriptLead(d).owner_first === null`.
+    - research card: for a detail with `points {need:4, means:3, reach:5, fit:4, total:16, capped:null, reasons:{…}}`,
+      `drawerHtml(d, …)` contains `researchCard({research: d.research, waiting: d.research_waiting}, {esc, safeUrl})`
+      verbatim (so the grade, `Need 4/5` and the reasons are stage 2's rendering); `research: null` → contains stage
+      2's `Not queued for research`.
+    - mount points: the drawer contains `<div id="d-demo"></div>`, `<div id="d-email"></div>` and `<div id="d-call"></div>`
+      exactly once each.
+    - demo: `demo.url "/d/green-leaf"` → `href="/d/green-leaf"` (relative); `demo.template "landscaper"` → a Preview
+      toggle whose frame src (built on demand) is `/api/demo/preview?template=landscaper&amp;place_id=<id>`;
+      `demo.template null` → no Preview toggle; no output contains `?preview=1`.
+    - owner: `confident: false` → `scriptLead(d).owner_first === null`.
     - `bannerHtml({tone: "warn", text: "Add your mailbox on Setup to start emailing.", link: {href: "#/setup", label: "Open Setup"}})`
       contains `href="#/setup"`.
     - chips: `filterBarHtml({view: "ready", grades: ["A+","A"]}, {grade_counts: {"A+": 4, "A": 12, "B": 30, "C": 0, "D": 0, none: 171},

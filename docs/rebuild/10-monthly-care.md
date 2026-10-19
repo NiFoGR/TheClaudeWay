@@ -1010,20 +1010,27 @@ CREATE TABLE IF NOT EXISTS care_reviews (
 **Files:** Create `control-room/functions/_lib/care-stripe.js`; Test `control-room/tests/care-stripe.test.mjs`.
 
 **Interfaces:**
-- Consumes: `stripe(env, method, path, params)` from `_lib/stripe.js`.
-- Produces: `pauseFee(env, subscriptionId, day90) → Promise<{ok: true} | {ok: false, error}>`;
-  `resumeFee(env, subscriptionId) → Promise<{ok: true, next_payment: "YYYY-MM-DD"} | {ok: false, error}>`.
+- Consumes: stage 9's `stripeApi(key, method, path, params, fetchImpl)` and `stripeKey(env, DB)` from `_lib/stripe.js`;
+  `tests/helpers/fakeStripe.mjs` `fakeStripe(routes) → {fetchImpl, calls}`.
+- Produces: `pauseFee(DB, env, subscriptionId, day90, {fetchImpl} = {}) → Promise<{ok: true} | {ok: false, error}>`;
+  `resumeFee(DB, env, subscriptionId, {fetchImpl} = {}) → Promise<{ok: true, next_payment: "YYYY-MM-DD"} | {ok: false,
+  error}>`. Both call `stripeApi((await stripeKey(env, DB))?.key, "POST", "subscriptions/" + subscriptionId, params,
+  fetchImpl)`.
 
-- [ ] **Step 1: Write the failing test** — `care-stripe.test.mjs` stubs `globalThis.fetch` and records calls:
-  - pause → one POST to `https://api.stripe.com/v1/subscriptions/sub_1`, body exactly
-    `pause_collection%5Bbehavior%5D=void&metadata%5Baetos_working_free%5D=2027-02-09`, header `stripe-version: 2024-06-20`.
-  - resume → body exactly `pause_collection=&metadata%5Baetos_working_free%5D=`; response `{current_period_end:
-    1802563200}` → `next_payment: "2027-02-14"` (UK date of that instant).
-  - Stripe 400 `{error: {message: "No such subscription: 'sub_x'"}}` → `{ok: false, error: "Stripe: No such subscription: 'sub_x'"}`, no throw.
+- [ ] **Step 1: Write the failing test** — `care-stripe.test.mjs` with `fakeD1()` holding `secret:stripe_key =
+  "sk_test_x"` and `fakeStripe`:
+  - pause, with `fakeStripe({"POST subscriptions/sub_1": {id: "sub_1"}})` → exactly one call, `path
+    "subscriptions/sub_1"`, `params` deep-equal `{pause_collection: {behavior: "void"}, metadata:
+    {aetos_working_free: "2027-02-09"}}`, header `stripe-version: 2024-06-20`; result `{ok: true}`.
+  - resume → `params` deep-equal `{pause_collection: "", metadata: {aetos_working_free: ""}}`; response
+    `{current_period_end: 1802563200}` → `next_payment: "2027-02-14"` (UK date of that instant).
+  - Stripe 400 (`fakeStripe({"POST subscriptions/sub_x": {status: 400, error: "No such subscription: 'sub_x'"}})`) →
+    `{ok: false}` with `error` starting `"Stripe: "` and containing `No such subscription`, no throw.
+  - no Stripe key → `{ok: false, error: "Stripe: Stripe isn't connected: connect it on Setup."}` and no call.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/care-stripe.test.mjs` → cannot find module.
-- [ ] **Step 3: Implement `pauseFee`, `resumeFee` in `care-stripe.js`** — call `stripe()` with
+- [ ] **Step 3: Implement `pauseFee`, `resumeFee` in `care-stripe.js`** — call `stripeApi` with
   `{pause_collection: {behavior: "void"}, metadata: {aetos_working_free: day90}}` and `{pause_collection: "",
-  metadata: {aetos_working_free: ""}}`; catch and return the error message.
+  metadata: {aetos_working_free: ""}}`; catch and return `"Stripe: " + error.message`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/care-stripe.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/care-stripe.js control-room/tests/care-stripe.test.mjs`
   + `git commit -m "Care: pause and resume the monthly fee for the guarantee" -m "$TRAILER"`.
