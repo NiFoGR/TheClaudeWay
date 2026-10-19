@@ -895,7 +895,8 @@ CREATE TABLE IF NOT EXISTS care_reviews (
   - `PLAN`: array of `{key, week, day, who, action, title, instructions, format}` for every R4 row (`title` contains
     `<name>`; `format` is the JSON shape Claude returns, e.g. `{subject, body}` for `send`), plus `PRE` for R3 rows
     (`day` relative to `live_on`).
-  - `preTasks(clientId, name, liveOn) → TaskRow[]`
+  - `preTasks(clientId, name, liveOn, {inviteSent = false} = {}) → TaskRow[]` (no `pre.access_email` when
+    `inviteSent`, i.e. the onboarding form's `gbp.invite_sent` is true)
   - `buildPlan(clientId, name, day0) → TaskRow[]` (weeks 1–12 except `w1.fake_report`, `w5.onpage_check` failures,
     `d90.email`, which are created by events)
   - `postSlots(day0, month "YYYY-MM") → string[]` (UK dates in `POST_DAYS` with care day ≥ 7)
@@ -913,7 +914,8 @@ CREATE TABLE IF NOT EXISTS care_reviews (
     `["2026-12-01","2026-12-08","2026-12-15","2026-12-22"]`.
   - `monthlyTasks("c1","X","2027-02","2026-11-11",{newReviews:0})` has no `m.report.2027-02` (day 82) and no
     `m.replies`; `"2027-03"` has `m.report.2027-03` due `"2027-03-01"`; `{newReviews: 2}` adds `m.replies.2027-03`.
-  - `preTasks("c1","X","2026-11-09")` → due `2026-11-09`, `2026-11-12`, `2026-11-16`.
+  - `preTasks("c1","X","2026-11-09")` → due `2026-11-09`, `2026-11-12`, `2026-11-16`;
+    `preTasks("c1","X","2026-11-09",{inviteSent:true})` → only `pre.access_confirm` and `pre.access_call`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/care-plan.test.mjs` → cannot find module.
 - [ ] **Step 3: Implement `PLAN`, `preTasks`, `buildPlan`, `postSlots`, `monthlyTasks` in `care-plan.js`** — rows
   from the R3/R4/R5 tables with their instructions text verbatim; `due_on = addUkDays(day0, day)`.
@@ -1042,7 +1044,7 @@ CREATE TABLE IF NOT EXISTS care_reviews (
 **Interfaces:**
 - Consumes: everything in `care.js`, `care-plan.js`; `ukDate`, `ukParts` (ukTime).
 - Produces: `careActions(state, now) → Action[]` in R11 priority order, where
-  `state = {newClients: [{client_id, name, place_id, service, town, live_on}], care: [CareRow + {name,
+  `state = {newClients: [{client_id, name, place_id, service, town, live_on, invite_sent}], care: [CareRow + {name,
   cancelled_on, stripe_subscription, email}], tasks: [TaskRow + {draft, requested_at}], scans: [{scan_id, client_id,
   day, kind, status, scored_at, ranks, created_at}], reviews: {[client_id]: {checked_on, review_count, reviews}[]},
   settings: {"care:reviews:last": "YYYY-MM-DD", "care:template:referral:approved"?, "care:template:nudge:approved"?},
@@ -1051,8 +1053,10 @@ CREATE TABLE IF NOT EXISTS care_reviews (
   "onpage_check"|"send_template"|"sync_done", client_id?, …payload}`.
 
 - [ ] **Step 1: Write the failing test** — `care-tick.test.mjs` (state builders in the test file):
-  - live monthly client without care → `create_care` first; Website Only client → nothing.
+  - live monthly client without care → `create_care` first, its tasks include `pre.access_email`; with
+    `invite_sent: true` → `create_care` whose tasks have no `pre.access_email`; Website Only client → nothing.
   - care day 65 with scans for days 0 and 30 → exactly one `start_scan {day: 60}`; a running scan for 60 → none.
+  - a care scan `running` with `created_at` 44 min ago → nothing; 46 min ago → `scan_failed {scan_id, mark: true}`.
   - done unscored scan on day 90 not Top 3 with `paused: 0` → `score_scan` carrying `{guarantee: "working_free",
     stripe: "pause", email: "E"}`; same with `status: "stopped"` care → `stop_care` and no `stripe`.
   - care day 92, guarantee `running`, no scored day-90 scan → `day90_late`.
@@ -1067,7 +1071,8 @@ CREATE TABLE IF NOT EXISTS care_reviews (
   - calling `careActions` with the same state twice returns equal arrays.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/care-tick.test.mjs` → cannot find module.
 - [ ] **Step 3: Implement `careActions` in `care-tick.js`** — one pass per R11 rule; caps (2 scans, 10 todos,
-  2 templates, 1 fire) applied here; uses `ukParts(now)` for Monday/1st/06:00 checks.
+  2 templates, 1 fire) applied here; uses `ukParts(now)` for Monday/1st/06:00 checks; the 45-minute stuck-scan rule
+  is `SCAN_STUCK_MIN = 45` (exported).
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/care-tick.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/care-tick.js control-room/tests/care-tick.test.mjs` +
   `git commit -m "Care: one planner for every timed care job" -m "$TRAILER"`.

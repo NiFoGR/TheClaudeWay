@@ -1308,14 +1308,18 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
 ### Task 15: Inbound tick step
 
 **Files:**
-- Create: `control-room/functions/_lib/mail/inbound-db.js`, `control-room/tests/inbound-db.test.mjs`
+- Create: `control-room/functions/_lib/mail/inbound-db.js`, `control-room/functions/_lib/d1count.js`,
+  `control-room/tests/inbound-db.test.mjs`
 
 **Interfaces:**
 - Consumes `parseHeaders`, `extractText`, `bounceInfo`, `classifyInbound`, `applyStageEvent`, `suppress`,
   `addTodo`, `getSetting` and `fakeD1`.
 - Produces:
+  - `countingDB(DB) → {DB, used: () => number}` (`_lib/d1count.js`): a wrapper with the same `prepare`/`batch`
+    surface that counts every statement run (each statement in a `batch` counts as one). Task 16's tick budget
+    uses it too.
   - `processInbound(DB, now, {limit = 10, maxQueries = 30} = {}) → Promise<{[outcome]: number}>`. It counts its own
-    D1 queries (with Task 16's `countingDB`) and doesn't start another row once it has made `maxQueries`;
+    D1 queries with `countingDB` and doesn't start another row once it has made `maxQueries`;
   - `inboundStep = {name:"inbound", everyMinutes:0, run}`, which returns e.g. `"3 processed: 1 human, 1 auto, 1 bounce"`;
   - `BOUNCE_PAUSE = {count:2, days:7}`.
 
@@ -1330,7 +1334,13 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
     `status:"received"`, `class:"human"`, `needs_reply:1`, `place_id:"p1"`, `mailbox_id:"m1"`. The prospect is now
     `replied` with `last_inbound_at` set, and `inbound_raw.outcome === "human"` with `processed_at` set.
   - The same Message-ID a second time: outcome `duplicate`, still 1 inbound row.
-  - no-thanks from bob: suppression row `bob@x.com`/`opt_out`, the prospect `lost`, `next_followup_at` null.
+  - no-thanks from bob: suppression row `bob@x.com`/`opt_out`, the prospect `lost` with `lost_reason "opt_out"`,
+    `next_followup_at` null.
+  - no-thanks from a `won` prospect `p2` (`carol@x.com`): outcome `human`, no suppression row, `p2` stays `won`.
+  - A human email from `dave@client.com`, which matches only a `client_links` row (client `c1`, whose `clients`
+    row has no `place_id`): outcome `client`, the messages row has `client_id:"c1"` and `needs_reply:0`, and an
+    open todo has dedupe `escalation:client:<message id>`. A "no thanks" from the same address is also `client`
+    and adds no suppression.
   - The DSN for `<orig@aetoswebsites.com>`: suppression `nobody@x.com`/`bounce`, and the row is
     `class:"bounce"`, `mailbox_id:"m1"`.
   - A second hard bounce within 7 days pauses `m1`, with `paused_reason` starting `2 emails bounced in 7 days`.
@@ -1339,11 +1349,16 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
     `kind:"escalation"`, `title:"Email from unknown sender: stranger@y.com"`.
   - A garbage raw (`"\u0000"`) gets outcome starting `error:` and `processed_at` set.
   - With 12 rows waiting, only 10 are processed.
+  - With `{limit:50, maxQueries:30}` and 20 rows waiting, it stops before 20, the queries it made (measured by
+    passing it `countingDB(DB).DB`) stay at most 30 plus one row's worth, and the rest stay unprocessed.
+  - `countingDB`: two `first()` calls and a `batch` of 3 statements give `used() === 5`.
 - [ ] **Step 2: Run it to verify it fails.** `node --test control-room/tests/inbound-db.test.mjs` fails with "Cannot find module".
-- [ ] **Step 3: Implement `processInbound`.** Select rows `WHERE processed_at IS NULL ORDER BY received_at LIMIT ?`.
-  Handle each row in its own try/catch, linking per Part A, and write the outcome.
+- [ ] **Step 3: Implement `countingDB` and `processInbound`.** Select rows
+  `WHERE processed_at IS NULL ORDER BY received_at LIMIT ?`. Handle each row in its own try/catch, linking per
+  Part A (In-Reply-To/References, then `prospects.email`, then `client_links.email`), and write the outcome. Check
+  `used() >= maxQueries` before starting each row.
 - [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/inbound-db.test.mjs` passes.
-- [ ] **Step 5: Commit.** `git add control-room/functions/_lib/mail/inbound-db.js control-room/tests/inbound-db.test.mjs && git commit -m "Inbound tick step: link, store, apply bounces and opt-outs, pause on 2 bounces"`.
+- [ ] **Step 5: Commit.** `git add control-room/functions/_lib/mail/inbound-db.js control-room/functions/_lib/d1count.js control-room/tests/inbound-db.test.mjs && git commit -m "Inbound tick step: link, store, apply bounces and opt-outs, pause on 2 bounces"`.
 
 ### Task 16: Tick runner, /api/tick, public paths
 

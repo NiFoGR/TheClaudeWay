@@ -708,14 +708,14 @@ medianReplyMinutes(pairs: [{received_at, sent_at}]) → number|null
     assert.equal(shouldFireReply({ waiting: 0, newestAt: null, lastFireAt: null, now: D("2026-10-20T08:01:00Z") }), false);
   });
   test("replies light", () => {
-    assert.equal(replyLight({ waiting: 1, oldestAt: D("2026-10-20T08:00:00Z"), now: D("2026-10-20T08:20:00Z") }).color, "green");
+    assert.equal(replyLight({ waiting: 1, oldestAt: D("2026-10-20T08:00:00Z"), now: D("2026-10-20T08:20:00Z") }).level, "green");
     assert.deepEqual(replyLight({ waiting: 1, oldestAt: D("2026-10-20T08:00:00Z"), now: D("2026-10-20T08:21:00Z") }),
-      { key: "replies", color: "red", text: "A reply has waited 21 minutes. Check the reply Routine is switched on (routines/README.md) and its token is saved on Setup." });
-    assert.equal(replyLight({ waiting: 1, oldestAt: D("2026-10-20T01:00:00Z"), now: D("2026-10-20T06:20:00Z") }).color, "green");
-    assert.equal(replyLight({ waiting: 1, oldestAt: D("2026-10-20T01:00:00Z"), now: D("2026-10-20T06:21:00Z") }).color, "red");
-    assert.deepEqual(replyLight({ waiting: 1, oldestAt: D("2026-10-20T22:40:00Z"), now: D("2026-10-20T23:00:00Z") }), { key: "replies", color: "grey", text: "Replies start again at 7am (1 waiting)." });
-    assert.equal(replyLight({ waiting: 2, oldestAt: D("2026-10-20T08:00:00Z"), now: D("2026-10-20T09:00:00Z"), paused: true }).text, "Claude's replies are paused (2 waiting). Reply yourself on the Replies page.");
-    assert.equal(replyLight({ waiting: 0, oldestAt: null, now: D("2026-10-20T09:00:00Z") }).text, "No replies waiting.");
+      { name: "replies", level: "red", detail: "A reply has waited 21 minutes.", fix: "Check the aetos-reply Routine is switched on (routines/README.md) and its URL and token are saved on Setup → Claude." });
+    assert.equal(replyLight({ waiting: 1, oldestAt: D("2026-10-20T01:00:00Z"), now: D("2026-10-20T06:20:00Z") }).level, "green");
+    assert.equal(replyLight({ waiting: 1, oldestAt: D("2026-10-20T01:00:00Z"), now: D("2026-10-20T06:21:00Z") }).level, "red");
+    assert.deepEqual(replyLight({ waiting: 1, oldestAt: D("2026-10-20T22:40:00Z"), now: D("2026-10-20T23:00:00Z") }), { name: "replies", level: "grey", detail: "Replies start again at 7am (1 waiting).", fix: "" });
+    assert.deepEqual(replyLight({ waiting: 2, oldestAt: D("2026-10-20T08:00:00Z"), now: D("2026-10-20T09:00:00Z"), paused: true }), { name: "replies", level: "grey", detail: "Claude's replies are paused (2 waiting).", fix: "Reply yourself on the Replies page." });
+    assert.equal(replyLight({ waiting: 0, oldestAt: null, now: D("2026-10-20T09:00:00Z") }).detail, "No replies waiting.");
   });
   test("quoted history is removed", () => {
     assert.equal(stripQuoted("Yes please\n\nOn Mon, 19 Oct 2026 at 09:12, Nik <nik@aetoswebsites.com> wrote:\n> Hi Sam"), "Yes please");
@@ -727,7 +727,7 @@ medianReplyMinutes(pairs: [{received_at, sent_at}]) → number|null
     const r = buildReply({
       inbound: { place_id: "p1", message_id: "<a@them.com>", refs: "<root@aetoswebsites.com>", subject: "Re: Your new website", from_addr: "sam@greenleaf.co.uk" },
       prospect: { mailbox_id: "mb1", subject: "Your new website" },
-      mailbox: { id: "mb1", address: "nik@aetoswebsites.com", display_name: "Nik Smith" },
+      mailbox: { id: "mb1", address: "nik@aetoswebsites.com", display_name: "Nik Smith" }, senderName: "Nik",
       body: "Hi Sam,\n\nSure.", author: "claude", now: D("2026-10-20T08:00:00Z"),
     });
     assert.equal(r.kind, "reply"); assert.equal(r.direction, "out"); assert.equal(r.author, "claude");
@@ -739,8 +739,8 @@ medianReplyMinutes(pairs: [{received_at, sent_at}]) → number|null
     assert.match(r.message_id, /^<[^@>]+@aetoswebsites\.com>$/);
     assert.equal(reSubject(""), "Re: "); assert.equal(reSubject("RE: x"), "RE: x");
   });
-  test("names, titles, median", () => {
-    assert.equal(businessName("GREEN LEAF LANDSCAPES LTD - Landscaper in Warrington"), "Green Leaf Landscapes");
+  test("titles, median", () => {
+    assert.equal(signature("Nik"), "Nik\nAetos Websites");
     assert.equal(escalationTitle("angry", "Green Leaf Landscapes"), "Angry reply from Green Leaf Landscapes: Claude's draft is ready");
     assert.equal(escalationTitle("legal", "X"), "Legal question from X: Claude's draft is ready");
     assert.equal(escalationTitle("unclear", "X"), "Unclear reply from X: Claude's draft is ready");
@@ -753,22 +753,29 @@ medianReplyMinutes(pairs: [{received_at, sent_at}]) → number|null
   });
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/replies.test.mjs` → FAIL: cannot find module.
-- [ ] **Step 3: Implement the signatures in `_lib/replies.js`** — ages and medians are measured from `nextUkWindowStart(received, REPLY_HOURS)`; `stripQuoted` cuts at the first line matching `^On .+wrote:$`, `^-{2,}\s*Original Message`, or a `From:` line after a blank line, then drops `>` lines; `signature` uses the first word of `display_name`.
+- [ ] **Step 3: Implement the signatures in `_lib/replies.js`** — ages and medians are measured from `nextUkWindowStart(received, REPLY_HOURS)`; `stripQuoted` cuts at the first line matching `^On .+wrote:$`, `^-{2,}\s*Original Message`, or a `From:` line after a blank line, then drops `>` lines; `signature` uses the `senderName` it is given (the `business:sender_name` setting, read by the db callers), never the mailbox's `display_name`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/replies.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/replies.js control-room/tests/replies.test.mjs && git commit -m "Replies: hours, firing, light, threading rules (pure)" -m "$TRAILERS"`
 
 ### Task 6: Human inbound hook and stage events (db)
 
-**Files:** Create `control-room/functions/_lib/replies-db.js`. Modify the stage 0 `inbound` step in
-`control-room/functions/_lib/tick.js`. Test `control-room/tests/replies-db.test.mjs`.
+**Files:** Create `control-room/functions/_lib/replies-db.js`. Modify the human branch of stage 0's `processInbound` in
+`control-room/functions/_lib/mail/inbound-db.js`. Test `control-room/tests/replies-db.test.mjs`.
 
-**Interfaces:** Consumes `nextStage`, `addTodo`, `businessName`, `fakeD1()` (tests). Produces:
+**Interfaces:** Consumes `applyStageEvent(DB, placeId, event, now, {lost_reason}) → {from, to}|null` (stage 0's
+`_lib/prospects.js`; not redefined here), `stopFollowups(DB, placeId, reason, now)` (stage 5–6), `addTodo`,
+`businessName` (`_lib/mail/rules.js`), `fakeD1()` (tests). Produces:
 ```js
-applyStageEvent(DB, place_id, event, now: Date, {lost_reason} = {}) → Promise<string>   // new stage
+REOPEN_REASONS = ["not_now", "not_interested", "sequence_done", "call"]
 onHumanInbound(DB, message: messages row, now: Date) → Promise<"replied"|"client"|"opted_out"|"unmatched">
 ```
+Rules: no `place_id` → `needs_reply = 0`, `"unmatched"`. Stage `won` → `needs_reply = 0`, `messages.client_id` =
+`clients.id` for that `place_id`, `client-mail:` Todo, `"client"`. Stage `lost` with `lost_reason` `opt_out`/`bounce` →
+`needs_reply = 0`, `optout-mail:` Todo, `"opted_out"`. Stage `lost` with a reason in `REOPEN_REASONS` →
+`applyStageEvent(…, "reopen", …)`. Otherwise `applyStageEvent(…, "inbound_human", …)` (a no-op when stage 0 already
+moved it). Then `stopFollowups(DB, place_id, "replied", now)` and `last_inbound_at`; `"replied"`.
 
-- [ ] **Step 1: Write the failing test** — seed with `fakeD1()`: lead `p1` "GREEN LEAF LANDSCAPES LTD", prospect `p1` stage `emailed`, `next_followup_at` set, a queued `followup` message, an inbound `m1` (class human, needs_reply 1).
+- [ ] **Step 1: Write the failing test** — seed with `fakeD1()`: lead `p1` "GREEN LEAF LANDSCAPES LTD", prospect `p1` stage `emailed`, `next_followup_at` set, a queued `followup` message, an inbound `m1` (class human, needs_reply 1), a `clients` row `{id: "c1", place_id: "p1"}`.
   ```js
   assert.equal(await onHumanInbound(DB, m1, NOW), "replied");
   const p = await one(DB, "SELECT * FROM prospects WHERE place_id='p1'");

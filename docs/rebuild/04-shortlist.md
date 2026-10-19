@@ -697,27 +697,34 @@ return title
   control-room/tests/leadview.test.mjs` → callscript fails on the guarantee/offer assertions; leadview fails: cannot
   find module `../public/js/leadview.js`.
 - [ ] **Step 3: Implement** — move `esc`/`safeUrl`/`icon` into `html.js`; in `callscript.js` replace hard-coded prices
-  with `gbp`-style formatting of `opts.offer` pence (local `pounds(pence)` helper), weekend from `offer.weekend`, the
-  pitch line from the spec, objection answers quoting `offer.guarantee.section`, the "Before you dial" weekend line `Today's a weekend: the weekend deal is on (around
-  {anchor} → {build} and {free_days} days free).`, the first-name rule from `lead.owner_first`, and `Angle: {fact}`
-  in "Before you dial"; write `leadview.js` render functions using only `esc`/`safeUrl` for any data value (links
-  only through `safeUrl`, the demo preview `<iframe>` only built on demand with `src="/d/<slug>?preview=1"` and
-  `loading="lazy"`), messages as `<pre class="msg-body">`.
+  with a local `pounds(pence)` helper that formats exactly like stage 0's `formatPounds` (`195000` → `£1,950`), fed
+  from `opts.offer`: weekday build `offer.full.build`, monthly `offer.full.monthly`, free days `offer.full.freeDays`;
+  weekend from `offer.weekend` (then `offer.full` is the weekend package); the pitch line from the spec; objection
+  answers quoting `guarantee.section`; the "Before you dial" weekend line `Today's a weekend: the weekend deal is on
+  (around {anchor} → {build} and {freeDays} days free).` where `{anchor}` = `pounds(Math.round(offer.full.wasBuild /
+  10000) * 10000)` (spoken "around £2,000" from £1,950) and `{build}` = `pounds(offer.full.build)`; the first-name
+  rule from `lead.owner_first`; and `Angle: {fact}` in "Before you dial". Write `leadview.js` render functions using
+  only `esc`/`safeUrl` for any data value (links only through `safeUrl`; "Open demo" uses the relative `demo.url`;
+  the Preview `<iframe sandbox="" loading="lazy">` only built on demand with
+  `src="/api/demo/preview?template=<demo.template>&place_id=<place_id>"`, both values URI-encoded), messages as
+  `<pre class="msg-body">`; the research sections come only from `researchCard` (no grade card or point labels of
+  its own).
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/callscript.test.mjs
   control-room/tests/leadview.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/public/js/html.js control-room/public/js/leadview.js control-room/public/js/lib.js control-room/public/js/callscript.js control-room/tests/callscript.test.mjs control-room/tests/leadview.test.mjs`
   + `git commit -m "Shortlist: call script from offer.js and the lead panel renderer" -m "$TRAILER"`.
 
-### Task 9: Leads page wiring, routes and styles
+### Task 8: Leads page wiring, routes and styles
 
 **Files:** Modify (rewrite) `control-room/public/js/leads.js`; Modify `control-room/public/js/leadview.js`,
 `control-room/public/js/app.js`, `control-room/public/js/scraper.js`, `control-room/public/js/home.js`,
 `control-room/public/style.css`; Test `control-room/tests/leadview.test.mjs`.
 
 **Interfaces:**
-- Consumes: `GET /api/leads`, `GET /api/leads/:id`, `PATCH /api/leads/:id`, `POST …/not-a-fit`,
-  `POST …/research-again` (Task 6); `leadview.js` (Task 8); `api`, `state`, `view`, `toast`, `modal`, `pageHead`
-  from `lib.js`; stage 6's `openComposer(detail, {onSent})` from `./composer.js` (dynamic import).
+- Consumes: `GET /api/leads`, `GET /api/leads/:id`, `PATCH /api/leads/:id`, `POST …/not-a-fit` (Task 5); stage 2's
+  `POST /api/research/:place_id/wrong {note}` (returns the toast `message`); `leadview.js` (Task 7); `api`, `state`,
+  `view`, `toast`, `modal`, `pageHead` from `lib.js`; stage 6's `mountEmail(el, placeId)` from `./compose.js`
+  (dynamic import).
 - Produces: `leadsPage(params)` and `openLeadDrawer(placeId)` exported from `leads.js`; app routes `#/leads?view=…&job=…`
   and `#/lead/<place_id>`; `state.leadsQuery = {view, grades, trade, town, email, stages, researched, q, excluded, job, page}`
   and `state.capacity`. Pure helpers added to `leadview.js`: `parseRoute(hash) → {page, params: URLSearchParams, leadId: string|null}`
@@ -744,22 +751,24 @@ return title
     writes only non-default fields, grades as tokens (`A+` → `ap`, `none` → `none`).
   - `leads.js`: builds the URL with `leadsQueryString(state.leadsQuery)`, fetches `/api/leads`, renders banner, tabs, chips, filters, table, pager; search debounced
     300 ms; filter change resets `page` to 1; row click → `openLeadDrawer(id)`; drawer actions call the APIs and
-    toast the returned message; **Write first email** does `import("./composer.js").then(m => m.openComposer(detail,
-    {onSent: refresh})).catch(() => toast("Writing emails arrives with the next stage."))`; Not a fit dialog via
-    `modal()`; Escape closes the drawer (kept).
+    toast the returned message; **Write first email** does `import("./compose.js").then(m =>
+    m.mountEmail(document.getElementById("d-email"), id)).then(() => document.getElementById("d-email").scrollIntoView())
+    .catch(() => toast("Writing emails arrives with the next stage."))`; the research card's **Research is wrong**
+    (stage 2's handler wiring, kept in the new drawer) posts the note to `/api/research/<id>/wrong`, toasts the
+    route's `message` and re-renders the card; Not a fit dialog via `modal()`; Escape closes the drawer (kept).
   - `app.js`: route via `parseRoute(location.hash)`; `leadId` set → `leadsPage(params)` then `openLeadDrawer(leadId)`;
     nav "Leads" stays.
   - `scraper.js`: drop the `leadsTable`/`bindTable` import; a finished run shows "See these {found} leads" →
     `#/leads?view=all&job=<id>`.
   - `home.js`: `openDrawer(lead, …)` → `openLeadDrawer(lead.place_id)`.
   - `style.css`: `.chips`, `.chip.on`, `.chip.off`, `.grade` (A+ gold fill `#C9A13B` on charcoal, A gold outline,
-    B/C/D greys), `.banner.ok|info|warn`, `.grade-card`, `.msg`, `.msg-body { white-space: pre-wrap }`, `.pager`;
-    gold only as accent (docs/brand.md).
+    B/C/D greys; reuses stage 2's `.grade`/`.grade.aplus` rules rather than redefining them), `.banner.ok|info|warn`,
+    `.msg`, `.msg-body { white-space: pre-wrap }`, `.pager`; gold only as accent (docs/brand.md).
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/leadview.test.mjs` → PASS; full
   `node --test control-room/tests/*.test.mjs` → PASS; `for f in control-room/public/js/*.js; do node --check "$f"; done`
   → no output. Then a local run (`npx wrangler pages dev` in
   `control-room/` with a local D1 seeded by `shortlistSeed.mjs` data): Ready view, chip toggles, paging, drawer from
-  a row and from `#/lead/<id>`, Not a fit, Research again, banner with and without a mailbox.
+  a row and from `#/lead/<id>`, Not a fit, Research is wrong, banner with and without a mailbox.
 - [ ] **Step 5: Commit** — `git add control-room/public/js/leads.js control-room/public/js/leadview.js control-room/public/js/app.js control-room/public/js/scraper.js control-room/public/js/home.js control-room/public/style.css control-room/tests/leadview.test.mjs`
   + `git commit -m "Shortlist: new Leads page with grade filter, Ready view and lead panel" -m "$TRAILER"`.
   Then `git pull --rebase`, push, and run the live Perfect-when checks 2–6, 9 and 12.

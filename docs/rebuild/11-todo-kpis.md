@@ -914,7 +914,7 @@ JS, `style.css`.
   control-room/tests/fixtures/kpi-week.mjs` then
   `git commit -m "KPIs: weekly numbers with last-touch crediting" -m "$TRAILER"`.
 
-### Task 6: KPI loader, routes, review todo and health light
+### Task 6: KPI loader, routes and review todo
 
 **Files:**
 - Create:
@@ -922,19 +922,20 @@ JS, `style.css`.
   - `control-room/functions/api/kpis.js`
   - `control-room/functions/api/agent/kpis.js`
   - `control-room/functions/api/agent/kpis/[week].js`
-- Modify:
-  - `control-room/functions/_lib/kpis.js` (`countSuggestions`, `suggestionLines`, `kpisLight`, `anonymise`)
-  - `control-room/functions/_lib/health.js` (add the `weekly-kpis` light to `healthFromDb`)
+- Modify: `control-room/functions/_lib/kpis.js` (`countSuggestions`, `suggestionLines`, `anonymise`)
 - Test: `control-room/tests/kpis-api.test.mjs`
+
+No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) already watches the Routine.
 
 **Interfaces:**
 - Consumes:
   - Tasks 4–5;
-  - `requireAgent(request, env, DB)`, `addTodo`, `ukToUtc`, `addUkDays`, `healthFromDb` (stage 0);
-  - the `heartbeats` row `routine:weekly-kpis`.
+  - `requireAgent(request, env, DB)`, `addTodo`, `ukToUtc`, `addUkDays`, `iso` (stage 0).
 - Produces:
-  - `loadKpiRows(DB) → Promise<rows>`. It reads all lead-linked `messages`, `demo_events` views, `calls`, clients
-    with a `place_id` as orders, `research` grades and rows, and `escalation` todos.
+  - `loadKpiRows(DB) → Promise<rows>`. It reads all lead-linked `messages` (including `intent`, a stage 0 column
+    set by stage 7), `demo_events` views, `calls`, clients with a `place_id` as orders, `research` grades and rows,
+    and `escalation` todos whose dedupe starts `escalation:` but not `escalation:unknown:`. Every table skips
+    `place_id LIKE 'drill:%' OR place_id LIKE 'test:%'`.
   - `kpiPayload(DB, week, now) → Promise<{week, label, start, prev, next, still_counting, numbers, trend, analysis:
     {text, created_at}|null}>`
   - `saveSnapshot(DB, week, numbers, now)`
@@ -943,20 +944,21 @@ JS, `style.css`.
     claude_replies: [{they_wrote, claude_wrote, minutes, moved_forward}]}` (≤ 20 each, bodies ≤ 1200 chars, emails
     and phones removed)
   - `countSuggestions(md) → number` · `suggestionLines(md) → string[]`
-  - `kpisLight({lastOkAt, lastAt, lastOk, detail}, now) → {name: "weekly-kpis", level, detail, fix}`
   - Routes:
     - `GET /api/kpis?week=`
     - `GET /api/agent/kpis?week=` → `kpiPayload` + `samples` + `followup_templates` (approved) + `previous: [{week,
       analysis}]` (last 4 with analysis)
     - `POST /api/agent/kpis/:week {analysis}` → `{ok, suggestions}`
 
-- [ ] **Step 1: Write the failing test** (seed = Task 5's week, inserted into the real tables via `fakeD1()`;
-  `NOW = 2026-10-25T17:47:00Z`):
+- [ ] **Step 1: Write the failing test** (seed = Task 5's week, inserted into the real tables via `fakeD1()`, plus
+  rows that must not count: a sent first email to `drill:1` on 2026-10-20T10:00Z and an `escalation:unknown:x9`
+  todo created 2026-10-22T09:00Z; `NOW = 2026-10-25T17:47:00Z`):
   ```js
   test("page payload matches the pure numbers", async () => {
     const r = await (await getKpis("2026-W43")).json();
     assert.deepEqual([r.week, r.label, r.prev, r.next, r.still_counting], ["2026-W43", "19–25 Oct", "2026-W42", null, true]);
     assert.deepEqual(r.numbers.totals.revenue_pence, 175000);
+    assert.deepEqual([r.numbers.totals.sent, r.numbers.claude.escalated], [9, 1]);   // drill and unknown-sender left out
     assert.equal(r.trend.length, 4);
   });
   test("bad and future weeks", async () => {
