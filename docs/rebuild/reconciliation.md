@@ -405,3 +405,62 @@ I read all 14 files and checked the current `lead-manager/schema.sql`, which has
 | Q-AI | Foursquare listing ($20 per client) | 10 Q4 | Skip |
 | Q-AJ | Referral reward | 10 Q5 | None |
 | Q-AK | Review booster: does the system send the "job finished" message, or does the client? (decisions.md: "A message sent when each job finishes, plus one reminder") | New (09 §12 vs decisions) | The client sends it, using our ready-made text, email and QR templates; nothing automated |
+
+---
+
+# Round 2 (final check after the fixes)
+
+Reconciliation items 1–43 are all applied in the files. The problems below are new ones, or places where a fix only partly landed.
+
+**BLOCKING**
+
+1. **02 Task 10 vs 03 Tasks 4–6, 08 (Global Constraints), 10 Task 11, 11 Tasks 3/6/12: `iso()` is defined in the wrong file.** 02 defines `iso(date)` in `_lib/find.js`, but 03/08/10/11 import `iso` from `_lib/util.js`, which only exports `now()`, so those imports fail to load. **Fix:** in 02 Task 10, add `export const iso = (d = new Date()) => new Date(d).toISOString().replace(/\.\d{3}Z$/, "Z")` to `_lib/util.js`. `find.js` imports and re-exports it, and 04 Task 6 imports it from `util.js`.
+
+2. **01 Task 16 vs 05 Task 12, 06 Task 8, 10 Task 11, 11 Task 12: `ctx.budget` has two shapes.** 01 defines it as an object read with `budget.left()` (01 Task 15 calls `ctx.budget.left()`). 06 (`min(18, ctx.budget)`), 10 (test "ctx.budget at 12") and 11 (`ctx.budget - 2`, tests pass `budget: 30`) treat it as a number. Their tests would pass while the live tick does maths on an object (NaN). **Fix:** every step calls `ctx.budget.left()`, and tests pass `budget: {left: () => N}`. In 11 Task 12: `maxRounds = Math.min(5, Math.floor((ctx.budget.left() - 2) / 4))`.
+
+3. **06 Task 8, "bounded work" test: wrong `countingDB` shape.** The test passes `countingDB(DB)` as the DB and reads `.calls`, but 01's `countingDB` returns `{DB, used}`. **Fix:** `const c = countingDB(DB); await followupsStep({DB: c.DB, env: {}, now}); assert.ok(c.used() <= 18)`.
+
+4. **01 Task 23 (`shell.test.mjs`), 04 Task 8, 05 Task 14, 06 Task 14, 07 Tasks 15–16, 11 Task 11: routing breaks between stage 3 and file 11.**
+   - 01's test asserts the `PAGES` routes are exactly the 5 stage-0 ones. 05, 06 and 07 add routes and 11 removes `PAGES`, and nothing updates the test, so it fails from 05 Task 14 on.
+   - 04 makes `app.js` route through `leadview.js` `parseRoute`, whose page list is hard-coded (unknown → home). No later stage extends it, so `#/demo`, `#/voice`, `#/replies` and `#/call` open Home until file 11 ships.
+   - **Fix:** 01's test asserts the 5 routes are present (not an exact match) plus no roadmap/outreach/"soon". 11 Task 11 deletes that assertion. 04's `parseRoute` returns the first hash segment as `page` for any route (keeping `lead/<id>` → leads) and lets `app.js` `PAGES.find` handle unknown pages. 05 Task 14 and 07 Task 16 add their `PAGES` entries with `nav: false`.
+
+5. **10 Task 18 vs 11 Task 2 and the existing `public/js/money.js`: new status key with no renderer.** 10 adds the `clientStatus` key `working_free` but only edits `_lib/money.js`. The Money page renders status with `{…}[c.key]()`, so it throws for that client, and `clientCards` has no "Monthly" wording for the key. **Fix:** 10 Task 18 also adds `working_free` to `public/js/money.js` (label "Working free: fee paused", keep the "Stopped paying" button) and to 11's `clientCards` Monthly line ("Fee paused: working free"), with tests.
+
+6. **10 Task 15 (Interfaces and cross-stage list): `loadBoard` signature mismatch.** 10 says `loadBoard(DB, now)`; 11 Task 3 defines `loadBoard(DB, env, now)`. **Fix:** change 10's references and tests to `loadBoard(DB, env, now)`.
+
+**IMPORTANT**
+
+7. **01 Tasks 16–17: the health step can't fit in its 6 reserved queries.** It loads stage-0 facts, runs about 10 registered lights (each querying D1), syncs one todo per light and the setup keys, then writes a heartbeat. That is far more than 6, and because `health` always runs, a tick can go over D1's 50-query limit. **Fix:** run `health` in its own invocation (the relay cron also calls `/api/tick?reason=health`, which runs only `health`), or set `healthReserve` to the measured count. Cap each registered light at 1 statement, sync todos with one INSERT OR IGNORE batch plus one `UPDATE … WHERE dedupe IN (…)`, and assert the count in `health.test`.
+
+8. **08 Task 1 / 08 Task 11 / 11 Task 10: `paymentLinks` deleted, then reused.**
+   - 08 Task 1 deletes `paymentLinks`/`linksCard` from `public/js/money.js`, but stage 0's `setup.js` still imports `paymentLinks` until 08 Task 11, so the Setup page fails to load in between.
+   - 11 Task 10 then specifies `paymentLinks(links, packages)` and "drop local PACKAGES/24900", which 08 already removed. That leaves two package sources: 08's `summary.packages` and 11's `getOffer()`.
+   - **Fix:** 08 Task 1 also removes that import and the old Stripe card from `setup.js`. 11 Task 10 drops the `paymentLinks` bullet and cross-stage line, and says whether `getOffer()` replaces `summary.packages`.
+
+9. **08 Part A FAQ 5 and 10 Task 19: old guarantee wording.** Both keep "we work for free until you are", which overview §9 forbids and 04 Task 7's test bans. **Fix:** FAQ 5 = "…The map results at the top count. " + `GUARANTEE.section` + " " + `CLOCK_START`. Add `doesNotMatch(/work for free until you are/)` to `order-page.test`.
+
+10. **08 Task 6 vs 09 Tasks 16/24/26: wrong todo when there's no mailbox.** With no mailbox, `sendClientMail` always files `setup:welcome:<client_id>` ("Send {name} their onboarding link yourself"). 09's enquiry, domain and go-live emails get that wrong title, or are swallowed by the same dedupe. **Fix:** add an option `noMailboxTodo: {dedupe, title} | null` (default = the welcome todo). 09 passes `null` for enquiries and `{dedupe: "setup:client-mail:<client_id>:<kind>", title: "Send {name} this email yourself (no mailbox yet)"}` for the others.
+
+11. **10 R1 / Task 11 vs 09 §5: the guarantee keyword differs from the site's keyword.** 10 sets `care.keyword` = first ticked service + town (e.g. "patios warrington"). 09's site targets `content.keyword` and `primary_category` (H1 "<Primary category> in <Town>"). So the guarantee is measured on a keyword the site wasn't built for, and `w5.onpage_check` ("H1 has service + town") fails on every 09-built site. **Fix:** `loadCareState` takes service and town from `client_sites.content.keyword` when it is set, otherwise the first ticked service. `onPageCheck` also accepts `primary_category` in the title and H1.
+
+12. **02 Task 12, "tick order" test: asserts a step that doesn't exist yet.** It asserts `daily_find` comes before `stale_jobs`, but `stale_jobs` is only added in Task 13, so Task 12 Step 4 can't pass. **Fix:** move that assertion into Task 13's `stale-jobs` test.
+
+13. **01 Task 6, "no other module hard-codes a price" test: fails on existing code.** The regex already matches the existing comment `"£1,950.00" → 195000` in `_lib/money.js` (about line 222). **Fix:** Task 6 also rewrites that comment, or the test strips comments first.
+
+14. **Overview §7 table and §10 step 7 vs 01 Task 17 and 11 Task 7: weekly-kpis API trigger.** The overview says weekly-kpis has no API trigger. But 01's setup gaps and the `routine:weekly-kpis` light require its URL and token, and 11 creates the trigger. If Nik follows §10, Setup never shows complete. **Fix:** overview §7 → "schedule Sun 18:47 + API trigger (Test fire)"; §10 step 7 lists research, reply, weekly-kpis, build and monthly-care.
+
+15. **11 Tasks 3 and 6: client and unknown-sender escalations.**
+   - 01's `escalation:client:<id>` and `escalation:unknown:<id>` todos (no draft, no thread) get a Send button, and `messageIdFromDedupe` returns "client:…" or "unknown:…", so Send gets a 404.
+   - The "Escalated" KPI counts `escalation:client:` todos as Claude escalations.
+   - **Fix:** `messageIdFromDedupe` returns null for those two prefixes, and Send/Edit render only when `draft` is set and an id was parsed. `loadKpiRows` also excludes `escalation:client:`, with a test row.
+
+16. **01 "Needed from other stages" vs 09: the landing page's chatbot line is never written.** 01 hands this to 09, but no 09 task edits `_lib/site.js`, so `extras.chatbot` is never used. **Fix:** add to 09 Task 27: when `extras.chatbot` is on, `renderLanding` shows the chatbot line under "What you get" and in the Full Package bullets, tested in `site.test.mjs`.
+
+**Decisions on round 2, which override the fix text above where they differ:**
+- **R2-7:** run health on its own invocation. The relay's `scheduled()` makes two calls every 5 minutes: `/api/tick`, then `/api/tick?reason=health`.
+  - `runTick` with `reason === "health"` runs only the `health` step, with the full 50-query budget.
+  - Every other reason skips `health`.
+  - Drop the "6 reserved for health" rule.
+  - The health step still batches its todo sync: one INSERT OR IGNORE batch and one UPDATE … WHERE dedupe IN (…).
+- **R2-8:** the Money page keeps using 08's `summary.packages`. Other pages use 11's `getOffer()`. Both are serialisations of `offer.js`, so there is one source of truth.
