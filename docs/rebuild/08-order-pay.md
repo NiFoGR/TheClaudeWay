@@ -1,6 +1,6 @@
 # Stage 9: Order and pay
 
-> **Plain English:** A prospect who likes their demo presses "Make it mine", sees today's price and what's included,
+> **Plain English:** A prospect who likes their demo presses "Order this site", sees today's price and what's included,
 > and pays by card on Stripe's own payment page, no call needed. The moment they've paid, they become a client on
 > the Money page, get a welcome email with their onboarding form, and you get a Todo saying "New client". On the
 > Full Package their card is saved and the £249 is taken automatically when the free days end; you don't chase
@@ -15,7 +15,7 @@ exactly once, however often Stripe repeats itself.
 
 ## Trigger
 
-- **Prospect:** opens `/d/:slug/order` (the "Make it mine" button on their demo, or the link Nik/Claude sends).
+- **Prospect:** opens `/d/:slug/order` (the "Order this site" button on their demo, or the link Nik/Claude sends).
 - **Prospect:** presses an order button → `POST /d/:slug/checkout` → Stripe Checkout.
 - **Stripe:** calls `POST /api/stripe/webhook` for the six events below; also returns the prospect to
   `/d/:slug/thanks?session_id=…`.
@@ -34,6 +34,10 @@ exactly once, however often Stripe repeats itself.
 
 ### Offer (from `_lib/offer.js` only; nothing else hard-codes a price)
 
+Stage 0 owns `_lib/offer.js` (`PACKAGES`, `MONTHLY_PENCE`, `offerFor`, `termsFor`, `checkoutWeekend`,
+`formatPounds`, `GUARANTEE`, `BUILD_GUARANTEE`, `WEEKEND_BANNER`, `NO_CONTRACT`). This stage only adds
+`BUILD_GUARANTEE_NOTE`. The weekend's crossed-out price is `PACKAGES.weekend.wasBuild` (195000).
+
 | | Weekday (Mon–Fri UK) | Weekend (Sat 00:00 – Sun 23:59 UK) |
 | --- | --- | --- |
 | Full Package build fee | £1,950, charged now | £1,750, charged now (shown as ~~£1,950~~ £1,750) |
@@ -41,7 +45,7 @@ exactly once, however often Stripe repeats itself.
 | Website Only | £1,750 one-off | £1,750 one-off |
 
 - The struck-through price on the weekend is £1,950, the real weekday price. (CLAUDE.md's "£2,000 → £1,750" is the
-  spoken anchor; striking through a price we never charge would be a false price comparison. See Questions.)
+  spoken anchor; striking through a price we never charge would be a false price comparison. See Questions, Q-A.)
 - Weekend banner (weekend only), exact text: `Weekend price — ends Sunday midnight`.
 - **Grace:** the weekend price is honoured for a checkout started up to 30 minutes after Sunday midnight UK if the
   order page they submit from was rendered on the weekend (the form carries `seen=weekend`). After that, today's
@@ -52,10 +56,12 @@ exactly once, however often Stripe repeats itself.
 
 ### Guarantee and fixed wording (overview §9, exact)
 
-- Headline: `Top 3 in Google search results in 90 days. GUARANTEED.`
-- Section right below it: `The guarantee: we will work for FREE if you aren't in the top 3 of Google results within 90 days.`
-- Build guarantee line: `Website live in 7 days, GUARANTEED (clock starts when your onboarding form is complete)`
-- Promise box: `No contract. No cancellation fees. If we're not making you money, we don't want your money.`
+- Headline (`GUARANTEE.headline`): `Top 3 in Google search results in 90 days. GUARANTEED.`
+- Section right below it (`GUARANTEE.section`): `The guarantee: we will work for FREE if you aren't in the top 3 of Google results within 90 days.`
+- Build guarantee line: `BUILD_GUARANTEE` + a space + `BUILD_GUARANTEE_NOTE`, i.e.
+  `Website live in 7 days, GUARANTEED. (clock starts when your onboarding form is complete)`. Stage 0's
+  `BUILD_GUARANTEE` is unchanged; `BUILD_GUARANTEE_NOTE` = `(clock starts when your onboarding form is complete)`.
+- Promise box (`NO_CONTRACT`): `No contract. No cancellation fees. If we're not making you money, we don't want your money.`
 
 ### Order page `/d/:slug/order` (exact copy; `{Business}` = `leads.name`, escaped with `h()`)
 
@@ -93,8 +99,10 @@ exactly once, however often Stripe repeats itself.
   4. `What happens when the free days end?` — `On day {freeDays+1} we take £249 from the card you paid with, then the same each month. Don't want to carry on? Tell us before then and you won't be charged.`
   5. `How do you measure the top 3?` — `On Google's results for your main service and town (for example "roofer Leeds"), searched from your area. The map results at the top count. If you're not in the top 3 within 90 days, we work for free until you are.`
   6. `Is paying online safe?` — `Yes. Payments are taken by Stripe, which handles card payments for millions of businesses. We never see your card details.`
-- Footer: `Payments are taken securely by Stripe. We count visits to this page so we know you've seen it.` plus the
-  trader line from stage 0 (D-7: Nik's name, "trading as Aetos Websites", address).
+  Stage 10 appends `Your 90 days start the day you give us access to your Google Business Profile.` to answer 5
+  (Q-B default, "Manager access"); this stage ships the answer without it.
+- Footer: `Payments are taken securely by Stripe. We count visits to this page so we know you've seen it.` plus
+  stage 0's `traderLine(business)` (D-7: Nik's name, "trading as Aetos Websites", address), omitted when it returns `""`.
 - `order_page` is recorded by a 4-second beacon (same rule as demo views; scanners don't count). The buttons carry
   no beacon: `order_click` is recorded by the server when the checkout POST arrives.
 
@@ -119,7 +127,7 @@ exactly once, however often Stripe repeats itself.
   The 6th → 429 with the `busy` notice. `order_click` is recorded before calling Stripe (failed attempts count).
 - Already a client / not connected / expired → the matching notice, no Stripe call.
 - Success → `303` to the Stripe Checkout URL. Stripe errors → 502 with the `failed` notice, a `payment` Todo, and a
-  red Payments light (`beat(DB, "stripe", false, …)`).
+  red `payments` light (`beat(DB, "stripe", false, …)`).
 - Stripe Checkout Session parameters (form-encoded, `Stripe-Version: 2024-06-20`), exact:
 
 ```js
@@ -133,8 +141,8 @@ exactly once, however often Stripe repeats itself.
 { mode: "subscription", payment_method_collection: "always",
   line_items: [
     { quantity: 1, price_data: { currency: "gbp", unit_amount: 24900, recurring: { interval: "month" },
-      product_data: { name: "Monthly plan: Google top 3 work, hosting and report" } } },
-    { quantity: 1, price_data: { currency: "gbp", unit_amount: 195000 /* 175000 weekend */,
+      product_data: { name: "Monthly plan: Google top 3 work, hosting and report" } } },   // 24900 = terms.monthly
+    { quantity: 1, price_data: { currency: "gbp", unit_amount: 195000 /* 175000 weekend; = terms.build */,
       product_data: { name: `Website build: ${business}` } } } ],
   subscription_data: { trial_period_days: 60 /* 90 weekend */, metadata: { place_id, package: "full", weekend } } }
 // package "website"
@@ -163,17 +171,23 @@ Ignored unless `payment_status` is `paid` or `no_payment_required` and `metadata
    whichever arrives first, there is one row.)
 5. `onboarding` (INSERT OR IGNORE): `token` = 24 random bytes base64url (32 chars), `status` `sent`.
    **Only the runner whose insert created this row** queues the welcome email and records the `ordered` demo event.
-6. Prospect: `stage` = `nextStage(stage, "paid")` (= `won`), `stage_at`, `next_followup_at = NULL`; queued
-   `followup` messages for the lead → `cancelled`. No prospect row → insert one with `stage` `won` and the
-   checkout email.
-7. `closeLeadTodos(DB, place_id, {exceptKinds: ["build", "payment"]})`, then the `build` Todo.
-8. Another non-cancelled client already existed for this `place_id` → `payment` Todo "paid twice".
+6. Prospect: `applyStageEvent(DB, place_id, "paid", now, {email, greet_name: null})` (stage 0's `prospects.js`;
+   `paid` goes from any stage to `won`, so a `lost` prospect becomes `won`). No prospect row → the `{email,
+   greet_name}` option inserts one in `won` with the checkout email. Then `next_followup_at = NULL` and queued
+   `followup` messages for the lead → `cancelled`.
+7. Suppression: delete the `suppression` row (kind `email`) for the lower-cased checkout email, so a past "no
+   thanks" can't block client mail.
+8. `closeLeadTodos(DB, place_id, {exceptKinds: ["build", "payment"]})`, then the `build` Todo.
+9. Another non-cancelled client already existed for this `place_id` → `payment` Todo "paid twice".
 
 ### Welcome email (kind `system`, author `system`, plain text)
 
 From the active `system`-role mailbox; if none, the active cold mailbox with the most capacity left plus a `setup`
 Todo; if no active mailbox at all, nothing is queued and a `setup` Todo carries the email as its `draft`.
-Greeting: `Hi {greet_name},` when `prospects.greet_name` is set, else `Hi,`. Exact text:
+Greeting: `Hi {greet_name},` when `prospects.greet_name` is set, else `Hi,`. Sign-off name = the
+`business:sender_name` setting (else `Nik`), for this and every client email. Stage 10 adds the line
+`Your 90 days start the day you give us access to your Google Business Profile.` to the Full Package paragraph (Q-B).
+Exact text:
 
 ```
 Subject: {Business}: your onboarding form
@@ -193,7 +207,7 @@ Your first {60} days of the monthly plan are free. The first £249 is taken on {
 
 Any questions, just reply.
 
-{mailbox display_name}
+{business:sender_name}
 Aetos Websites
 ```
 
@@ -205,7 +219,7 @@ Aetos Websites
 | `invoice.payment_failed` | Known client only. `client_links.failed_on` = UK date. `payment` Todo (dedupe `payment:failed:<invoice id>`); **only if that Todo is new**, the payment-failed email below to `client_links.email` (else `invoice.customer_email`). |
 | `customer.subscription.deleted` | `clients.cancelled_on` = UK date of `ended_at` (else `canceled_at`, else now), only if NULL; `payment` Todo. |
 | `charge.refunded` | `payments` row `refund:<charge id>`, category `Refunds`, `amount_pence` = −`amount_refunded` (on conflict update the amount, so partial refunds add up). |
-| `checkout.session.expired` | If no client exists for `metadata.place_id`: `hot` Todo "they opened the payment page but didn't pay". |
+| `checkout.session.expired` | If no client exists for `metadata.place_id`: `hot` Todo (dedupe `checkout:<place_id>`) "they opened the payment page but didn't pay". |
 | `checkout.session.completed` | `fulfilCheckout`. |
 
 Payment-failed email (exact):
@@ -223,7 +237,7 @@ You can pay or change your card here:
 Stripe will try the card again over the next few days. If you'd rather stop the monthly plan, just reply and I'll sort it. You keep your website either way.
 
 Thanks,
-{mailbox display_name}
+{business:sender_name}
 Aetos Websites
 ```
 
@@ -269,7 +283,8 @@ will arrive by email in the next few minutes.`, status 200.
 - Client cancels during the free days → `customer.subscription.deleted` → Money shows "Stopped", no charge happens.
 - Card fails on day 61 → one email per invoice (Stripe retries don't resend it), `payment` Todo; if all retries
   fail Stripe cancels → "Stopped".
-- Prospect was `lost` and later pays → `won` (money beats a "no").
+- Prospect was `lost` and later pays → `won` (money beats a "no"); an opt-out suppression for the checkout email is
+  removed, so the welcome email goes.
 - No prospect row (e.g. ordered from a demo Nik sent by hand) → prospect row created as `won`.
 - A booked call stays booked (it becomes a welcome call); only open Todos for the lead close.
 - Legacy payment link used → still becomes a client.
@@ -292,8 +307,8 @@ will arrive by email in the next few minutes.`, status 200.
     `Couldn't reach Stripe. Try again in a minute.`
 - **Money page:** unchanged behaviour (card clients count actual `payments`); refunds appear as a negative
   `Refunds` line; prices for "Add client" come from the server; the old "Payment links" card is replaced by a hint:
-  `To take an order, send them their order page (their demo → Make it mine).`
-- **Todo:** the items below. **Health:** the Payments light.
+  `To take an order, send them their order page (their demo → Order this site).`
+- **Todo:** the items below. **Health:** the `payments` light.
 
 ### Todos added
 
@@ -304,7 +319,7 @@ will arrive by email in the next few minutes.`, status 200.
 | `payment` | `payment:stopped:<client_id>` | `{name} stopped the monthly plan: switch off the extras (their site stays up)` | `/#/money` |
 | `payment` | `payment:double:<place_id>:<session id>` | `{name} paid twice: refund one in Stripe` | `/#/money` |
 | `payment` | `payment:checkout:<place_id>` | `{name} tried to pay but Stripe refused: {error}` | `/#/setup` |
-| `hot` | `hot:checkout:<place_id>` | `Call {name}: they opened the payment page but didn't pay` | `/#/lead/<place_id>` |
+| `hot` | `checkout:<place_id>` | `Call {name}: they opened the payment page but didn't pay` | `/#/lead/<place_id>` |
 | `setup` | `setup:stripe` | `Connect Stripe: {name} tried to order` | `/#/setup` |
 | `setup` | `setup:system_mailbox` | `Add a system mailbox for client emails (welcome emails are going from a cold mailbox)` | `/#/setup` |
 | `setup` | `setup:welcome:<client_id>` | `Send {name} their onboarding link yourself (no mailbox yet)` + `draft` = the welcome email | `/#/money` |
@@ -314,9 +329,15 @@ submitted.
 
 ### Health light
 
-`Payments (Stripe)`: grey `Not connected` (no key); amber `Press Connect Stripe on Setup` (key, no or outdated
-webhook); red with the detail when the `stripe` heartbeat is `ok = 0` and less than 24 h old (webhook handler error
-or checkout refused); green `Working` otherwise.
+Registered with stage 0's `registerLight(fn)` (never by editing `computeLights`), shape
+`{name: "payments", level, detail, fix}`:
+
+| level | When | detail | fix |
+| --- | --- | --- | --- |
+| `grey` | no key (not in use; never adds a todo) | `Not connected` | `Paste your Stripe key on Setup and press Connect Stripe` |
+| `amber` | key, but no or outdated webhook | `Stripe can't send us payment messages yet` | `Press Connect Stripe on Setup` |
+| `red` | the `stripe` heartbeat is `ok = 0` and less than 24 h old (webhook handler error or checkout refused) | the heartbeat detail | `Open Setup → Payments (Stripe). If it says connected, press Connect Stripe again` |
+| `green` | otherwise | `Working` | `""` |
 
 ## Perfect when
 
@@ -346,7 +367,7 @@ or checkout refused); green `Working` otherwise.
 10. **Cancel and refund:** Money → Stopped paying → Stripe shows the subscription cancelled and Money shows
     "Stopped"; refund £249 in Stripe → Money shows −£249 under Refunds.
 11. Six checkout POSTs for one slug within an hour → the sixth shows the `busy` notice (429).
-12. Setup card shows `Test mode`, key ✓, webhook ✓, and the last event; the Payments light is green.
+12. Setup card shows `Test mode`, key ✓, webhook ✓, and the last event; the `payments` light is green.
 
 ---
 

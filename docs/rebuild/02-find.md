@@ -22,11 +22,11 @@ decision from GitHub's cron into the tick, and connects finished searches to the
 
 | What | When |
 | --- | --- |
-| Automatic search decision | The first tick at or after 06:00 UK each day (tick step `daily_find`, position 6 in overview §8). Exactly once per UK day. |
+| Automatic search decision | The first tick at or after 06:00 UK each day (tick step `daily_find`, position 7 in overview §8, after `pick`). Exactly once per UK day. |
 | Manual search | Nik presses **Find leads** on the Lead Scraper page (any time). |
 | Research enqueue | In `daily_find`: whenever a search has finished since the last enqueue, and once a day with the morning decision. |
 | Research Routine fire | Right after an enqueue, if the queue is non-empty and the research Routine wasn't fired in the last 6 hours. |
-| Stale runs | Tick step `stale_jobs` (position 7), every 15 minutes. |
+| Stale runs | Tick step `stale_jobs` (position 8), every 15 minutes. |
 
 ### Who does what
 
@@ -54,7 +54,6 @@ wins (`qualify.mark_exclusions`):
 | `Chain / national brand` | Name matches the `CHAINS` brand list (unambiguous national brands only). |
 | `Multiple branches (chain)` | Same real website host on listings in **different** towns (this run or earlier leads). The earlier lead is excluded too, unless it already has a `prospects` row. |
 | `Front desk / gatekeeper` | Google types include one of `FRONT_DESK_TYPES` (dentist, doctor, hospital, lawyer, bank, school, supermarket, …), or the name contains dental, dentist(s), doctor(s), medical, NHS, veterinary, vets, physio…, solicitor(s), council, optician(s), pharmacy, chemist. "Tree Surgery", "Lawn Clinic", "Driveway Clinic" are trades and stay. |
-| `Too big for us (Claude: …)` | Set later by stage 2 research, carried over on re-scrapes. |
 
 **Score (0–100) = Website 45 + Local SEO 30 + Google Maps 25** (`scoring.RULES`, unchanged values):
 
@@ -159,8 +158,10 @@ catch-up.
 
 `stale_jobs`: a `jobs` row `queued`/`running` whose newest of `jobs.updated_at` and `job_progress.updated_at` is more
 than **45 minutes** old → `status 'failed'`, error **"Stopped: no progress for 45 minutes. Press Find leads to try
-again."** A `scans` row `queued`/`running` with `updated_at` older than 45 minutes → failed, error **"Stopped: no
-progress for 45 minutes. Press Run scan to try again."** (the Map Rank page's button). Each adds one `health` todo.
+again."** A `scans` row `queued`/`running` with `updated_at` older than 45 minutes and `source` not `'care'` → failed,
+error **"Stopped: no progress for 45 minutes. Press Run scan to try again."** (the Map Rank page's button). Care scans
+(`source = 'care'`) are never touched here: stage 11 owns them and its `care_scans` light fails them with its own
+text. Each adds one `health` todo.
 The workflow's own timeout is 30 minutes, so a healthy run never hits 45. The page's old client-side "Stuck" badge
 (40 minutes) is removed; the server's status is the truth.
 
@@ -178,7 +179,6 @@ The workflow's own timeout is 30 minutes, so a healthy run never hits 45. The pa
 - **Lead in a village outside the searched town** (Lymm in a Warrington search): no Maps points from that scan.
 - **Suppressed lead** (opted out, bounced, or company blocked): never queued; already-queued rows are left for stage 2
   to skip.
-- **Re-scrape of a lead Claude excluded as too big:** stays excluded (`research.carry_over`).
 - **Pipeline numbers before stage 2 exists:** no graded leads, so rule 3 never blocks; rule 4 does.
 
 ### What Nik sees (Lead Scraper page, `#/scraper`)
@@ -229,9 +229,21 @@ The workflow's own timeout is 30 minutes, so a healthy run never hits 45. The pa
 
 ### Health lights fed
 
-- **Lead search** (heartbeat `find`, written by `daily_find` with `beat(DB, "find", ok, line)` after each decision and
-  when today's job fails): red when the latest beat is `ok = 0` or older than 26 hours.
-- **Research** (heartbeat/fires `routine:research`): fed by `fireRoutine` (stage 0 rules).
+- **`lead_search`** (registered by Task 12 with stage 0's `registerLight`; stage 0's `computeLights` is not edited).
+  Fed by heartbeat `find`, written by `daily_find` with `beat(DB, "find", ok, line)` after each decision and when
+  today's job fails. Shape `{name: "lead_search", level, detail, fix}`:
+
+  | level | When | detail | fix |
+  | --- | --- | --- | --- |
+  | `grey` | No `find` beat yet (not in use; never adds a todo) | `No automatic search has run yet` | `""` |
+  | `red` | Latest beat `ok = 0` | `Today's lead search went wrong: {beat detail}` | `Open the Lead Scraper page and press Find leads. If it fails again, check GITHUB_TOKEN in Cloudflare (Pages → Settings → Variables and Secrets) is still valid.` |
+  | `red` | Latest beat older than 26 hours | `The automatic lead search hasn't run for {h} hours` | `The daily search runs from the tick: check the tick light. If that is green, press Find leads on the Lead Scraper page.` |
+  | `green` | Otherwise | `{beat detail}` (today's line) | `""` |
+
+  The name is `lead_search`, not `find`, so its `health:lead_search` todo can never close this stage's
+  `health:find:*` todos by prefix.
+- **Research** (heartbeat/fires `routine:research`): fed by `fireRoutine` (stage 0 rules). The research queue light
+  is stage 2's `research` light.
 
 ### Perfect when
 
@@ -287,7 +299,7 @@ D1, `node --test` with `tests/helpers/fakeD1.mjs`; plain-JS front end.
 - `GOOD_WAITING_MIN = 30`, `RESEARCH_QUEUE_MAX = 40`, `RECENT_DAYS = 30`, `MIN_RESEARCH_SCORE = 35` (equals `research.MIN_SCORE`), `STALE_MINUTES = 45`, `RESEARCH_FIRE_GAP_HOURS = 6`.
 - Territory setting key `territory`, JSON `{on, trade, towns, next, max}`, same shape and defaults in JS and Python.
 - Timestamps written by this stage use util `now()` format `YYYY-MM-DDTHH:MM:SSZ` (no milliseconds), so string comparison with Python's `_now()` is exact.
-- `daily_find` uses at most 14 D1 statements per run; `stale_jobs` at most 6 (D1 free plan: 50 per invocation).
+- `daily_find` uses at most 14 D1 statements per run; `stale_jobs` at most 6 (D1 free plan: 50 per invocation). Stage 0's `runTick` counts queries tick-wide (`ctx.budget`) and defers a step (result `"deferred"`) when fewer than 10 are left; both steps are idempotent, so a deferred run simply happens on a later tick.
 - GitHub holds no Claude tokens; only the app fires Routines (`fireRoutine`).
 - Every issue line quoted to prospects needs a regression test; any new false alarm from real data → a test first.
 - Scraped text is rendered with `esc()` only.
@@ -653,7 +665,8 @@ recentJobs(DB, now) → Promise<[{trade, town, status, created_at}]>   // create
 
 **Interfaces:** Consumes `fireRoutine(DB, name, text) → Promise<{ok, status, error?}>` (`_lib/routines.js`). Produces:
 ```js
-isSuppressed({email, website, company_number}, suppressionRows) → boolean   // pure; email, email domain, website host (no www.), company
+leadSuppressed({email, website, company_number}, suppressionRows) → boolean   // pure; email, email domain, website host (no www.), company
+                                                                              // (named apart from stage 0's prospects.js isSuppressed(DB, email))
 enqueueResearch(DB, now) → Promise<number>                                  // rows inserted
 maybeFireResearch(DB, now, {fire = fireRoutine} = {}) → Promise<"fired"|"empty"|"recent"|"failed">
 ```
@@ -681,7 +694,7 @@ maybeFireResearch(DB, now, {fire = fireRoutine} = {}) → Promise<"fired"|"empty
   });
   ```
 - [ ] **Step 2: Run to verify they fail** — `node --test control-room/tests/find.test.mjs` → FAIL (`enqueueResearch is not a function`).
-- [ ] **Step 3: Implement** — select candidates `place_id, email, website, company_number` from `leads l` with `l.excluded = 0 AND (l.quality_score >= 35 OR EXISTS (SELECT 1 FROM json_each(l.audit, '$.findings') WHERE value = 'not_checked')) AND l.place_id NOT IN (SELECT place_id FROM research)`, filter with `isSuppressed`, then one statement `INSERT OR IGNORE INTO research (place_id, status, queued_at) SELECT value, 'queued', ? FROM json_each(?)`. Fire guard: `SELECT 1 FROM routine_fires WHERE routine = 'research' AND at > ?` (now − 6 h); `fireRoutine` returning `ok: false` → `"failed"`.
+- [ ] **Step 3: Implement** — select candidates `place_id, email, website, company_number` from `leads l` with `l.excluded = 0 AND (l.quality_score >= 35 OR EXISTS (SELECT 1 FROM json_each(l.audit, '$.findings') WHERE value = 'not_checked')) AND l.place_id NOT IN (SELECT place_id FROM research)`, filter with `leadSuppressed`, then one statement `INSERT OR IGNORE INTO research (place_id, status, queued_at) SELECT value, 'queued', ? FROM json_each(?)`. Fire guard: `SELECT 1 FROM routine_fires WHERE routine = 'research' AND at > ?` (now − 6 h); `fireRoutine` returning `ok: false` → `"failed"`.
 - [ ] **Step 4: Run tests** — `node --test control-room/tests/*.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/find.js control-room/tests/find.test.mjs && git commit -m "Research queue: every pitchable lead goes to Claude once; fire at most every 6 hours" -m "$TRAILER"`
 
@@ -689,11 +702,13 @@ maybeFireResearch(DB, now, {fire = fireRoutine} = {}) → Promise<"fired"|"empty
 
 **Files:** Modify `control-room/functions/_lib/find.js`, `control-room/functions/_lib/tick.js` (append step); Create `control-room/tests/daily-find.test.mjs`.
 
-**Interfaces:** Consumes `decideFind`, `todayLine` (Task 9), `startScrape`, `pipelineCounts`, `recentJobs`, `loadTerritory`, `saveTerritory`, `enqueueResearch`, `maybeFireResearch` (Tasks 10–11), `addTodo`, `closeTodos` (`_lib/todo.js`), `beat` (`_lib/routines.js`), `ukParts`, `ukDate`. Produces:
+**Interfaces:** Consumes `decideFind`, `todayLine` (Task 9), `startScrape`, `pipelineCounts`, `recentJobs`, `loadTerritory`, `saveTerritory`, `enqueueResearch`, `maybeFireResearch` (Tasks 10–11), `addTodo`, `closeTodos` (`_lib/todo.js`), `beat` (`_lib/routines.js`), `registerLight(fn)` and (tests only) `healthFromDb(DB, env, now) → {lights, gaps}` (`_lib/health.js`, stage 0), `ukParts`, `ukDate`. Produces:
 ```js
 claimDay(DB, ukToday) → Promise<boolean>        // INSERT … ON CONFLICT(key) DO UPDATE SET value = excluded.value WHERE settings.value != excluded.value; changes === 1
 runDailyFind(DB, env, now, {start, fire} = {}) → Promise<string>
-STEPS entry {name: "daily_find", everyMinutes: 5, run: (ctx) => runDailyFind(ctx.DB, ctx.env, ctx.now)}   // after "send"/"hot", before "stale_jobs"
+STEPS entry {name: "daily_find", everyMinutes: 5, run: (ctx) => runDailyFind(ctx.DB, ctx.env, ctx.now)}   // slot 7: after "pick", before "stale_jobs"
+leadSearchLight(beatRow|null, now) → {name: "lead_search", level: "green"|"red"|"grey", detail, fix}   // pure; Part A's table
+registerLight(async (DB, env, now) => leadSearchLight(await DB.prepare("SELECT ok, last_at, detail FROM heartbeats WHERE name = 'find'").first(), now))
 settings: "find:day", "find:today" (JSON {day, at, search, town?, job_id?, reason?, n?, error?}), "research:enqueued_at"
 ```
 
@@ -754,12 +769,28 @@ settings: "find:day", "find:today" (JSON {day, at, search, town?, job_id?, reaso
   test("tick order", () => {
     const names = STEPS.map((s) => s.name);
     assert.ok(names.indexOf("send") < names.indexOf("daily_find") && names.indexOf("daily_find") < names.indexOf("health"));
+    assert.ok(names.indexOf("pick") < names.indexOf("daily_find") && names.indexOf("daily_find") < names.indexOf("stale_jobs"));
+  });
+  test("lead_search light", () => {
+    const now = new Date("2026-10-19T12:00:00Z");
+    assert.equal(leadSearchLight(null, now).level, "grey");
+    assert.deepEqual(leadSearchLight({ ok: 1, last_at: "2026-10-19T05:00:00Z", detail: "Skipped: 34 good leads waiting" }, now),
+      { name: "lead_search", level: "green", detail: "Skipped: 34 good leads waiting", fix: "" });
+    assert.equal(leadSearchLight({ ok: 0, last_at: "2026-10-19T05:00:00Z", detail: "x" }, now).level, "red");
+    assert.equal(leadSearchLight({ ok: 1, last_at: "2026-10-18T09:59:00Z", detail: "x" }, now).level, "red");   // 26 h 1 min
+    assert.equal(leadSearchLight({ ok: 1, last_at: "2026-10-18T10:01:00Z", detail: "x" }, now).level, "green");
+  });
+  test("lead_search is registered with healthFromDb", async () => {
+    const DB = fakeD1();
+    await beat(DB, "find", false, "Couldn't start the search for Widnes: GitHub refused");
+    const { lights } = await healthFromDb(DB, {}, new Date());
+    assert.equal(lights.find((l) => l.name === "lead_search").level, "red");
   });
   ```
-- [ ] **Step 2: Run to verify they fail** — `node --test control-room/tests/daily-find.test.mjs` → FAIL (`runDailyFind is not a function`).
-- [ ] **Step 3: Implement `runDailyFind`** — order: (1) enqueue + `maybeFireResearch` when a job became done after `research:enqueued_at`, or when it's ≥ 06:00 UK and `research:enqueued_at` is from an earlier UK day; (2) if UK time ≥ `FIND_FROM` and `claimDay` wins: decide, start or skip, save `find:today`, todos and `beat(DB, "find", ok, todayLine(...))` as in Part A; `closeTodos(DB, "health:find:towns")` when a search starts; (3) if `find:today.job_id`'s job is `failed`, add the `health:find:failed:<id>` todo and beat `find` not ok. Return a short summary, e.g. `"searched Warrington; queued 12; fired research"`.
+- [ ] **Step 2: Run to verify they fail** — `node --test control-room/tests/daily-find.test.mjs` → FAIL (`runDailyFind is not a function`, `leadSearchLight is not a function`).
+- [ ] **Step 3: Implement `runDailyFind`** — order: (1) enqueue + `maybeFireResearch` when a job became done after `research:enqueued_at`, or when it's ≥ 06:00 UK and `research:enqueued_at` is from an earlier UK day; (2) if UK time ≥ `FIND_FROM` and `claimDay` wins: decide, start or skip, save `find:today`, todos and `beat(DB, "find", ok, todayLine(...))` as in Part A; `closeTodos(DB, "health:find:towns")` when a search starts; (3) if `find:today.job_id`'s job is `failed`, add the `health:find:failed:<id>` todo and beat `find` not ok. Return a short summary, e.g. `"searched Warrington; queued 12; fired research"`. Add the pure `leadSearchLight` per Part A's light table (levels only `green`/`red`/`grey`), and call `registerLight(...)` once at module load of `find.js` (the tick imports `find.js`, so the light is registered whenever `/api/tick` or `/api/health` runs; `api/health.js` imports `_lib/find.js` for the side effect if it doesn't already).
 - [ ] **Step 4: Run tests** — `node --test control-room/tests/*.test.mjs` → PASS.
-- [ ] **Step 5: Commit** — `git add control-room/functions/_lib control-room/tests/daily-find.test.mjs && git commit -m "Tick: daily lead search when the pipeline is low; queue research after every search" -m "$TRAILER"`
+- [ ] **Step 5: Commit** — `git add control-room/functions/_lib control-room/functions/api control-room/tests/daily-find.test.mjs && git commit -m "Tick: daily lead search when the pipeline is low; queue research after every search; lead_search light" -m "$TRAILER"`
 
 ### Task 13: Tick step `stale_jobs`
 
@@ -771,8 +802,9 @@ STALE_MINUTES = 45
 STALE_JOB_ERROR = "Stopped: no progress for 45 minutes. Press Find leads to try again."
 STALE_SCAN_ERROR = "Stopped: no progress for 45 minutes. Press Run scan to try again."
 markStale(DB, now) → Promise<{jobs: number, scans: number}>
-STEPS entry {name: "stale_jobs", everyMinutes: 15, run: (ctx) => markStale(ctx.DB, ctx.now).then((r) => `${r.jobs} searches, ${r.scans} scans stopped`)}   // right after daily_find
+STEPS entry {name: "stale_jobs", everyMinutes: 15, run: (ctx) => markStale(ctx.DB, ctx.now).then((r) => `${r.jobs} searches, ${r.scans} scans stopped`)}   // slot 8: right after daily_find, before "calls"
 ```
+Scans with `source = 'care'` are skipped (stage 11 owns them).
 
 - [ ] **Step 1: Write the failing tests:**
   ```js
@@ -780,8 +812,10 @@ STEPS entry {name: "stale_jobs", everyMinutes: 15, run: (ctx) => markStale(ctx.D
     const DB = fakeD1(); const now = new Date("2026-10-19T12:00:00Z");
     // jobs: old (running, updated 11:14) → failed; alive (running, jobs.updated 10:00, job_progress.updated 11:50) → untouched;
     // fresh (queued, updated 11:16) → untouched; finished (done, updated 08:00) → untouched
-    // scans: s1 (running, updated 11:10) → failed
+    // scans: s1 (running, updated 11:10) → failed; c1 (running, source 'care', updated 09:00) → untouched
     assert.deepEqual(await markStale(DB, now), { jobs: 1, scans: 1 });
+    assert.equal((await row(DB, "SELECT status FROM scans WHERE id = 'c1'")).status, "running");
+    assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM todos WHERE dedupe = 'health:stale:scan:c1'"), 0);
     assert.equal((await row(DB, "SELECT status, error FROM jobs WHERE id = 'old'")).error, STALE_JOB_ERROR);
     assert.equal((await row(DB, "SELECT error FROM scans WHERE id = 's1'")).error, STALE_SCAN_ERROR);
     assert.deepEqual(await markStale(DB, now), { jobs: 0, scans: 0 });
@@ -790,7 +824,7 @@ STEPS entry {name: "stale_jobs", everyMinutes: 15, run: (ctx) => markStale(ctx.D
   });
   ```
 - [ ] **Step 2: Run to verify it fails** — `node --test control-room/tests/stale-jobs.test.mjs` → FAIL (`markStale is not a function`).
-- [ ] **Step 3: Implement** — jobs: `status IN ('queued','running') AND max(j.updated_at, COALESCE(p.updated_at, '')) < ?` (cutoff `iso(now − 45 min)`), one `UPDATE … WHERE id IN (…)`; scans: `status IN ('queued','running') AND updated_at < ?`; todos per Part A's table.
+- [ ] **Step 3: Implement** — jobs: `status IN ('queued','running') AND max(j.updated_at, COALESCE(p.updated_at, '')) < ?` (cutoff `iso(now − 45 min)`), one `UPDATE … WHERE id IN (…)`; scans: `status IN ('queued','running') AND updated_at < ? AND COALESCE(source, '') != 'care'`; todos per Part A's table.
 - [ ] **Step 4: Run tests** — `node --test control-room/tests/*.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib control-room/tests/stale-jobs.test.mjs && git commit -m "Tick: stop searches and scans with no progress for 45 minutes" -m "$TRAILER"`
 
@@ -826,7 +860,7 @@ PUT  /api/territory {on, trade, towns, max} → {territory} | 400 {error}
 
 ### Task 15: Lead Scraper page: Automatic search card
 
-**Files:** Modify `control-room/public/js/scraper.js`, `control-room/public/js/roadmap.js` (Daily autopilot line → "Daily search: every morning from 6am, if fewer than 30 good leads are waiting, searches the next town on your list; new leads go to Claude's research queue."), `CLAUDE.md` (the "Daily autopilot" sentence → the same, pointing at `_lib/find.js` and tick step `daily_find`).
+**Files:** Modify `control-room/public/js/scraper.js`, `CLAUDE.md` (the "Daily autopilot" sentence → "Daily search: every morning from 6am, if fewer than 30 good leads are waiting, searches the next town on your list; new leads go to Claude's research queue.", pointing at `_lib/find.js` and tick step `daily_find`). (The Roadmap page was deleted in stage 0, so there is nothing to update there.)
 
 **Interfaces:** Consumes `GET/PUT /api/territory` (Task 14). Keeps `export runRow` (used by `home.js`); `isStuck` and `STUCK_MINUTES` removed; `inProgress(j)` = `queued`/`running`.
 
@@ -854,22 +888,31 @@ PUT  /api/territory {on, trade, towns, max} → {territory} | 400 {error}
   `_lib/settings.js`, `_lib/todo.js` (`addTodo`, `closeTodos`), `_lib/routines.js` (`fireRoutine`, `beat`),
   `_lib/ukTime.js`, `_lib/tick.js` `STEPS`; `tests/helpers/fakeD1.mjs` exporting `fakeD1()` → a synchronous-to-create
   D1-compatible object with the full schema, supporting `prepare/bind/first/all/run` (with `meta.changes`) and `batch`.
-  The `health` step shows a **Lead search** light from heartbeat `find` (red if `ok = 0` or older than 26 h).
+  `_lib/health.js` `registerLight(fn)` and `healthFromDb(DB, env, now) → {lights, gaps}`, lights shaped
+  `{name, level: "green"|"amber"|"red"|"grey", detail, fix}`; tick slots `pick` (stage 3) before `daily_find` and
+  `calls` after `stale_jobs` (overview §8); `runTick`'s `ctx.budget`.
+- **Produces for the health step:** the `lead_search` light (Task 12, registered; heartbeat `find`; red if `ok = 0`
+  or older than 26 h, grey before the first beat). Its todo dedupe is `health:lead_search`, which is no prefix of
+  this stage's `health:find:*` todos.
 - **Produces for stage 2 (research):** `research` rows `status 'queued'` with `queued_at` for every handed-to-research
-  lead; `fireRoutine(DB, "research", "research queued: {n} leads")` payload. Stage 2 must skip queued rows whose lead
-  is now excluded or suppressed, and must not quote a Maps issue when `audit.map_rank.home` is false or
-  `audit.map_rank.scan_town` isn't the lead's town (older rows). `audit.ai_needs` stays as a hint list only.
-- **Produces for stages 3, 6 and the Todo board:** `isSuppressed(lead, suppressionRows)` (pure, `_lib/find.js`);
+  lead; `fireRoutine(DB, "research", "research queued: {n} leads")` payload (this text is the agreed one). Stage 2
+  must mark `skipped` the queued rows whose lead is now excluded or matches `leadSuppressed`, must drop
+  `maps_*`/`reviews_behind` findings and pass `map_rank: null` when `audit.map_rank.home === false` or
+  `audit.map_rank.scan_town` isn't the lead's town (older rows). `audit.ai_needs` stays as a hint list only. Stage 2
+  stores "too big" only in `research.too_big`; this stage has no "too big" exclusion, and `research.carry_over` stays
+  for maps carry-over only.
+- **Produces for stages 2, 3, 6 and the Todo board:** `leadSuppressed(lead, suppressionRows)` (pure, `_lib/find.js`);
   `pipelineCounts(DB)` (`goodWaiting` is the shortlist's "A+/A/B not emailed" count); `health` todo dedupe prefixes
-  `health:stale:`, `health:find:`.
-- **Produces for Map Rank:** stale scans are failed with `STALE_SCAN_ERROR`.
+  `health:stale:`, `health:find:` (no light covers them, so the Todo board shows them).
+- **Produces for Map Rank:** stale scans are failed with `STALE_SCAN_ERROR`; care scans (`source = 'care'`) are left to
+  stage 11.
 - **Settings keys introduced:** `find:day`, `find:today`, `research:enqueued_at` (`territory` kept).
 - **Python:** `qualify.mark_exclusions(leads, known=())` returns chain place_ids; `store.D1.known_leads()`,
   `store.D1.exclude_chains(ids)`; `audit.town_key(name)`; `lead.map_rank["home"]`.
 
 ## Questions for Nik
 
-1. **When the 18 towns are used up** (each searched in the last 30 days), do you want the next ring of towns
-   (e.g. Liverpool suburbs, Lymm, Culcheth, Manchester suburbs) or a second trade (roofers)? Default: searching pauses
-   and the todo "Add more towns to your automatic search" appears; you add towns or change the trade on the Lead
-   Scraper page.
+- **Q-Q. When the 18 towns are used up** (each searched in the last 30 days), do you want the next ring of towns
+  (e.g. Liverpool suburbs, Lymm, Culcheth, Manchester suburbs) or a second trade (roofers)? Default: pause plus "Add
+  more towns" todo (searching pauses and the todo "Add more towns to your automatic search" appears; you add towns or
+  change the trade on the Lead Scraper page).

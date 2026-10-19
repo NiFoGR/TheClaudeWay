@@ -26,7 +26,8 @@ Each mailbox sends at most **about 10 cold emails a day, follow-ups included** (
 3, 5, 8, then 10 a day). One business gets up to **10 emails** (your first + 9 follow-ups) over 60 days. So at full
 speed **one mailbox can start about 1 new business a day (about 6 a week, Mon–Sat)**. One mailbox → ~6 new businesses
 a week; 12 mailboxes (3 domains × 4) → ~12 a day. The Control Room enforces this: it only lets you send a first email
-if your mailboxes have room for it today **and** on every day its 9 follow-ups will go out.
+if your mailboxes have room for it today **and** on every day its 9 follow-ups will go out. The Leads page's "you can
+send N first emails today" banner uses the same number, so the banner and Send never disagree.
 
 ## A3. The first email (composer)
 
@@ -44,7 +45,9 @@ Shown in the lead drawer under **Email**, only while the prospect is `ready` and
   - **Insert demo link** button: inserts `{demo_link}` at the cursor.
 - **Preview ("What they'll see"):** From `display_name <address>` of the mailbox that will send it, To, Subject, then
   the exact plain text: greeting line, Nik's body with `{demo_link}` replaced by the real URL, and the cold footer
-  (`coldFooter(display_name)`: his name, "Aetos Websites", `If you'd rather not hear from me, just reply "no thanks".`).
+  (`coldFooter(<the business:sender_name setting>)`: his name, "Aetos Websites", `If you'd rather not hear from me,
+  just reply "no thanks".`). Every sign-off and cold footer in this stage uses `business:sender_name`, never the
+  mailbox's `display_name` (that is only the From line).
   Updates 300 ms after he stops typing.
 - **Checks:** a list under the preview, each a green tick or a red line in plain English. **Send** is disabled until
   all pass; its label is "Send now" inside the window, or "Send Mon 07:00" (the next window start) outside it.
@@ -87,8 +90,8 @@ The mailbox is `pickMailbox(<mailboxes with room>, <today's load by mailbox>, uk
 "Queued. It goes out within 5 minutes." or "Queued for Mon 07:00." The route nudges the tick (`waitUntil(runTick(env,
 "compose"))`) so it usually goes within seconds.
 
-**When it has actually gone** (message `sent`), the next `followups` step: applies `nextStage("ready", "first_sent")`
-→ `emailed`, sets `first_sent_at` = the message's `sent_at`, `root_message_id` = its `message_id`, `followup_step` 0,
+**When it has actually gone** (message `sent`), the next `followups` step: calls `applyStageEvent(DB, place_id,
+"first_sent", now)` (stage 0's `_lib/prospects.js`) → `emailed`, sets `first_sent_at` = the message's `sent_at`, `root_message_id` = its `message_id`, `followup_step` 0,
 `next_followup_at` = `schedule(first_sent_at, 1)`, and saves a `style_examples` row (`id` "sent:" + message id, `kind`
 "example", `situation` "first email", `source` "nik_sent", `body` = the text without the footer). If a human reply,
 opt-out or bounce already arrived for that lead after `sent_at`, the stop rules apply at once instead (A5).
@@ -112,8 +115,8 @@ Window: **`COLD_WINDOW = {start: "07:00", end: "19:00", days: [1, 2, 3, 4, 5, 6]
 - **Bank holidays** are ordinary days (no skip).
 - `prospects.followup_step` = follow-ups sent (or skipped by Nik) so far; `next_followup_at` = when the next one is due.
   After step 9 is sent, `next_followup_at` = step 9's `sent_at` + 7 days, the **close time**: if nothing stopped the
-  sequence by then, `nextStage(stage, "sequence_done")` → `lost`, `lost_reason` "sequence_done", `next_followup_at`
-  NULL.
+  sequence by then, `applyStageEvent(DB, place_id, "sequence_done", now, {lost_reason: "sequence_done"})` → `lost`,
+  `next_followup_at` NULL.
 
 Worked example (the test uses it): first email Thu 22 Oct 2026 09:15 BST (08:15Z). Follow-ups: Fri 23 Oct 08:15Z,
 Sat 24 Oct 08:15Z, Mon 26 Oct 09:15Z (now GMT), Thu 29 Oct 09:15Z, Mon 2 Nov 09:15Z (Sun → Mon), Mon 9 Nov 09:15Z,
@@ -125,8 +128,8 @@ in order, space-separated. Author `system`, kind `followup`, `step` 1–9.
 
 **Capacity and priority:** the daily cap counts first emails and follow-ups (`sentToday`). The composer reserves room
 on every future follow-up day (A2), so the cap is normally never hit. If it is (cap lowered, mailbox paused, sends
-failed), **follow-ups go before first emails**; a follow-up that can't go today stays queued and goes first in the next
-window. It is never skipped, and the next step is only scheduled after it has gone, so later steps shift with it.
+failed), **follow-ups go before first emails** (stage 0's `dispatchDue` orders `followup` before `first`, then by
+`due_at`); a follow-up that can't go today stays queued and goes first in the next window. It is never skipped, and the next step is only scheduled after it has gone, so later steps shift with it.
 
 **Templates gate:** no follow-up is queued until all 9 `followup_templates` rows are `approved`. Waiting follow-ups
 then go one step at a time from the next tick (no catch-up bursts).
@@ -291,7 +294,9 @@ All the best.
   mailbox (threading). The Follow-ups light goes red after 24 h overdue.
 - **Follow-up send fails** (not a bounce): retried at the next day's window start, up to 3 attempts for one step;
   after the 3rd failure the sequence stops and a `health` todo says "Follow-ups to `<business>` keep failing:
-  `<error>`. Check the mailbox on Setup."
+  `<error>`. Check the mailbox on Setup." **Exception:** a send that failed with stage 0's "The send was interrupted…"
+  error may already have gone, so it is never retried: the sequence stops at once and the same todo
+  (`health:followup-fail:<place_id>`) shows that error, which tells Nik to check the Sent folder.
 - **Demo unavailable** when a follow-up is due: it waits; `health` todo "Follow-ups to `<business>` are on hold: their
   demo isn't available (`<reason>`)." Closed when it goes.
 - **Template edited mid-sequence:** the next follow-up uses the new wording once it's approved again.
@@ -306,10 +311,11 @@ All the best.
 | `health` | Follow-ups to `<business>` keep failing: `<error>` | `health:followup-fail:<place_id>` | a follow-up to them is sent, or the lead closes |
 | `health` | Follow-ups to `<business>` are on hold: their demo isn't available | `health:followup-demo:<place_id>` | the follow-up is queued |
 
-Health light **Follow-ups** (`followupHealth`): **red** if any follow-up is more than 24 h overdue (queued `due_at`, or
-`next_followup_at` with templates approved) · **amber** if templates aren't all approved while leads are waiting ·
-**green** otherwise. Detail in plain English, e.g. "3 follow-ups are a day late: mailbox nik@aetoswebsites.com is
-paused."
+Health light **Follow-ups** (`followupHealth`, shape `{name: "followups", level, detail, fix}`, registered with stage
+0's `registerLight`): **red** if any follow-up is more than 24 h overdue (queued `due_at`, or `next_followup_at` with
+templates approved) · **amber** if templates aren't all approved while leads are waiting · **green** otherwise.
+Detail in plain English, e.g. "3 follow-ups are a day late: mailbox nik@aetoswebsites.com is paused."; `fix` says what
+to do ("Open Setup → Mailboxes and fix the paused mailbox." / "Approve them on the Voice page."; empty when green).
 
 ## A11. Perfect when
 
@@ -326,7 +332,7 @@ paused."
 4. Capacity test: one mailbox with `cap_override` 10, Nik sends whenever `roomForFirsts` says ≥ 1 for 70 days: no UK
    day ever has more than 10 cold sends, and over days 61–70 the average is between 0.8 and 1.2 new businesses a day.
    With the cap cut to 5 mid-run, follow-ups go before first emails and none is skipped.
-5. Every composer check in A3 returns its exact message (`composer.test.mjs`), and Send is refused with 400 for each.
+5. Every composer check in A3 returns its exact message (`first-email.test.mjs`), and Send is refused with 400 for each.
 6. Follow-ups are not queued while any template is a draft; the `setup:followups` todo exists and closes when the 9th
    is approved.
 7. The `style_examples` row appears only after the first email's status is `sent`, never on queue.

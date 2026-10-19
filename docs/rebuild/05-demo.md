@@ -15,7 +15,8 @@ its template look is approved.
 
 ## Trigger
 
-- **Main:** stage 2 stores research for a lead, then calls `ensureDemo(DB, place_id)`.
+- **Main:** stage 2's research route (`POST /api/agent/research/:place_id`, `api/agent/research/[id].js`) calls
+  `ensureDemo(DB, place_id, now)` right after `saveResearch`. This stage wires that call (Task 8).
 - **Safety net:** the tick step `hot` (every 5 minutes) makes up to 3 missing demos per run for eligible leads (covers
   the leads graded before this stage shipped, a failed call in stage 2, and expired demos of leads not yet emailed).
 - **Views:** the prospect's browser calls the beacon `POST /d/<slug>/e` after 4 seconds on the page.
@@ -47,11 +48,13 @@ its template look is approved.
 On success it:
 1. Reuses the lead's latest demo if it hasn't expired; otherwise inserts a new `demos` row with `slugFor(name)`
    (e.g. `green-leaf-landscapes-7k2p9q`), `created_at = now`, `expires_at = now + 180 days`.
-2. Inserts the `prospects` row if none exists: `stage = nextStage(null, "demo_ready")` (= `ready`), `email` =
+2. Inserts the `prospects` row if none exists, through stage 0's
+   `applyStageEvent(DB, place_id, "demo_ready", now, {email, greet_name})` (stage `ready`): `email` =
    `research.best_email` lower-cased, `greet_name` = `research.owner.first` only when `research.owner.confident` is
-   true (else NULL), `created_at = updated_at = stage_at = now`.
+   true (else NULL).
 3. If a `prospects` row already exists in stage `ready`, updates `email` and `greet_name` from the newest research
-   (re-research found a better address). Any later stage is never touched.
+   (re-research found a better address; one UPDATE `WHERE stage = 'ready'`, no stage change). Any later stage is
+   never touched.
 4. If the lead's template look isn't approved, adds the `setup` todo "Approve the <Label> look on the Demo page"
    (dedupe `setup:demo-template:<id>:v<version>`).
 
@@ -86,12 +89,15 @@ One long page, top to bottom:
 8. **Guarantee strip** (demo mode only, Aetos look, addressed to the owner): label "For <name>, from Aetos Websites",
    **"Top 3 in Google search results in 90 days. GUARANTEED."**, then "The guarantee: we will work for FREE if you
    aren't in the top 3 of Google results within 90 days.", then the offer line, then the "Order this site" button.
+   Both guarantee lines are `GUARANTEE.headline` and `GUARANTEE.section` from `_lib/offer.js`.
    Offer line: weekdays "First 60 days of the monthly plan free. No contract."; Sat–Sun UK "Weekend deal: first 90
-   days of the monthly plan free. No contract." (from `offer.js`; no prices on the demo, they're on the order page).
+   days of the monthly plan free. No contract." (from `offerFor(now)` in `offer.js`; no prices on the demo, they're
+   on the order page).
 9. **About:** "About <name>": `copy.about`. Hidden when empty.
 10. **Contact:** heading "Ask for a quote"; name, phone, message fields and a button inside a **disabled** fieldset;
     note above it: "Preview only: on your live site, this form sends enquiries straight to your phone and inbox."
-11. **Footer:** "© <year> <name> · <town>" and, in demo mode, "Preview by Aetos Websites".
+11. **Footer:** "© <year> <name> · <town>" and, in demo mode, "Preview by Aetos Websites" plus the link
+    "How we use your information" → `https://aetoswebsites.com/privacy` (the privacy notice at first contact, Q-N).
 12. **Mobile call bar:** fixed at the bottom under 900 px wide when a phone exists: "Call <name>".
 
 Order of sections per template: landscaper puts **Recent work** straight after the hero (landscaping sells on photos);
@@ -163,19 +169,22 @@ generic follows the list above.
   cookie; the demo has expired; or the prospect is still in stage `ready` (no email sent yet, so it can only be Nik or
   a leak).
 - Views are de-duplicated per demo: one per **30 minutes**.
-- A counted view inserts `demo_events (kind 'view')`, adds 1 to `prospects.views`, sets `last_view_at`, and applies
-  `nextStage(stage, "demo_view")` (emailed → viewed).
+- A counted view inserts `demo_events (kind 'view')`, adds 1 to `prospects.views`, sets `last_view_at`, and calls
+  stage 0's `applyStageEvent(DB, place_id, "demo_view", now)` (emailed → viewed).
 
 ### 9. Hot leads (tick step `hot`, position 5)
 
 - Hot = stage `emailed` or `viewed`, `last_inbound_at` is NULL, and (`views ≥ 2` or `last_view_at` within the last
-  24 hours).
+  24 hours). There is one `isHot(prospect, now)` for the whole app, in stage 3's `_lib/shortlist.js`, with this rule;
+  this stage imports it.
 - For each hot prospect (max 3 per run, most recent view first) a `hot` todo: title
   "Call now: <name> opened their site <N> times" ("once" when N = 1), detail
   "Last opened <Tue 14:05>. Phone: <phone>. No reply yet." ("No phone number on file." when missing), link
   `/#/lead/<place_id>`, `due_at` now, dedupe `hot:<place_id>:<UK date>`. One per lead per UK day; the title is
   updated as N grows; yesterday's open one is closed when today's is added.
 - Closed automatically (status `done`) as soon as the prospect has `last_inbound_at` or leaves `emailed`/`viewed`.
+  Only todos whose dedupe starts `hot:<place_id>:` are closed this way (stage 9's payment-page todos use
+  `checkout:<place_id>` and are never touched).
 
 ### 10. Live mode (used by stage 10)
 
@@ -204,7 +213,8 @@ the home page.
 
 ## What Nik sees in the Control Room
 
-**Demo page** (`#/demo`, nav group "Sell", label "Demo"):
+**Demo page** (route `#/demo`, no nav item: reached from the "Approve the … look" todo and the lead drawer's
+"Demo page" link):
 - **Looks** card per template ("Landscaper look", "Everything else look"):
   - Not approved: badge "Needs your OK", text "<N> leads are waiting for this look before their first email can go."
     Three phone-sized previews (390 px wide, scrollable, each titled with the lead's name and town, sandboxed so
@@ -216,9 +226,11 @@ the home page.
   last viewed, then newest. Empty: "No demo sites yet. One is made automatically when Claude grades a lead A+, A or
   B and finds an email."
 
-**Lead drawer:** a "Demo site" card:
+**Lead drawer:** a "Demo site" card, mounted into stage 3's empty `<div id="d-demo"></div>`:
 - Ready: link text `aetoswebsites.com/d/<slug>`, badge "Viewed 3× · last Tue 14:05" or "Not viewed yet",
-  "Ends 17 Apr 2027", buttons **"Open demo"** (new tab) and **"Copy link"**.
+  "Ends 17 Apr 2027", buttons **"Open demo"** (new tab) and **"Copy link"** (copies the full
+  `https://aetoswebsites.com/d/<slug>`). "Open demo" here and on the Demo page links to the relative `/d/<slug>` on
+  the Control Room host, so Nik's login cookie is sent and his own views never count.
 - Not ready: "No demo: <reason>" (e.g. "No demo: Grade C: only A+, A and B get a demo").
 - Waiting for approval: "Demo made · waiting for you to approve the Landscaper look" with a link to the Demo page.
 
@@ -301,8 +313,11 @@ demos and raises hot todos. The Control Room gets a Demo page and a demo card in
 - Demo link base `DEMO_BASE = "https://aetoswebsites.com"`.
 - Contrast minimum 4.5:1 against `#ffffff`; fallback `CHARCOAL = "#1a1c20"`; landscaper default `#2f6b3a`.
 - HTML < 100,000 bytes; max 6 photos, 8 services, 12 areas, 3 reviews.
-- The `hot` tick step runs every 5 minutes and issues at most 20 D1 statements per run (free plan: 50 per invocation,
-  shared with every tick step).
+- The `hot` tick step runs every 5 minutes and issues at most 25 D1 statements per run (free plan: 50 per invocation,
+  shared with every tick step). Stage 0's `runTick` gives each step `ctx.budget`; when it reports fewer than 25
+  queries left, `hotStep` skips the missing-demo part (the only optional part) and says so in its summary.
+- Every prospect stage change goes through stage 0's `applyStageEvent` (`_lib/prospects.js`), never a direct
+  `nextStage` write.
 - All times written by this stage use `now()` format `YYYY-MM-DDTHH:MM:SSZ` so string comparison works.
 - Commit trailer (append to every commit): `TRAILER=$'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_017h4iwgwaGCvQ5f9mmF4rDY'`,
   used as `git commit -m "<message>" -m "$TRAILER"`.
@@ -319,7 +334,7 @@ demos and raises hot todos. The Control Room gets a Demo page and a demo card in
 4. **A changed template going out unapproved** — Task 7 hash-lock test and Task 9 test "approval of version 1 doesn't
    approve version 2".
 5. **Tick budget blow-up** when many leads need demos or are hot at once — Task 12 test "50 eligible + 20 hot leads
-   use at most 20 statements in one run".
+   use at most 25 statements in one run".
 
 ---
 
@@ -416,13 +431,11 @@ the review's own number (never defaulted).
 Test `control-room/tests/demo-data.test.mjs`.
 
 **Interfaces:**
-Consumes: Task 2 helpers, Task 3 `pickColour`, `offerNow(now)` from `_lib/offer.js` (see Cross-stage), `isWeekendUK`
-from `_lib/ukTime.js`.
+Consumes: Task 2 helpers, Task 3 `pickColour`, `offerFor(date)` and `GUARANTEE` (`{headline, section}`) from stage
+0's `_lib/offer.js` (see Cross-stage), `isWeekendUK` from `_lib/ukTime.js`. No local guarantee constant.
 Produces (pure):
 ```js
 templateIdFor(trade) → "landscaper" | "generic"     // /landscap|garden|lawn|turf|paving|patio|fenc/i → landscaper
-GUARANTEE = { headline: "Top 3 in Google search results in 90 days. GUARANTEED.",
-              detail: "The guarantee: we will work for FREE if you aren't in the top 3 of Google results within 90 days." }
 buildDemoData({ lead, research, demo = null, offer, now = new Date(), live = null }) → DemoData
 // DemoData (exact):
 {
@@ -432,8 +445,8 @@ buildDemoData({ lead, research, demo = null, offer, now = new Date(), live = nul
   reviews: [{ author, rating, text }],          // 0–3, rating ≥ 4
   rating: number | null, review_count: number | null,
   copy: { headline, intro, about },             // headline never empty; intro/about "" when missing
-  guarantee: GUARANTEE,
-  offer: { weekend: boolean, free_days: 60 | 90 },
+  guarantee: GUARANTEE,                         // imported from offer.js: { headline, section }
+  offer: { weekend: boolean, free_days: 60 | 90 },   // from offerFor(now): weekend, full.freeDays
   demo: { slug, order_url: "/d/<slug>/order", count_views: boolean } | null,   // null in live mode
   live: { form_action, canonical_url } | null                                    // stage 10
 }
@@ -456,6 +469,8 @@ text) or null.
   assert.ok(d.reviews.every((r) => r.rating >= 4) && d.reviews.length <= 3);
   assert.equal(d.reviews[0].author, "Sarah K.");
   assert.equal(d.offer.free_days, 60);
+  assert.equal(d.guarantee, GUARANTEE);                       // the one from ../functions/_lib/offer.js
+  assert.equal(buildDemoData({ lead: LEADS.full, research: LEADS.full.research, demo: DEMO, offer: offerFor(new Date("2026-10-24T10:00:00Z")) }).offer.free_days, 90);   // Saturday
   const bare = buildDemoData({ lead: LEADS.bare, research: null, offer: { weekend: true, full: { freeDays: 90 } }, now: new Date("2026-10-24T10:00:00Z"), demo: { slug: "x-abcdef" } });
   assert.deepEqual(bare.business.services, []);
   assert.equal(bare.copy.headline, bare.business.name);     // no copy.headline and no town → the business name
@@ -544,6 +559,7 @@ document.querySelectorAll("[data-ev]").forEach(function(a){a.addEventListener("c
 - [ ] **Step 1: Write the failing test** — using `LEADS`/`NASTY` from fixtures and `buildDemoData`:
   - `every fixture lead passes checkDemoHtml in demo mode`: for each of the 10 leads, `assert.deepEqual(checkDemoHtml(renderSite(d), d, { now }), [])`.
   - `demo mode shows the preview bar, guarantee and a disabled form`: `assert.match(html, /Preview made for <b>Green Leaf Landscapes<\/b> by Aetos Websites · Visits to this page are counted/)`, `/href="\/d\/green-leaf-landscapes-7k2p9q\/order"[^>]*>Order this site/`, `/Top 3 in Google search results in 90 days\. GUARANTEED\./`, `/The guarantee: we will work for FREE if you aren&#39;t in the top 3 of Google results within 90 days\./`, `/First 60 days of the monthly plan free\. No contract\./`, `/<fieldset disabled/`, `/Preview only: on your live site, this form sends enquiries straight to your phone and inbox\./`, `/href="tel:07969770905"/`.
+  - `demo footer links the privacy notice`: demo mode matches `/<a href="https:\/\/aetoswebsites\.com\/privacy"[^>]*>How we use your information<\/a>/`; live mode doesn't contain `How we use your information`.
   - `weekend offer line`: with `offer.weekend` true → `/Weekend deal: first 90 days of the monthly plan free\. No contract\./`.
   - `live mode has no Aetos bits`: `renderSite(d, { mode: "live" })` doesn't match `/Preview made|GUARANTEED|noindex|sendBeacon|Preview by Aetos/`; with `live.form_action = "https://forms.example/x"` the form is enabled and posts there.
   - `bare lead renders placeholder and hides empty sections`: matches `/Your services will go here/` and `/Preview placeholder: we&#39;ll fill this in with you/`; doesn't match `/What customers say|Areas we cover|About |Recent work|<img[^>]+Work by/`; contains the photo-free hero class `hero-plain`.
@@ -553,7 +569,8 @@ document.querySelectorAll("[data-ev]").forEach(function(a){a.addEventListener("c
   - `expired and not-found pages`: `renderExpired({ name: "Green Leaf Landscapes", contact_email: "nik@aetoswebsites.com" })` matches `/This preview has ended/`, `/The website we made for Green Leaf Landscapes is no longer on show\. Reply to our email and we&#39;ll switch it back on\./`, `/mailto:nik@aetoswebsites\.com/`; `renderNotFound()` matches `/This page doesn&#39;t exist\./`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/demo-render.test.mjs` → FAIL.
 - [ ] **Step 3: Implement `renderSite`, `renderExpired`, `renderNotFound` in `render.js` and `home` in
-  `templates/generic.js`** — section order generic: hero, services, guarantee strip, reviews, areas, about, recent
+  `templates/generic.js`** — the guarantee strip prints `data.guarantee.headline` and `data.guarantee.section`; the
+  demo-mode footer adds the "How we use your information" link to `https://aetoswebsites.com/privacy`; section order generic: hero, services, guarantee strip, reviews, areas, about, recent
   work, contact; photo-free hero = `class="hero hero-plain"` with a `repeating-linear-gradient` pattern in `--main`
   and an inline SVG icon; mobile-first CSS with one `@media (min-width: 900px)` block; logo/hero `<img>` use
   `onerror` to remove themselves.
@@ -594,13 +611,17 @@ mobile), services (cards with a leaf icon), areas, reviews, guarantee strip, abo
 
 ### Task 8: Making demos and prospects (`ensureDemo`)
 
-**Files:** Modify (rewrite) `control-room/functions/_lib/demo-db.js`; Modify `control-room/functions/api/outreach/enrol.js`
-(only if it still exists: call `ensureDemo(DB, l.place_id)`); Test `control-room/tests/demo-db.test.mjs`; Delete the
-old tests for `renderDemo`/`servicesFor`/14-day expiry/"Start outreach builds their demo" in
-`control-room/tests/demo.test.mjs` (keep the order-page test until stage 9).
+**Files:** Modify (rewrite) `control-room/functions/_lib/demo-db.js`; Modify
+`control-room/functions/api/agent/research/[id].js` (stage 2's route: call `ensureDemo(DB, placeId, now)` after
+`saveResearch`); Modify `control-room/functions/api/outreach/enrol.js` (only if it still exists: call
+`ensureDemo(DB, l.place_id)`); Test `control-room/tests/demo-db.test.mjs`, `control-room/tests/research-post.test.mjs`
+(add one test); Delete the old tests for `renderDemo`/`servicesFor`/14-day expiry/"Start outreach builds their demo"
+in `control-room/tests/demo.test.mjs` (keep the order-page test until stage 9).
 
 **Interfaces:**
-Consumes: `slugFor` (Task 2), `templateIdFor` (Task 4), `nextStage` (stages.js), `addTodo` (todo.js), `now` (util.js).
+Consumes: `slugFor` (Task 2), `templateIdFor` (Task 4), `applyStageEvent(DB, placeId, event, now, {email, greet_name})`
+(stage 0's `prospects.js`; the `{email, greet_name}` option inserts a new prospect row), `addTodo` (todo.js), `now`
+(util.js).
 Produces:
 ```js
 DEMO_DAYS = 180
@@ -609,9 +630,10 @@ demoLink(slug) → "https://aetoswebsites.com/d/<slug>"
 ensureDemo(DB, place_id, now = new Date()) → Promise<{ ok: boolean, reason: string, demo: {slug, place_id, created_at, expires_at} | null, created: boolean }>
 demoBySlug(DB, slug, now = new Date()) → Promise<{ demo, lead, research, prospect, expired: boolean, contact_email: string } | null>
 ```
-`ensureDemo` reads lead + research + latest demo + prospect + suppression in **one** SELECT, then writes with one
-`DB.batch` (insert demo, insert-or-ignore prospect / update ready prospect). On a slug primary-key clash it retries once
-with a new slug. `demoBySlug` returns null for slugs not matching `^[a-z0-9-]{3,60}$`; `expired` is
+`ensureDemo` reads lead + research + latest demo + prospect + suppression in **one** SELECT, then inserts the demo
+when needed (one statement; on a slug primary-key clash it retries once with a new slug), and then either creates the
+prospect with `applyStageEvent(DB, place_id, "demo_ready", now, {email, greet_name})` when none exists, or updates
+`email`/`greet_name` of a `ready` prospect with one UPDATE (`WHERE stage = 'ready'`, no stage change). `demoBySlug` returns null for slugs not matching `^[a-z0-9-]{3,60}$`; `expired` is
 `demo.expires_at <= now` unless `prospect.stage = 'won'`; `contact_email` is the address of `prospect.mailbox_id`'s
 mailbox, else "".
 

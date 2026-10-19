@@ -29,6 +29,9 @@ in [decisions.md](decisions.md); researched facts are in [research.md](research.
 checks passing; the next stage doesn't start until they do. The Todo board is built incrementally: every stage adds
 its own items to it (section 6), and file 11 adds the board page itself after stage 9.
 
+**Navigation owner:** once file 11 ships, it owns navigation and hash routing (`public/js/nav.js`: `NAV` and
+`routeFor`). Files 09 and 10 add their routes to `routeFor` (and `nav.test.mjs`), never to `PAGES` in `app.js`.
+
 ## 2. Architecture
 
 Nothing that already exists in Cloudflare or GitHub changes (Nik's rule: same keys, same database, same project).
@@ -51,15 +54,15 @@ Nothing that already exists in Cloudflare or GitHub changes (Nik's rule: same ke
  GitHub Actions (existing): scrape-leads.yml, map-rank.yml (Python engine in lead-manager/, writes D1 over the
  Cloudflare API with the existing secrets). NEW: deploy-relay.yml deploys mail-relay/ with wrangler.
 
- Claude Routines (Nik's subscription): research, reply, weekly-kpis, build, monthly-care. Prompts live in
- routines/*.md. They read and write only through /api/agent/* with a bearer token held as an environment
- network secret (research.md → Routines).
+ Claude Routines (Nik's subscription): aetos-research, aetos-reply, aetos-weekly-kpis, aetos-build,
+ aetos-monthly-care. Prompts live in routines/*.md. They read and write only through $CONTROL_ROOM_URL/api/agent/*
+ with a bearer token held as an environment network secret (research.md → Routines).
 ```
 
 Why this shape:
 - **One codebase for logic.** All business logic lives in Pages Functions (`control-room/functions/_lib/`). The
   relay Worker is ~60 lines and only exists because Pages can't run cron or receive email.
-- **No new Cloudflare keys for Nik to manage.** The relay Worker binds the existing D1 by `D1_DATABASE_ID` (already a
+- **No new Cloudflare keys for Nik to manage** (one exception: the client chatbot's Workers AI token, §10). The relay Worker binds the existing D1 by `D1_DATABASE_ID` (already a
   GitHub secret) and is deployed by GitHub Actions with the existing `CLOUDFLARE_API_TOKEN`. If that token lacks
   "Workers Scripts: Edit" and "Email Routing Rules: Edit", the deploy fails with a plain message telling Nik to add
   those two permissions to the same token (one-time).
@@ -70,7 +73,9 @@ Why this shape:
   key `tick:lock`, 50 s lease), and returns `{ran: false}` if another tick holds it. Calls more than once per 20 s
   return early. It never accepts input except `?reason=`.
 - **CPU:** Pages Functions on the free plan get 10 ms CPU per request. Each tick does a bounded amount of work
-  (at most 2 SMTP sends, 10 inbound mails, 3 Routine fires). Stage 0 measures SMTP CPU on the live deploy; if it
+  (at most 2 SMTP sends, 10 inbound mails, 3 Routine fires) and at most 50 D1 queries: `runTick` counts them, gives
+  each step `ctx.budget`, never starts a step with fewer than 10 left (it reports `"deferred"`) and always keeps 6
+  for `health`; `inbound` stops at 30. Stage 0 measures SMTP CPU on the live deploy; if it
   doesn't fit, Nik decides on the $5/month plan (decisions.md). Nothing else in the design changes either way.
 
 ## 3. Folder layout
@@ -87,18 +92,21 @@ control-room/
       util.js                db(), json(), bad(), now(), parseJson() (kept)
       ukTime.js              UK-time helpers (pure)
       settings.js            getSetting/setSetting/getSecret/setSecret (db)
-      health.js              health lights (pure) + healthFromDb (db)
+      health.js              computeLights (pure) + registerLight + healthFromDb (db)
       tick.js                runTick(env, reason) (db)
       routines.js            fireRoutine(DB, name, text) (db + fetch)
-      agentAuth.js           requireAgent(request, DB) (db)
+      agentAuth.js           requireAgent(request, env, DB) (db)
+      offer.js               prices, packages, guarantee wording (pure; owned by stage 0, later stages only add exports)
       mail/
         vendor/worker-mailer.js   vendored worker-mailer 1.3.0 (MIT), header kept
         smtp.js              sendViaSmtp(mailbox, password, message) (sockets)
         compose.js           composeEmail(...) (pure)
-        capacity.js          dailyCap(mailbox, date) etc. (pure)
+        capacity.js          rampCap/mailboxCap/pickMailbox (pure)
         inbound.js           parseHeaders/classifyInbound (pure)
-        outbox.js            queueMessage/dispatchDue (db)
+        inbound-db.js        processInbound (db; the tick's inbound step)
+        outbox.js            queueMessage/dispatchDue/sentToday (db)
       stages.js              prospect stage machine (pure)
+      prospects.js           applyStageEvent, suppress, isSuppressed (db)
       grade.js               gradeFrom(points) (pure)
       followups.js           follow-up schedule + stop rules (pure) + db helpers
       calls.js               nextFreeSlots(...) (pure)
@@ -108,8 +116,9 @@ control-room/
       todo.js                todo items (db) + board grouping (pure)
     api/ ...                 one file per route (see each stage)
     d/[slug]/ ...            demo site, order page, view beacon, checkout
-  public/                    index.html, login.html, style.css, js/<page>.js (one file per page), js/lib.js
-  tests/                     node --test files; tests/helpers/fakeD1.mjs shared
+  public/                    index.html, login.html, style.css, js/<page>.js (one file per page), js/lib.js,
+                             js/nav.js (NAV + routeFor; file 11 owns it)
+  tests/                     node --test files; tests/helpers/fakeD1.mjs shared ({prepare, batch, exec, raw})
 lead-manager/                Python engine (kept, extended for grade inputs)
 mail-relay/                  NEW Worker: src/index.js, wrangler.toml
 routines/                    NEW: one prompt file per Claude Routine + README (how to create each one)
@@ -168,7 +177,7 @@ CREATE TABLE IF NOT EXISTS prospects (
   views           INTEGER NOT NULL DEFAULT 0,
   last_view_at    TEXT,
   last_inbound_at TEXT,
-  lost_reason     TEXT,
+  lost_reason     TEXT,                   -- opt_out | bounce | sequence_done | not_now | not_interested | call
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL
 );
@@ -215,6 +224,7 @@ CREATE TABLE IF NOT EXISTS messages (
   class        TEXT,                      -- inbound only: bounce | auto | opt_out | human
   needs_reply  INTEGER NOT NULL DEFAULT 0,-- inbound human mail waiting for Claude
   handled_at   TEXT,                      -- when Claude replied or escalated
+  intent       TEXT,                      -- inbound only: what they meant, set by the reply Routine (stage 7)
   created_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS messages_place ON messages (place_id, created_at);
@@ -261,6 +271,7 @@ CREATE TABLE IF NOT EXISTS calls (
   slot_at    TEXT NOT NULL,               -- ISO time of the slot (UK 11:00 → UTC)
   status     TEXT NOT NULL,               -- offered | confirmed | done | no_show | cancelled
   phone      TEXT,
+  note       TEXT NOT NULL DEFAULT '',    -- what was said / agreed (stage 8)
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -327,24 +338,69 @@ CREATE TABLE IF NOT EXISTS onboarding (
 
 `clients` gains nothing; the stage files that need client-level state use `onboarding` and `todos`.
 
+Stage 0 creates every table above with all its columns, so no stage ever needs an `ALTER TABLE`. The schema test
+asserts `len(stmts) >= 52` (not an exact count); each later stage adds its tables to `test_rebuild_tables_present`.
+
+### Tables added by later stages
+
+Exact columns are in the owning file's task.
+
+| Table | Added by | Purpose |
+| --- | --- | --- |
+| `stripe_events` | 08 (stage 9) | Every Stripe webhook event seen, and what the handler did (dedupe + audit) |
+| `client_sites` | 09 (stage 10) | One website per client, served by hostname from the same Pages project |
+| `site_leads` | 09 (stage 10) | Enquiries from client sites (contact form and chat) |
+| `chat_usage` | 09 (stage 10) | Chat messages per site per UK day (limits, monthly report, health) |
+| `site_files` | 09 (stage 10) | Photos and logos copied into D1 so sites never hot-link their old host |
+| `rate_hits` | 09 (stage 10) | Per-visitor counters for chat and contact-form limits; pruned after 48 h |
+| `care` | 10 (stage 11) | One row per paying client once live: target keyword, Google access date (day 0), guarantee status |
+| `care_tasks` | 10 (stage 11) | Every planned piece of care work; becomes a `care` todo on its due day |
+| `care_scans` | 10 (stage 11) | Map Rank scans run for care (`scans.source = 'care'`) |
+| `care_reviews` | 10 (stage 11) | Review count and rating, checked weekly (Places API) |
+
 ## 5. Prospect stages
 
-One pure module, `control-room/functions/_lib/stages.js`, owns the pipeline. Every change of `prospects.stage` goes
-through `nextStage(current, event)`; anything not listed is a no-op (returns `current`).
+One pure module, `control-room/functions/_lib/stages.js`, owns the pipeline with `nextStage(current, event)`;
+anything not listed is a no-op (returns `current`). Every change of `prospects.stage` goes through stage 0's
+`applyStageEvent(DB, placeId, event, now, {lost_reason, email, greet_name} = {}) → {from, to}|null` in
+`_lib/prospects.js` (`email`/`greet_name` insert a new row); no stage writes `prospects.stage` directly.
 
-| Stage | Meaning | Entered on event |
+| Stage | Meaning |
+| --- | --- |
+| `ready` | Graded, has an email and a demo; not emailed yet |
+| `emailed` | Nik's first email sent; follow-ups running |
+| `viewed` | Opened their demo at least once, no reply yet |
+| `replied` | They wrote back; Claude is on it |
+| `needs_nik` | Escalated: angry, legal, unclear, or a time outside the slots |
+| `call_booked` | A slot is confirmed |
+| `won` | Paid |
+| `lost` | Said no, opted out, bounced, or sequence ended with no reply |
+
+"Open stages" = every stage except `won` and `lost`.
+
+| Event | From | To |
 | --- | --- | --- |
-| `ready` | Graded, has an email and a demo; not emailed yet | `demo_ready` |
-| `emailed` | Nik's first email sent; follow-ups running | `first_sent` |
-| `viewed` | Opened their demo at least once, no reply yet | `demo_view` (from `emailed`) |
-| `replied` | They wrote back; Claude is on it | `inbound_human` (from `emailed`, `viewed`, `call_booked`) |
-| `needs_nik` | Escalated: angry, legal, unclear, or a time outside the slots | `escalate` |
-| `call_booked` | A slot is confirmed | `call_confirmed` |
-| `won` | Paid | `paid` (from any open stage) |
-| `lost` | Said no, opted out, bounced, or sequence ended with no reply | `opt_out`, `bounce`, `said_no`, `sequence_done` |
+| `demo_ready` | none (new row) or `ready` | `ready` |
+| `first_sent` | `ready` | `emailed` |
+| `demo_view` | `emailed` | `viewed` |
+| `inbound_human` | `emailed`, `viewed`, `call_booked` | `replied` |
+| `reopen` | `lost` (only when `lost_reason` is `not_now`, `not_interested`, `sequence_done` or `call`; fired by stage 7's `onHumanInbound`) | `replied` |
+| `escalate` | open stages | `needs_nik` |
+| `nik_handled` | `needs_nik` | `replied` |
+| `call_confirmed` | open stages except `ready` | `call_booked` |
+| `call_cancelled` | `call_booked` (also used for a no-show) | `replied` |
+| `said_no`, `sequence_done` | open stages | `lost` |
+| `paid` | any stage (including `lost`) | `won` |
+| `opt_out`, `bounce` | any stage except `won` | `lost` |
 
-`hot` is not a stage: it is a flag computed for the board (views ≥ 2, or any view in the last 24 h, with no inbound
-reply). `opt_out` and `bounce` always win, from any stage, and also add the address to `suppression`.
+**`lost_reason` vocabulary:** `opt_out`, `bounce`, `sequence_done`, `not_now`, `not_interested`, `call` (said no on
+the call). `opt_out`, `bounce` and `sequence_done` set it to the event name; `said_no` carries `not_now`,
+`not_interested` or `call` from the reply Routine.
+
+`hot` is not a stage: it is a flag computed for the board by the one `isHot` in `_lib/shortlist.js` (stage `emailed`
+or `viewed`, and views ≥ 2 or any view in the last 24 h). `opt_out` and `bounce` also add the address to
+`suppression`. For a `won` prospect an `opt_out`-class email is handled as a human email (it goes to Nik), so a paying
+client is never made `lost` and their client mail is never cancelled.
 
 ## 6. Todo items (shared by all stages)
 
@@ -354,29 +410,37 @@ IGNORE on `dedupe`) and `closeTodos(DB, dedupe_prefix)`. Kinds used across stage
 | kind | Added by | Example title |
 | --- | --- | --- |
 | `setup` | Setup checks (stage 0) | "Add your mailbox password" |
-| `pick` | Shortlist (3) | "8 A-grade leads ready: you can send 3 first emails today" |
-| `hot` | Demo views (4/6) | "Call now: Green Leaf Landscapes opened their site 3 times" |
+| `pick` | Shortlist (3); Replies (7) with dedupe `checkback:<place_id>`, due +90 days | "8 A-grade leads ready: you can send 3 first emails today" / "Check back with Green Leaf Landscapes (they said not now on 20 Oct)" |
+| `hot` | Demo views (4/6) and the payment page (9) | "Call now: Green Leaf Landscapes opened their site 3 times" |
 | `escalation` | Replies (7) | "Angry reply from …: Claude's draft is ready" |
 | `call` | Calls (8) | "Call Mark (Diamond Kickboxing) Tue 11:00 · 07969…" |
 | `call_time` | Calls (8) | "Confirm a time with … by 6pm (they asked for Thu 3pm)" |
 | `payment` | Stripe (9) | "Card failed: …" |
 | `build` | Build (10) | "Approve …'s site (due live Fri)" |
 | `care` | Monthly care (11) | "Approve …'s monthly report" |
-| `health` | Health (0) | "Claude's research hasn't run for 2 days" |
+| `kpi` | Weekly KPIs (file 11), dedupe `kpi:<week>`, due Monday 08:00 UK | "This week's numbers and Claude's suggestions are ready" |
+| `health` | Health (0) and any stage | "Claude's research hasn't run for 2 days" |
+
+Dedupe rules: demo-view `hot` todos use `hot:<place_id>:…` (stage 4 closes only those); the payment page's `hot`
+todo uses `checkout:<place_id>`, so the demo step never closes it. `closeTodos` by prefix is only safe when no
+other key starts with that prefix; setup todos are closed by exact key. Links use `/#/…`.
 
 ## 7. Claude Routines
 
 Prompts live in `routines/<name>.md`; `routines/README.md` says, step by step, how Nik creates each one in the web UI
-(name, model, schedule/API trigger, environment with the network secret). Routines never commit or push. Each one
-starts with `POST /api/agent/heartbeat {routine}` and ends with the same call carrying `{ok, summary}`.
+(name `aetos-<name>`, model, schedule/API trigger, the shared "Aetos" environment with the network secret and the
+environment variable `CONTROL_ROOM_URL`). Every prompt starts with stage 0's preamble verbatim (it stops on "Test from
+the Control Room…", so Setup's Test fire never does real work) and calls only `$CONTROL_ROOM_URL/api/agent/*`.
+Routines never commit or push. Each one starts with `POST /api/agent/heartbeat {routine}` and ends with the same call
+carrying `{ok, summary}`.
 
 | Routine | Model | Trigger | Job |
 | --- | --- | --- | --- |
-| research | Sonnet | daily schedule 06:47 UK + API fire after each scrape | stage 2 |
-| reply | Sonnet | API fire per inbound human email; schedule 07:03 UK daily (overnight catch-up) | stages 7–8 |
-| weekly-kpis | Sonnet | schedule Sun 18:47 UK | KPI analysis |
-| build | Sonnet | API fire when an onboarding form is submitted | stage 10 |
-| monthly-care | Sonnet | schedule 1st of month 08:47 UK | stage 11 |
+| `aetos-research` | Sonnet | daily schedule 06:47 UK + API fire after each scrape | stage 2 |
+| `aetos-reply` | Sonnet | API fire per inbound human email; schedule 07:03 UK daily (overnight catch-up) | stages 7–8 |
+| `aetos-weekly-kpis` | Sonnet | schedule Sun 18:47 UK | KPI analysis |
+| `aetos-build` | Sonnet | API fire when an onboarding form is submitted | stage 10 |
+| `aetos-monthly-care` | Sonnet | schedule 1st of month 08:47 UK + API trigger | stage 11 |
 
 **API auth:** `/api/agent/*` requires `Authorization: Bearer <agent token>`. The token is generated on the Setup page
 (random 32 bytes, base64url), stored as `secret:agent_token`, shown once, and Nik pastes it into the Claude
@@ -386,8 +450,8 @@ environment as a network secret for the Control Room host. `requireAgent` also a
 **Firing:** `fireRoutine(DB, name, text)` reads `secret:routine:<name>:url` (the full `/fire` URL) and
 `secret:routine:<name>:token`, POSTs with the headers in research.md, logs a `routine_fires` row, and never retries
 automatically (no idempotency key). A failed fire turns that routine's health light red and adds a `health` todo.
-Payload text is short and factual (`"reply waiting: message <id>"`); the prompt tells Claude to act on
-`<routine-fire-payload>`.
+Payload text is short and factual (`"reply waiting: <n> message(s)"`, `"research queued: <n> leads"`); the prompt
+tells Claude to act on `<routine-fire-payload>`. The URL and token are pasted on **Setup → Claude**.
 
 ## 8. Shared interfaces (built in stage 0, used by every stage)
 
@@ -423,6 +487,17 @@ beat(DB, name, ok, detail = "") → Promise<void>                    // writes h
 // _lib/agentAuth.js
 requireAgent(request, env, DB) → Promise<Response|null>            // null = allowed; else a 401 Response
 
+// _lib/health.js. One light shape everywhere; grey = "not in use" and never adds a todo.
+Light = {name, level: "green"|"amber"|"red"|"grey", detail, fix}
+computeLights(facts, now) → Light[]                                 // pure, stage 0's 10 lights only
+registerLight(fn)                                                   // fn(DB, env, now) → Promise<Light>; later stages
+                                                                    // register theirs here, never edit computeLights
+healthFromDb(DB, env, now) → Promise<{lights: Light[], gaps}>       // lights = computeLights(...) ++ registered
+// Light names are unique and none is a prefix of another (the health todo dedupe is "health:<name>").
+
+// _lib/prospects.js (db)
+applyStageEvent(DB, placeId, event, now, {lost_reason?, email?, greet_name?} = {}) → Promise<{from, to}|null>
+
 // _lib/mail/compose.js (pure)
 makeMessageId(domain) → "<uuid@domain>"
 composeEmail({from: {name, address}, to, subject, body, messageId, inReplyTo?, references?}) → {headers, text}
@@ -435,27 +510,36 @@ pickMailbox(mailboxes, sentTodayById, ukToday) → mailbox|null   // most remain
 
 // _lib/mail/outbox.js (db)
 queueMessage(DB, msg) → Promise<id>                // msg matches the messages table; status 'queued'
-dispatchDue(DB, env, now, {limit = 2, send = sendViaSmtp}) → Promise<{sent, failed}>
+dispatchDue(DB, env, now, {limit = 2, send = sendViaSmtp, kinds = null}) → Promise<{sent, failed, held}>
+  // order: CASE kind WHEN 'followup' THEN 0 WHEN 'first' THEN 1 ELSE 2 END, due_at
+  // headers: the row's message_id / in_reply_to / refs when set; a message_id is generated only when null
+  // paused mailbox: holds first/followup only; reply and system still go
+  // suppression is checked for first/followup/reply only (client and system mail always go)
 sentToday(DB, now) → Promise<{[mailbox_id]: number}>   // counts kind first + followup only (cold sends)
 
 // _lib/tick.js
-STEPS: [{name, everyMinutes, run: async (ctx) => summaryString}]   // ctx = {DB, env, now}
-runTick(env, reason, now = new Date()) → Promise<{ran, steps: {[name]: string|error}}>
+STEPS: [{name, everyMinutes, run: async (ctx) => summaryString}]   // ctx = {DB, env, now, budget}
+runTick(env, reason, now = new Date()) → Promise<{ran, steps: {[name]: string|error|"deferred"}}>
 ```
 
-Tick step order (each stage appends its step at the position shown; a step that throws is logged in the result and
-the heartbeat detail, and the remaining steps still run):
+Tick step order, `everyMinutes` in brackets (each stage adds its step at the position shown, and stage 0's
+`tick.js` has a comment marker for every slot; a step that throws is logged in the result and the heartbeat detail,
+and the remaining steps still run):
 
-1. `inbound` (stage 0/7) — parse new `inbound_raw` rows into `messages`, classify, apply stops.
-2. `reply_fire` (stage 7) — fire the reply Routine for human mail waiting, inside reply hours.
-3. `followups` (stage 6) — queue follow-ups that are due.
-4. `send` (stage 0) — `dispatchDue` (respects caps and send windows).
-5. `hot` (stage 4/6) — hot-lead todos.
-6. `daily_find` (stage 1) — once a day from 06:00 UK, start the scrape if the pipeline is low.
-7. `stale_jobs` (stage 1) — mark scrape/scan jobs running > 45 min as failed.
-8. `calls` (stage 8) — expire unconfirmed offers, add call-day todos.
-9. `care` (stage 11) — monthly care checks.
-10. `health` (stage 0) — compute lights, add/close `health` todos, beat `tick`.
+1. `inbound` [0] (stage 0/7): parse new `inbound_raw` rows into `messages`, classify, apply stops.
+2. `reply_fire` [0] (stage 7): fire the reply Routine for human mail waiting, inside reply hours.
+3. `followups` [5] (stage 6): queue follow-ups that are due.
+4. `send` [0] (stage 0): `dispatchDue` (respects caps and send windows).
+5. `hot` [5] (stage 4/6): hot-lead todos.
+6. `pick` [30] (stage 3): the daily "leads ready to email" todo.
+7. `daily_find` [5] (stage 1): once a day from 06:00 UK, start the scrape if the pipeline is low.
+8. `stale_jobs` [15] (stage 1): mark scrape/scan jobs running > 45 min as failed (care scans excluded).
+9. `calls` [5] (stage 8): expire unconfirmed offers, add call-day todos.
+10. `sites` [5] (stage 10): client-site DNS checks, go-live, countdown warnings, chat-lead emails.
+11. `care` [10] (stage 11): monthly care checks.
+12. `purge` [monthly] (file 11): delete non-clients' `prospects`/`messages`/`research` rows with no message in 12
+    months (`suppression` is kept).
+13. `health` [0] (stage 0): compute lights, add/close `health` todos, beat `tick`.
 
 ## 9. Global rules (every stage)
 
@@ -469,11 +553,12 @@ the heartbeat detail, and the remaining steps still run):
   section "The guarantee: we will work for FREE if you aren't in the top 3 of Google results within 90 days."
 - **Offer and prices** come from one module (`_lib/offer.js`, pure): Website Only £1,750 one-off; Full Package
   £1,950 + £249/month with the first 60 days free; weekend (Sat–Sun UK time) £1,750 + 90 days free. Nothing else
-  hard-codes a price.
+  hard-codes a price. Stage 0 creates `offer.js` and its test; later stages only add exports, in new test files.
 - **Time:** all stored times are UTC ISO strings; every rule about days and hours uses UK time via `ukTime.js`.
 - **Email:** plain text only, one link at most in Nik's first email (the demo), no tracking pixels, no link
   shorteners. Every cold email ends with Nik's name, "Aetos Websites", and the line
-  `If you'd rather not hear from me, just reply "no thanks".`
+  `If you'd rather not hear from me, just reply "no thanks".` Every sign-off and footer takes Nik's name from the
+  `business:sender_name` setting.
 - **Errors shown to Nik** say what's wrong and how to fix it in plain English.
 - **Tests:** pure modules get unit tests; routes get tests against `tests/helpers/fakeD1.mjs` (node:sqlite).
   Python changes get pytest. Commands (all must pass before any push):
