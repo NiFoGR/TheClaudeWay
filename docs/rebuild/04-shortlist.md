@@ -21,9 +21,9 @@ overfilling the mailbox's daily cap.
 
 | Who | Does |
 | --- | --- |
-| System | Lists and filters leads; works out today's room for first emails; adds and updates the morning `pick` todo; hides leads Nik marks "Not a fit"; re-queues research on request. |
-| Claude | Nothing new here. Its stage 2 research (grade, angle, opener, owner, emails, site review) is what the page shows. "Research again" asks the research Routine to run. |
-| Nik | Opens Ready to email, reads the grade card and opener, presses **Write first email** (stage 6), or **Not a fit**. |
+| System | Lists and filters leads; works out today's room for first emails; adds and updates the morning `pick` todo; hides leads Nik marks "Not a fit". |
+| Claude | Nothing new here. Its stage 2 research (grade, angle, opener, owner, emails, site review) is what the page shows, through stage 2's research card. Stage 2's "Research is wrong" re-queues a lead and wakes the research Routine. |
+| Nik | Opens Ready to email, reads the research card and opener, presses **Write first email** (stage 6), or **Not a fit**. |
 
 ## Rules (exact)
 
@@ -68,11 +68,15 @@ search still narrow Ready. Stage, has-email, researched and excluded filters onl
 
 ```
 cap          = Σ mailboxCap(m, ukToday) over mailboxes with role 'cold'   (paused → 0)
-sent         = Σ sentToday(DB, now)                                       (first + followup, already sent today)
-followupsDue = followupsDueToday(DB, now)                                 (due by end of UK today, not yet sent)
-firstQueued  = messages with kind 'first' and status 'queued' or 'sending'
+sent         = Σ sentToday(DB, now)                                       (first + followup, sent today or 'sending')
+followupsDue = followupsDueToday(DB, now)                                 (due by end of UK today, still 'queued' or not queued yet)
+firstQueued  = messages with kind 'first' and status 'queued'             ('sending' ones are already in sent)
 room         = max(0, cap − sent − followupsDue − firstQueued)
 ```
+
+From stage 6, `room` is also capped by the composer's own rule (it reserves room on every future follow-up day):
+`room = min(the formula above, (await roomForFirsts(DB, now)).total)`. Stage 6 makes that change inside
+`capacityNow`, so the banner and the composer's Send button always agree. The banner text below is unchanged.
 
 Banner (first matching row wins; `{details}` = `"{cap} a day"` then, only when non-zero, `"{n} follow-up(s) already
 due"`, `"{n} already sent"`, `"{n} first email(s) waiting to go"`, joined with ", "):

@@ -394,7 +394,11 @@ Pages routes only wire requests to them.
 - Stripe key: `secret:stripe_key` (Setup) first, else `env.STRIPE_SECRET_KEY` (legacy); webhook secret
   `secret:stripe_webhook`, else the legacy `settings.stripe` JSON `.webhook.secret`. Never returned to the browser.
 - Checkout rate limit: 5 per slug per 60 minutes (`order_click` events).
-- All stored times UTC ISO; `paid_on`, `failed_on`, `cancelled_on` are UK dates via `ukDate()`.
+- All stored times UTC ISO via `util.now()`/`iso()` (no milliseconds); `paid_on`, `failed_on`, `cancelled_on` are
+  UK dates via `ukDate()`. In-app links use `/#/…`.
+- Every prospect stage change goes through stage 0's `applyStageEvent` (`_lib/prospects.js`); this stage never
+  edits `stages.js`.
+- Every client-email sign-off is the `business:sender_name` setting (else `Nik`), never a mailbox `display_name`.
 - Server HTML escapes every lead/Stripe string with the template engine's `h()`; no inline user HTML.
 - Emails plain text, kind `system`, author `system`, via `queueMessage` only.
 - `leads` table is never written by this stage.
@@ -405,7 +409,7 @@ Pages routes only wire requests to them.
 ## Review Focus
 
 1. **Weekend boundary and BST:** order page rendered Sunday 23:58, POST Monday 00:10 / 00:31 → owned by Task 1
-   (`checkoutWeekend` grace tests) and Task 5 (`seen=weekend` POST test).
+   (`checkoutWeekend` grace tests in `offer-order.test.mjs`) and Task 5 (`seen=weekend` POST test).
 2. **Stripe repeats and races:** `invoice.paid` before `checkout.session.completed`, thanks page and webhook both
    fulfilling, replayed event ids → one client, one build payment, one welcome email → Task 7
    (`fulfil twice` test) and Task 8 (`invoice first`, `replay` tests).
@@ -421,49 +425,53 @@ Pages routes only wire requests to them.
 
 ### Task 1: Offer module
 
-**Files:** Create `control-room/functions/_lib/offer.js` (or, if 07-replies-calls.md already created it, add the
-missing exports below without renaming existing ones). Modify `control-room/functions/_lib/money.js` (re-export
-`PACKAGES`, add `packages` to `summarise()`), `control-room/public/js/money.js` (use `summary.packages`, drop the
-"Payment links" card for the hint text). Test `control-room/tests/offer.test.mjs`, `control-room/tests/money.test.mjs`.
+**Files:** Modify `control-room/functions/_lib/offer.js` (stage 0 created it; do not create or overwrite it, and
+do not touch `tests/offer.test.mjs`). Modify `control-room/functions/_lib/money.js` (add `packages` to `summarise()`;
+stage 0 already re-exports `PACKAGES`), `control-room/public/js/money.js` (use `summary.packages`, drop the
+"Payment links" card for the hint text). Create `control-room/tests/offer-order.test.mjs`. Test also
+`control-room/tests/money.test.mjs`.
 **Interfaces:**
-Consumes `isWeekendUK(date)` from `_lib/ukTime.js`.
-Produces:
+Consumes from stage 0's `_lib/offer.js` (exact names; no renames, no second copy):
 ```js
 PACKAGES = { full: {label: "Full Package", build: 195000, monthly: 24900, freeDays: 60},
-             weekend: {label: "Full Package (weekend price)", build: 175000, monthly: 24900, freeDays: 90},
+             weekend: {label: "Weekend deal", build: 175000, wasBuild: 195000, monthly: 24900, freeDays: 90},
              website: {label: "Website Only", build: 175000, monthly: 0, freeDays: 0} }
-WEEKEND_BANNER, GUARANTEE_HEADLINE, GUARANTEE_SECTION, BUILD_GUARANTEE, NO_CONTRACT   // exact strings, Part A
-termsFor(pkg: "full"|"website", weekend: boolean) → {key: "full"|"weekend"|"website", label, build, monthly, freeDays}
-offerFor(date: Date) → {weekend: boolean, banner: string|null, full: Terms, website: Terms, wasBuild: 195000|null}
+MONTHLY_PENCE                         // = PACKAGES.full.monthly
+GUARANTEE = {headline, section}       // exact strings, overview §9
+BUILD_GUARANTEE                       // "Website live in 7 days, GUARANTEED."
+WEEKEND_BANNER, NO_CONTRACT           // exact strings, Part A
+termsFor(pkg: "full"|"website", weekend: boolean) → {key: "full"|"weekend"|"website", label, build, monthly, freeDays, wasBuild?}
+offerFor(date: Date) → {weekend: boolean, full: PACKAGES.full|PACKAGES.weekend, website: PACKAGES.website, banner: string|null}
 checkoutWeekend(now: Date, seenWeekend: boolean) → boolean
-pounds(pence: number) → "£1,950" (whole pounds) | "£1,950.50"
+formatPounds(pence: number) → "£1,950" (whole pounds) | "£249.50" | "-£249"
 ```
+Produces (added to `offer.js`): `BUILD_GUARANTEE_NOTE = "(clock starts when your onboarding form is complete)"`.
 
-- [ ] **Step 1: Write the failing test** — `offer.test.mjs`:
+- [ ] **Step 1: Write the failing test** — `offer-order.test.mjs` (the behaviour this stage relies on):
   - `offerFor weekday`: `offerFor(new Date("2026-10-19T10:00:00Z"))` → `weekend false`, `banner null`,
-    `full.build 195000`, `full.freeDays 60`, `full.monthly 24900`, `website.build 175000`, `wasBuild null`.
+    `full.build 195000`, `full.freeDays 60`, `full.monthly 24900`, `website.build 175000`, `full.wasBuild` undefined.
   - `offerFor weekend boundaries (BST change)`: `2026-10-23T22:59:00Z` false; `2026-10-23T23:00:00Z` true with
-    `banner === "Weekend price — ends Sunday midnight"`, `full.key "weekend"`, `full.build 175000`,
-    `full.freeDays 90`, `wasBuild 195000`; `2026-10-25T23:59:00Z` true; `2026-10-26T00:00:00Z` false.
+    `banner === "Weekend price — ends Sunday midnight"`, `full === PACKAGES.weekend`, `full.build 175000`,
+    `full.freeDays 90`, `full.wasBuild 195000`; `2026-10-25T23:59:00Z` true; `2026-10-26T00:00:00Z` false.
   - `checkoutWeekend grace`: `(2026-10-26T00:25Z, true)` true; `(2026-10-26T00:31Z, true)` false;
     `(2026-10-26T00:25Z, false)` false; `(2026-10-24T12:00Z, false)` true.
   - `termsFor`: `termsFor("full", true).key === "weekend"`; `termsFor("website", true).build === 175000`.
-  - `pounds`: `pounds(195000) === "£1,950"`, `pounds(24950) === "£249.50"`, `pounds(-24900) === "-£249"`.
-  - `exact wording`: `GUARANTEE_HEADLINE === "Top 3 in Google search results in 90 days. GUARANTEED."` and the other
-    four strings equal Part A.
+  - `formatPounds`: `formatPounds(195000) === "£1,950"`, `formatPounds(24950) === "£249.50"`,
+    `formatPounds(-24900) === "-£249"`.
+  - `exact wording`: `GUARANTEE.headline === "Top 3 in Google search results in 90 days. GUARANTEED."`,
+    `GUARANTEE.section`, `BUILD_GUARANTEE`, `BUILD_GUARANTEE_NOTE`, `WEEKEND_BANNER` and `NO_CONTRACT` equal Part A.
   - `money.test.mjs` add `summary carries packages`: `summarise({today: "2026-10-19"}).packages.full.build === 195000`.
-- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/offer.test.mjs control-room/tests/money.test.mjs`
-  → `Cannot find module '…/_lib/offer.js'`.
-- [ ] **Step 3: Implement `offerFor(date)` etc. in `_lib/offer.js`** — constants plus `isWeekendUK`; grace is:
-  ```js
-  checkoutWeekend = (now, seen) => isWeekendUK(now) || (seen && isWeekendUK(new Date(now.getTime() - 30 * 60000)));
-  ```
-  `money.js`: `export { PACKAGES } from "./offer.js"` (delete its own copy), `summarise` returns `packages: PACKAGES`.
+- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/offer-order.test.mjs control-room/tests/money.test.mjs`
+  → `BUILD_GUARANTEE_NOTE` is undefined and `packages` is missing. If any other export above is missing, stop:
+  stage 0's Task 6 isn't finished.
+- [ ] **Step 3: Add `BUILD_GUARANTEE_NOTE` to `_lib/offer.js`** (nothing else in that file changes).
+  `money.js`: `summarise` returns `packages: PACKAGES` (import from `./offer.js`; the re-export is stage 0's).
   `public/js/money.js`: replace the local `PACKAGES` with `state.money.summary.packages`, delete `linksCard` /
   `paymentLinks` and the `/api/stripe/setup` fetch, add the hint card text from Part A.
-- [ ] **Step 4: Run tests to verify they pass** — same command → PASS; `node --check control-room/public/js/money.js`.
-- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/offer.js control-room/functions/_lib/money.js control-room/public/js/money.js control-room/tests/offer.test.mjs control-room/tests/money.test.mjs`
-  `git commit -m "Order and pay: offer.js is the only source of prices and guarantee wording"`
+- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS (stage 0's
+  `offer.test.mjs` included); `node --check control-room/public/js/money.js`.
+- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/offer.js control-room/functions/_lib/money.js control-room/public/js/money.js control-room/tests/offer-order.test.mjs control-room/tests/money.test.mjs`
+  `git commit -m "Order and pay: build-guarantee note and server-side packages for Money"`
 
 ### Task 2: Stripe client helpers
 
@@ -485,13 +493,14 @@ keyId(key) → Promise<string>                                        // 16 hex 
 verifySignature(body, header, secret, nowSeconds) → Promise<boolean>   // kept
 webhookSecret(DB) → Promise<string|null>
 invoiceSubscription(inv) → string|null
-stripeLight({hasKey, webhookCurrent, beat}, now) → {name: "Payments (Stripe)", color: "grey"|"amber"|"red"|"green", text}
+stripeLight({hasKey, webhookCurrent, beat}, now) → {name: "payments", level: "grey"|"amber"|"red"|"green", detail, fix}
 // tests/helpers/fakeStripe.mjs
 fakeStripe(routes: {["METHOD path"]: object | ((params) => object) | {status, error}}) → {fetchImpl, calls: [{method, path, params, headers}]}
 ```
 Keep the JSON `getSetting`/`putSetting` exports in `stripe.js` unchanged while any file still imports them
 (`grep -rn "_lib/stripe.js" control-room/functions`); remove `setUpStripe`, `isCurrent`, `stripe(env…)` and update
-every remaining caller.
+every remaining caller. Later stages (10's `pauseFee`) call `stripeApi((await stripeKey(env, DB))?.key, …)` and test
+with `fakeStripe`.
 
 - [ ] **Step 1: Write the failing test** — `stripe.test.mjs`:
   - `stripeApi pins version and form-encodes`: with `fakeStripe({"POST checkout/sessions": {id: "cs_1"}})`,
@@ -505,8 +514,11 @@ every remaining caller.
   - `webhookSecret falls back to legacy`: no `secret:stripe_webhook`, settings `stripe` = `{"webhook":{"secret":"whsec_old"}}` → `"whsec_old"`.
   - `invoiceSubscription both shapes`: `{subscription: "sub_1"}` → `sub_1`;
     `{parent: {subscription_details: {subscription: "sub_2"}}}` → `sub_2`; `{}` → `null`.
-  - `stripeLight`: no key → grey `Not connected`; key, `webhookCurrent false` → amber `Press Connect Stripe on Setup`;
-    beat `{ok: 0, last_at: now-1h, detail: "x"}` → red `x`; beat `{ok: 0, last_at: now-25h}` → green `Working`.
+  - `stripeLight`: every result has `name "payments"` and the four keys `name, level, detail, fix`; no key →
+    `level "grey"`, `detail "Not connected"`; key, `webhookCurrent false` → `level "amber"`,
+    `fix "Press Connect Stripe on Setup"`; beat `{ok: 0, last_at: now-1h, detail: "x"}` → `level "red"`,
+    `detail "x"`; beat `{ok: 0, last_at: now-25h}` → `level "green"`, `detail "Working"` (texts as Part A's
+    Health light table).
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/stripe.test.mjs` → `stripeApi is not a function`.
 - [ ] **Step 3: Implement `stripeApi(key, method, path, params, fetchImpl)` in `_lib/stripe.js`** — the old
   `stripe()` body with the key and fetch passed in; 403 message is the "isn't allowed" text from Part A, network

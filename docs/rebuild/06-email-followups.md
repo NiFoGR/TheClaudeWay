@@ -373,10 +373,14 @@ messages, applies stops, closes finished sequences and queues due follow-ups. Tw
 - Follow-up days: `[1, 2, 4, 7, 10, 17, 24, 30, 60]`; close as `lost` 7 days after step 9 is sent.
 - First email: exactly one demo link, no other link, no "SEO", under 150 words, greeting added by the system.
 - Follow-up templates: ≤ 60 words after `{greeting}`, placeholders only `{greeting}`, `{business}`, `{demo_link}`.
-- Every prospect stage change goes through `nextStage` in `_lib/stages.js`.
+- Every prospect stage change goes through `applyStageEvent(DB, placeId, event, now, {lost_reason})` in
+  `_lib/prospects.js` (stage 0), never a direct `nextStage` write.
 - The `followups` tick step queues at most 3 follow-ups and handles at most 10 rows per other sub-step per run, and
   uses at most 18 D1 round trips (each `prepare().run/all/first`, `batch` and `queueMessage` counts one; writes in
-  `DB.batch`). 3 per 5-minute tick = 36 an hour, far above need, and leaves the tick's other steps room under D1's 50.
+  `DB.batch`). 3 per 5-minute tick = 36 an hour, far above need. The tick wraps `DB` in a counter and hands each step
+  `ctx.budget` (stage 0's `runTick`); `followupsStep` uses at most `min(18, ctx.budget)` and leaves the remaining
+  sub-steps for the next run when it's spent.
+- Sign-offs and cold footers use the `business:sender_name` setting (`getSetting`), never the mailbox `display_name`.
 - No tracking pixels, no link rewriting, no HTML part.
 - Stored times are UTC ISO strings without milliseconds (`2026-10-23T08:15:00Z`, same as `util.now()`).
 - Commit messages end with the two Co-Authored-By / Claude-Session lines from common rules.
@@ -397,10 +401,12 @@ messages, applies stops, closes finished sequences and queues due follow-ups. Tw
 
 ### Task 1: Follow-up schedule (pure)
 
-**Files:** Create `control-room/functions/_lib/followups.js`. Test `control-room/tests/followups.test.mjs`.
+**Files:** Modify `control-room/functions/_lib/followups.js` (created by stage 3's Task 3; keep `followupsDueToday`
+and its test `followups-due.test.mjs` unchanged). Test `control-room/tests/followups.test.mjs`.
 
 **Interfaces:**
-Consumes: `ukParts`, `ukDate`, `ukToUtc`, `addUkDays` from `_lib/ukTime.js`.
+Consumes: `ukParts`, `ukDate`, `ukToUtc`, `addUkDays` from `_lib/ukTime.js`; the existing `followupsDueToday(DB, now)
+→ Promise<number>` stays as stage 3 wrote it.
 Produces:
 `FOLLOWUP_DAYS = [1, 2, 4, 7, 10, 17, 24, 30, 60]`;
 `COLD_WINDOW = {start: "07:00", end: "19:00", days: [1, 2, 3, 4, 5, 6]}`;
@@ -430,12 +436,12 @@ test("nextDue never puts two follow-ups on one UK day", () => {
 test("nextDue moves past a slipped previous step", () =>
   assert.equal(nextDue("2026-10-22T08:15:00Z", 2, "2026-10-24T08:20:00Z").toISOString(), "2026-10-26T09:15:00.000Z"));
 ```
-- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/followups.test.mjs` → fails: cannot find module `followups.js`.
+- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/followups.test.mjs` → fails: `followups.js` does not provide an export named `schedule`.
 - [ ] **Step 3: Implement `schedule` and `nextDue` in `_lib/followups.js`** — `schedule`: UK date of `firstSentAt` +
   `FOLLOWUP_DAYS[step-1]` via `addUkDays`, clamped UK "HH:MM", +1 day if that UK date is a Sunday, `ukToUtc`.
   `nextDue`: `schedule(...)`; if its UK date ≤ UK date of `lastSentAt`, use the UK day after `lastSentAt` (Sunday → +1)
   at the same clamped time.
-- [ ] **Step 4: Run tests to verify they pass** — same command → PASS.
+- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/followups.test.mjs control-room/tests/followups-due.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/followups.js control-room/tests/followups.test.mjs` +
   `git commit -m "Follow-up schedule in UK time (days 1-60, Sunday to Monday, no doubles)"`.
 
@@ -606,10 +612,12 @@ test("render + strip footer", () => {
 
 ### Task 6: Templates and capacity from the database
 
-**Files:** Modify `control-room/functions/_lib/followups.js`. Test `control-room/tests/followups-db.test.mjs`.
+**Files:** Modify `control-room/functions/_lib/followups.js`, `control-room/functions/_lib/shortlist-db.js` (stage 3's
+`capacityNow`). Test `control-room/tests/followups-db.test.mjs`.
 
 **Interfaces:**
-Consumes: `fakeD1()` from `tests/helpers/fakeD1.mjs`; `mailboxCap`; `addTodo`, `closeTodos`; Task 2 functions.
+Consumes: `fakeD1()` from `tests/helpers/fakeD1.mjs`; `mailboxCap`; `addTodo`, `closeTodos`; Task 2 functions;
+stage 3's `capacityNow(DB, now)` and seed helpers (`tests/helpers/shortlistSeed.mjs`).
 Produces:
 `ensureTemplates(DB) → Promise<void>` (INSERT OR IGNORE the 9 `DRAFTS` with `day_offset` from `FOLLOWUP_DAYS`, status `draft`);
 `followupsApproved(DB) → Promise<{approved: number, all: boolean}>`;
@@ -618,8 +626,11 @@ sequences: prospects in `emailed`/`viewed` with `followup_step < 9` and `next_fo
 first email projected as `{first_at: due_at, step_done: 0, next_at: null}`);
 `roomForFirsts(DB, now) → Promise<{day, total, byMailbox: {[id]: {room, fullDay}}}>` (day = UK day of the next send:
 today inside the window, else the next window start);
-`followupsDueToday(DB, now) → Promise<{total, byMailbox: {[id]: number}}>` (queued follow-ups due by end of UK today +
-pending `next_followup_at` by end of today with `followup_step < 9`).
+`followupsDueByMailbox(DB, now) → Promise<{total, byMailbox: {[id]: number}}>` (queued follow-ups due by end of UK
+today + pending `next_followup_at` by end of today with `followup_step < 9`; stage 3's `followupsDueToday` is left as
+it is);
+modified stage 3 `capacityNow(DB, now)`: `room = min(<stage 3's formula>, (await roomForFirsts(DB, now)).total)`, so
+the Leads banner never offers more first emails than Send allows (the banner text itself is unchanged).
 
 - [ ] **Step 1: Write the failing test**
 ```js
@@ -631,13 +642,14 @@ test("ensureTemplates seeds 9 drafts once", async () => {
   assert.ok(rows.every((r) => r.status === "draft"));
   assert.deepEqual(await followupsApproved(DB), { approved: 0, all: false });
 });
-test("roomForFirsts and followupsDueToday", async () => {
+test("roomForFirsts and followupsDueByMailbox", async () => {
   const DB = fakeD1();
   await insertMailbox(DB, { id: "m1", cap_override: 10 });              // test helper in this file
   await insertProspect(DB, { place_id: "p1", stage: "emailed", mailbox_id: "m1", first_sent_at: "2026-10-21T08:00:00Z",
     followup_step: 0, next_followup_at: "2026-10-22T08:00:00Z" });
   const now = new Date("2026-10-22T10:00:00Z");
-  assert.deepEqual(await followupsDueToday(DB, now), { total: 1, byMailbox: { m1: 1 } });
+  assert.deepEqual(await followupsDueByMailbox(DB, now), { total: 1, byMailbox: { m1: 1 } });
+  assert.equal(await followupsDueToday(DB, now), 1);                    // stage 3's number is unchanged
   const r = await roomForFirsts(DB, now);
   assert.equal(r.day, "2026-10-22");
   assert.equal(r.byMailbox.m1.room, 9);
@@ -647,19 +659,30 @@ test("outside the window the day is the next window start", async () => {
   const DB = fakeD1(); await insertMailbox(DB, { id: "m1", cap_override: 10 });
   assert.equal((await roomForFirsts(DB, new Date("2026-10-24T19:30:00Z"))).day, "2026-10-26"); // Sat 20:30 BST → Mon
 });
+test("capacityNow never offers more than roomForFirsts", async () => {
+  const DB = fakeD1(); await insertMailbox(DB, { id: "m1", cap_override: 10 });
+  for (let i = 0; i < 10; i++)                                           // Mon firsts, steps 1–2 sent, step 3 due Fri
+    await insertProspect(DB, { place_id: `p${i}`, stage: "emailed", mailbox_id: "m1", first_sent_at: "2026-10-19T08:00:00Z",
+      followup_step: 2, next_followup_at: "2026-10-23T08:00:00Z" });
+  const now = new Date("2026-10-22T10:00:00Z");                         // Thu: nothing due today, Friday is full
+  assert.equal((await roomForFirsts(DB, now)).total, 0);
+  assert.equal((await capacityNow(DB, now)).room, 0);                    // stage 3's formula alone would say 10
+});
 ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/followups-db.test.mjs` → `ensureTemplates is not a function`.
-- [ ] **Step 3: Implement the five functions** (two SELECTs for `planningRows`, then the pure Task 2 functions).
-- [ ] **Step 4: Run tests to verify they pass** — → PASS.
-- [ ] **Step 5: Commit** — `git add …followups.js control-room/tests/followups-db.test.mjs` + `git commit -m "Follow-up templates seed and mailbox room from the database"`.
+- [ ] **Step 3: Implement the five functions** (two SELECTs for `planningRows`, then the pure Task 2 functions), then
+  change `capacityNow` in `_lib/shortlist-db.js` to take `min(room, (await roomForFirsts(DB, now)).total)`.
+- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/followups-db.test.mjs control-room/tests/followups-due.test.mjs control-room/tests/shortlist-db.test.mjs` → PASS.
+- [ ] **Step 5: Commit** — `git add …followups.js control-room/functions/_lib/shortlist-db.js control-room/tests/followups-db.test.mjs` + `git commit -m "Follow-up templates seed and mailbox room from the database"`.
 
 ### Task 7: Sync sent messages and stop sequences (db)
 
 **Files:** Modify `control-room/functions/_lib/followups.js`. Test `control-room/tests/followups-db.test.mjs`.
 
 **Interfaces:**
-Consumes: `nextStage(current, event)` from `_lib/stages.js`; `schedule`, `nextDue`, `stopReason`, `CLOSE_AFTER_DAYS`;
-`stripFooter`; `closeTodos`.
+Consumes: `applyStageEvent(DB, placeId, event, now, {lost_reason} = {}) → Promise<{from, to}|null>` from
+`_lib/prospects.js` (stage 0); `schedule`, `nextDue`, `stopReason`, `CLOSE_AFTER_DAYS`; `stripFooter`; `closeTodos`;
+`getSetting` (`business:sender_name`, for `stripFooter`).
 Produces:
 `stopFollowups(DB, placeId, reason, now) → Promise<number>` (sets `next_followup_at` NULL, `updated_at`; cancels this
 lead's `queued` follow-ups; returns how many were cancelled);
@@ -700,9 +723,11 @@ test("sweepStops cancels queued follow-ups on opt-out, not on a demo view", asyn
 ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/followups-db.test.mjs` → `syncSent is not a function`.
 - [ ] **Step 3: Implement `stopFollowups`, `syncSent`, `sweepStops`** — `syncSent` handles firsts (`first_sent_at IS
-  NULL`) then follow-ups (`followup_step < step`), loads inbound for those leads in one query, applies `first_sent`
-  then the stop's stage event (`inbound_human` / `opt_out` / `bounce`) through `nextStage`; a sent follow-up also
-  closes `health:followup-fail:<place_id>`. Writes in one `DB.batch`.
+  NULL`) then follow-ups (`followup_step < step`), loads inbound for those leads in one query, calls
+  `applyStageEvent(DB, place_id, "first_sent", now)` then the stop's stage event (`inbound_human` / `opt_out` /
+  `bounce`) with `applyStageEvent` (stage 0 sets `lost_reason` to the event name for `opt_out`/`bounce`); a sent
+  follow-up also closes `health:followup-fail:<place_id>`. Its own column writes (`first_sent_at`,
+  `root_message_id`, `followup_step`, `next_followup_at`, the style example) go in one `DB.batch`.
 - [ ] **Step 4: Run tests to verify they pass** — → PASS.
 - [ ] **Step 5: Commit** — `git add …followups.js …followups-db.test.mjs` + `git commit -m "Mark leads emailed when the send succeeds; stop follow-ups on replies"`.
 

@@ -551,6 +551,8 @@ and the remaining steps still run):
   say "SEO" to prospects (say "top 3 on Google" / "front page of Google").
 - **Guarantee wording** wherever it appears: "Top 3 in Google search results in 90 days. GUARANTEED." with the
   section "The guarantee: we will work for FREE if you aren't in the top 3 of Google results within 90 days."
+  Where the start day is explained (order page, welcome email, landing page): "Your 90 days start the day you give us
+  access to your Google Business Profile." (Q-B default.)
 - **Offer and prices** come from one module (`_lib/offer.js`, pure): Website Only £1,750 one-off; Full Package
   £1,950 + £249/month with the first 60 days free; weekend (Sat–Sun UK time) £1,750 + 90 days free. Nothing else
   hard-codes a price. Stage 0 creates `offer.js` and its test; later stages only add exports, in new test files.
@@ -578,21 +580,28 @@ These appear as `setup` todos with a "Test" button where possible, so he never h
 2. Buy one Namecheap Private Email mailbox on aetoswebsites.com (Launch plan, not the trial).
 3. Paste its password into Setup → Mailboxes. Press Test.
 4. Add the DNS records Setup shows (SPF, DKIM, DMARC) in Cloudflare. Press Test.
-5. Receiving replies: decision D-1 (below), then the steps Setup shows for it.
+5. Receiving replies: decision Q-D (below), then the steps Setup shows for it.
 6. Add two permissions to the existing Cloudflare API token if the relay deploy says so.
-7. Create the five Routines from `routines/README.md`; paste each one's URL and token into Setup.
+7. Create the five Routines (`aetos-<name>`) from `routines/README.md`, in the shared "Aetos" environment with
+   `CONTROL_ROOM_URL` set. Create API triggers for research, reply, build and monthly-care, and paste each one's URL
+   and token into Setup → Claude.
 8. Approve the 9 follow-up emails and the landscaper template look.
 9. Pay the ICO fee (£52) and put his name + an address in the website footer (legal requirement).
-10. Daily: open Todo, send first emails to the leads it shows, do the calls it lists.
+10. Stage 10 only, if the own-build chatbot is used: create a Cloudflare Workers AI token and paste it on Setup. This
+    is the one exception to "no new Cloudflare keys" (§2); it is stored like every other secret.
+11. Daily: open Todo, send first emails to the leads it shows, do the calls it lists.
 
-## 11. Open decisions (Nik decides later; the build has a default so nothing blocks)
+## 11. Open decisions
 
-| id | Question | Default the build uses until decided |
+All open questions, each with the default the build uses until Nik decides, are in the Questions table at the end of
+[reconciliation.md](reconciliation.md) (Q-A to Q-AK). The earlier overview ids map as follows:
+
+| Old id | Now | Topic |
 | --- | --- | --- |
-| D-1 | How replies reach Cloudflare: a ~£5/yr receive-only domain that Namecheap forwards to, or Cloudflare taking the root MX | Built for either: the relay Worker's `email()` handler is identical. Setup shows both options' steps. |
-| D-2 | Cloudflare $5/month plan | Free plan; stage 0 measures SMTP CPU and reports. |
-| D-3 | Nik's own "How much is it?" reply | Claude answers from `offer.js` in Nik's style until he adds his wording on the Voice page. |
-| D-4 | "Send me more info" link: our site or their demo | Their demo link, with aetoswebsites.com named under it. |
-| D-5 | Landscaper template look (Nik sends example sites) | Claude designs v1; Nik approves on the Demo page before any email can link to it. |
-| D-6 | Chatbot: our own on Cloudflare Workers AI, or Elfsight | Own build (stage 10), behind a switch. |
-| D-7 | Business address in the site footer | Footer shows "Nik [surname], trading as Aetos Websites" and an address field Nik fills on Setup; the landing page shows a red banner in the Control Room until it's filled. |
+| D-1 | Q-D | How replies reach Cloudflare |
+| D-2 | Q-E | Cloudflare $5/month plan |
+| D-3 | Q-F | "How much is it?" in Nik's words |
+| D-4 | Q-G | "Send me more info" link |
+| D-5 | Q-H | Landscaper template look |
+| D-6 | Q-I | Chatbot: own build or Elfsight |
+| D-7 | Q-J | Business address in footers |

@@ -38,7 +38,9 @@ Setup, the relay Worker and the landing page.
 
 ### Schema
 - Every table and index in overview §4 is added to `lead-manager/schema.sql` exactly as written. There are 23 new
-  statements, which takes the schema from 29 statements to 52.
+  statements, which takes the schema from 29 statements to 52. That includes the columns later stages fill
+  (`messages.intent`, `calls.note`), so no stage ever needs an `ALTER TABLE`. The statement-count test asserts
+  `>= 52`, because stages 9, 10 and 11 add tables (overview §4, "Tables added by later stages").
 - `db(env)` creates tables only when the schema has changed. `schema.js` carries `SCHEMA_VERSION`, the first 12 hex
   characters of the SHA-256 of the statements. `db()` compares it with the setting `schema:version` and runs the
   batch only when they differ. Each new isolate then costs 1 query instead of 52, which keeps us under the free
@@ -55,11 +57,22 @@ Setup, the relay Worker and the landing page.
   | --- | --- | --- | --- | --- |
   | Website Only | 175000 | 0 | 0 | always |
   | Full Package | 195000 | 24900 | 60 | Monday to Friday, UK time |
-  | Full Package, weekend deal | 175000, with 200000 shown struck through | 24900 | 90 | Saturday or Sunday, UK time |
+  | Full Package, weekend deal | 175000, with 195000 (the real weekday price) shown struck through | 24900 | 90 | Saturday or Sunday, UK time |
 
+  The struck-through price is £1,950, never £2,000: striking through a price we never charge would be a false
+  price comparison (truth rule; Q-A). "Around £2,000" is only ever spoken.
+- `offer.js` is owned by this stage. Later stages only add exports (07 `offerFacts`), each in its own new test file;
+  none re-creates the module or `offer.test.mjs`.
 - Guarantee strings, exact: `Top 3 in Google search results in 90 days. GUARANTEED.` and `The guarantee: we will
   work for FREE if you aren't in the top 3 of Google results within 90 days.`
-- Build guarantee: `Website live in 7 days, GUARANTEED.`
+- Build guarantee: `Website live in 7 days, GUARANTEED.` Build guarantee note (stage 9's order page puts it after
+  the line): `(clock starts when your onboarding form is complete)`.
+- Weekend banner (weekend only): `Weekend price — ends Sunday midnight`.
+- No-contract line: `No contract. No cancellation fees. If we're not making you money, we don't want your money.`
+- **Checkout grace:** the weekend price still applies to a checkout started up to 30 minutes after Sunday midnight UK
+  when the page it came from was rendered on the weekend.
+- **Extras switches:** the settings `offer:chatbot_live` and `offer:review_booster_live` (`'1'` = on, default off).
+  Nothing shows the chatbot or the review booster to anyone until its switch is on (truth rule).
 
 ### Email out
 - **Format:** plain text only. RFC 5322 headers are `From`, `To`, `Subject`, `Date`, `Message-ID`, plus
@@ -90,13 +103,22 @@ Setup, the relay Worker and the landing page.
   count towards the cap.
 - **Send windows:** `first` and `followup` go out only Monday to Saturday, 07:00 to 19:00 UK (19:00 itself is
   outside). `reply` and `system` go any time.
-- **Before every send:** check suppression (the exact address, or its domain). Suppressed means `cancelled`, error
-  `Suppressed: <reason>`. A paused mailbox sends nothing of any kind: its messages stay `queued`.
+- **Before every send:** for `first`, `followup` and `reply`, check suppression (the exact address, or its domain).
+  Suppressed means `cancelled`, error `Suppressed: <reason>`. `system` mail (client and onboarding mail) is never
+  checked, so a paying client's welcome and care emails always go. A paused mailbox holds only `first` and
+  `followup` (they stay `queued`); `reply` and `system` still go from it.
+- **Order:** due rows are taken follow-ups first, then first emails, then the rest
+  (`CASE kind WHEN 'followup' THEN 0 WHEN 'first' THEN 1 ELSE 2 END, due_at`), so at the cap a follow-up never
+  waits behind a new first email.
+- **Headers:** the row's own `message_id`, `in_reply_to` and `refs` are used when set; a `message_id` is generated
+  (and stored) only when it's null.
 - **Status:** `queued` → `sending` (claimed with `UPDATE … WHERE status='queued'`) → `sent` or `failed`, with the
   error text. A row stuck in `sending` for more than 10 minutes becomes `failed` with `The send was interrupted. It
   may or may not have gone: check the Sent folder in Namecheap webmail before sending again.` Nothing is retried
   automatically.
 - **Per tick:** `dispatchDue` attempts at most `limit` (default 2) sends. Held messages don't count towards it.
+  `kinds` (default `null` = all) limits it to the listed kinds, e.g. stage 7 sends one reply straight away with
+  `{limit:1, kinds:["reply"]}`.
 - **SMTP settings:** `mail.privateemail.com:465`, `secure: true`, `authType: "login"`, username = mailbox address,
   10 s socket and response timeouts. The library is worker-mailer 1.3.0, vendored.
 

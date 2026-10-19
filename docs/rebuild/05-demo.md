@@ -657,12 +657,17 @@ mailbox, else "".
   assert.equal(DB.raw.prepare("SELECT COUNT(*) n FROM todos WHERE dedupe='setup:demo-template:landscaper:v1'").get().n, 1);
   // demoBySlug: bad slug → null; expired → expired:true; won → expired:false
   ```
-- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/demo-db.test.mjs` → FAIL.
+  And in `research-post.test.mjs`, `posting research makes the demo and the ready prospect`: post the file's valid
+  A-grade payload (with a `best_email`) to `POST /api/agent/research/:place_id`, then assert one `demos` row for the
+  lead and a `prospects` row in stage `ready`; a D-grade payload makes neither.
+- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/demo-db.test.mjs control-room/tests/research-post.test.mjs` → FAIL.
 - [ ] **Step 3: Implement `ensureDemo`, `demoBySlug`, `demoLink` in `control-room/functions/_lib/demo-db.js`** —
   approval lookup for the setup todo uses `templateApproval` from Task 9 (write it as a stub returning
-  `{approved: false}` here; Task 9 fills it).
-- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/demo-db.test.mjs control-room/tests/demo.test.mjs` → PASS.
-- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/demo-db.js control-room/functions/api/outreach/enrol.js control-room/tests/demo-db.test.mjs control-room/tests/demo.test.mjs && git commit -m "Demo: ensureDemo makes the demo and the ready prospect" -m "$TRAILER"`
+  `{approved: false}` here; Task 9 fills it). In `api/agent/research/[id].js`, call
+  `await ensureDemo(DB, placeId, now)` right after `saveResearch`; its result never changes the route's response (a
+  lead that doesn't qualify simply gets no demo).
+- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/demo-db.test.mjs control-room/tests/research-post.test.mjs control-room/tests/demo.test.mjs` → PASS.
+- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/demo-db.js "control-room/functions/api/agent/research/[id].js" control-room/functions/api/outreach/enrol.js control-room/tests/demo-db.test.mjs control-room/tests/research-post.test.mjs control-room/tests/demo.test.mjs && git commit -m "Demo: ensureDemo makes the demo and the ready prospect" -m "$TRAILER"`
 
 ### Task 9: Template approval and `demoReady`
 
@@ -707,7 +712,7 @@ Test `control-room/tests/demo-routes.test.mjs`.
 
 **Interfaces:**
 Consumes: `demoBySlug` (Task 8), `buildDemoData` (Task 4), `renderSite`/`renderExpired`/`renderNotFound` (Task 6),
-`offerNow` (offer.js).
+`offerFor` (offer.js).
 Produces: `GET /d/:slug` → 200 demo HTML | 410 expired page | 404 not-found page; `page(html, status, extraHeaders = {})`.
 
 - [ ] **Step 1: Write the failing test** — call `onRequestGet({ env: { DB }, params: { slug } })`:
@@ -718,7 +723,7 @@ Produces: `GET /d/:slug` → 200 demo HTML | 410 expired page | 404 not-found pa
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/demo-routes.test.mjs` → FAIL.
 - [ ] **Step 3: Implement `onRequestGet` in `control-room/functions/d/[slug]/index.js`** — `demoBySlug` → (null: 404)
   (expired: 410 with `{name, contact_email}`) else `renderSite(buildDemoData({lead, research, demo, offer:
-  offerNow(now), now}))`.
+  offerFor(now), now}))`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/demo-routes.test.mjs control-room/tests/demo.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/d/[slug]/index.js control-room/functions/_lib/page.js control-room/functions/_lib/demo.js control-room/tests/demo-routes.test.mjs && git commit -m "Demo: public page renders from the template engine" -m "$TRAILER"`
 
@@ -742,7 +747,7 @@ isBotUA(ua) → boolean                                // also true for empty/mi
 // demo-db.js
 EVENT_KINDS = ["view", "order_page", "order_click", "ordered"]          // kept for stage 9
 recordEvent(DB, demo, kind, now = new Date()) → Promise<boolean>         // kept: 30-minute view dedupe
-countView(DB, demo, now = new Date()) → Promise<boolean>                 // recordEvent + prospects views/last_view_at/stage
+countView(DB, demo, now = new Date()) → Promise<boolean>                 // recordEvent + prospects views/last_view_at + applyStageEvent "demo_view"
 ```
 `POST /d/:slug/e` always answers 204; it stores nothing when the body (max 200 bytes) isn't `view`/`order_page`/
 `order_click`, `isBotUA`, `isOwnerRequest`, demo missing or expired, or the prospect is in stage `ready`.
@@ -762,9 +767,10 @@ countView(DB, demo, now = new Date()) → Promise<boolean>                 // re
   // stage 'ready' → not counted; expired → not counted; order_page → demo_events row, views unchanged
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/demo-routes.test.mjs` → FAIL.
-- [ ] **Step 3: Implement `session.js`, `bots.js`, `countView` and `onRequestPost` in `d/[slug]/e.js`** — `countView`
-  reads the prospect, calls `recordEvent`, then one UPDATE with `views = views + 1`, `last_view_at`, `updated_at` and
-  `stage`/`stage_at` from `nextStage(stage, "demo_view")` when it changes.
+- [ ] **Step 3: Implement `session.js`, `bots.js`, `countView` and `onRequestPost` in `d/[slug]/e.js`** — `session.js`
+  keeps stage 0's cookie name `cr_session` and its token derivation exactly (moved, not changed). `countView` reads the
+  prospect, calls `recordEvent`, then one UPDATE with `views = views + 1`, `last_view_at`, `updated_at`, then
+  `applyStageEvent(DB, place_id, "demo_view", now)` (stage 0's `prospects.js`; a no-op unless the stage is `emailed`).
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS (middleware
   login tests from stage 0 still pass).
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/session.js control-room/functions/_lib/demo/bots.js control-room/functions/_middleware.js control-room/functions/d/[slug]/e.js control-room/functions/_lib/demo-db.js control-room/tests/demo-routes.test.mjs && git commit -m "Demo: count only real prospect views" -m "$TRAILER"`
@@ -776,25 +782,28 @@ countView(DB, demo, now = new Date()) → Promise<boolean>                 // re
 Test `control-room/tests/demo-hot.test.mjs`.
 
 **Interfaces:**
-Consumes: `ensureDemo` (Task 8), `addTodo` (todo.js), `ukDate`, `ukParts` (ukTime.js), `shortName` (Task 2).
+Consumes: `ensureDemo` (Task 8), `isHot(prospect, now)` (stage 3's `_lib/shortlist.js`, the app's only `isHot`, with
+the Part A §9 rule), `addTodo` (todo.js), `ukDate`, `ukParts` (ukTime.js), `shortName` (Task 2), `ctx.budget` (stage
+0's `runTick`).
 Produces:
 ```js
 // demo-db.js
 syncDemoExpiry(DB) → Promise<number>          // one UPDATE: latest demo per lead → max(expires_at, last sent out message + 180 days)
 missingDemos(DB, now, limit = 3) → Promise<string[]>   // eligible place_ids (Part A §1 checks in SQL) with no live demo or no prospect, prospect stage NULL or 'ready'
 // hot.js
-isHot(p, now) → boolean                        // pure: Part A §9
 hotTitle(name, views) → string                 // pure: "Call now: <name> opened their site <N> times" / "… once"
-hotStep({ DB, env, now }) → Promise<string>    // "expiry +<n> · demos made <n> · hot <n> · closed <n>"
+hotStep({ DB, env, now, budget }) → Promise<string>    // "expiry +<n> · demos made <n> · hot <n> · closed <n>" (+ " · demos skipped: low budget")
 ```
-`hotStep` order: `syncDemoExpiry` (1 statement) → close `hot` todos of prospects with `last_inbound_at` or stage not
-`emailed`/`viewed` (1 statement) → `missingDemos` + `ensureDemo` each (≤ 1 + 3×2) → select hot prospects with no open
-todo for today or a stale title, max 3 (1) → per prospect one `DB.batch` of insert-or-ignore today's todo, update its
-title/detail, close older days (3 each).
+`hotStep` order: `syncDemoExpiry` (1 statement) → close open `hot` todos whose dedupe starts `hot:<place_id>:` for
+prospects with `last_inbound_at` or stage not `emailed`/`viewed` (1 statement; no other dedupe is ever closed here) →
+`missingDemos` + `ensureDemo` each (≤ 1 + 3×4; skipped when `budget` reports fewer than 25 queries left) → select hot
+prospects with no open todo for today or a stale title, max 3 (1) → per prospect one `DB.batch` of insert-or-ignore
+today's todo, update its title/detail, close older days of that lead's `hot:<place_id>:` todos (3 each).
 
 - [ ] **Step 1: Write the failing test**:
   ```js
   const NOW = new Date("2026-10-21T13:05:00Z");
+  // isHot is imported from ../functions/_lib/shortlist.js (stage 3); these lock the Part A §9 rule it must follow
   assert.equal(isHot({ stage: "emailed", views: 2, last_view_at: "2026-10-10T10:00:00Z", last_inbound_at: null }, NOW), true);
   assert.equal(isHot({ stage: "viewed", views: 1, last_view_at: "2026-10-20T14:00:00Z", last_inbound_at: null }, NOW), true);
   assert.equal(isHot({ stage: "viewed", views: 1, last_view_at: "2026-10-20T12:00:00Z", last_inbound_at: null }, NOW), false);
@@ -803,13 +812,15 @@ title/detail, close older days (3 each).
   assert.equal(hotTitle("Green Leaf Landscapes", 3), "Call now: Green Leaf Landscapes opened their site 3 times");
   // hotStep: a hot prospect gets one todo "hot:p1:2026-10-21" with detail "Last opened Wed 14:00. Phone: 0113 496 0000. No reply yet."
   // running twice adds nothing; views 3 → title updated; next UK day → new todo, yesterday's closed
-  // setting last_inbound_at closes it; a sent message on day 170 extends expires_at to sent_at + 180 days (latest demo only)
-  // 50 eligible leads without demos → 3 made per run
-  // budget: wrap DB to count prepare() calls; with 50 eligible + 20 hot leads, one run uses ≤ 20
+  // setting last_inbound_at closes it; an open todo with dedupe "checkout:p1" (stage 9) stays open
+  // a sent message on day 170 extends expires_at to sent_at + 180 days (latest demo only)
+  // 50 eligible leads without demos → 3 made per run, each prospect created through applyStageEvent (stage 'ready')
+  // budget: wrap DB to count prepare() calls; with 50 eligible + 20 hot leads, one run uses ≤ 25
+  // budget below 25 → no demos made, summary ends "demos skipped: low budget"
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/demo-hot.test.mjs` → FAIL.
-- [ ] **Step 3: Implement `syncDemoExpiry`, `missingDemos` in `demo-db.js` and `isHot`, `hotTitle`, `hotStep` in
-  `hot.js`; register the step in `tick.js`** — expiry SQL uses `strftime('%Y-%m-%dT%H:%M:%SZ', MAX(sent_at), '+180
+- [ ] **Step 3: Implement `syncDemoExpiry`, `missingDemos` in `demo-db.js` and `hotTitle`, `hotStep` in `hot.js`
+  (importing `isHot` from `shortlist.js`, no copy); register the step in `tick.js`** — expiry SQL uses `strftime('%Y-%m-%dT%H:%M:%SZ', MAX(sent_at), '+180
   days')` and only touches the row with the latest `created_at` per `place_id`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/hot.js control-room/functions/_lib/demo-db.js control-room/functions/_lib/tick.js control-room/tests/demo-hot.test.mjs && git commit -m "Demo: hot-lead todos, expiry sync and missing-demo safety net" -m "$TRAILER"`
@@ -851,11 +862,10 @@ of that template, newest research first: first with ≥ 2 photos, first with 0 p
 
 ### Task 14: Demo page and the lead drawer card
 
-**Files:** Create `control-room/public/js/demo.js`; Modify `control-room/public/js/app.js` (route `demo`, nav item
-"Demo" in "Sell"), `control-room/public/js/leads.js` (replace the old `demoCard` with `demoCardHtml` fed by
-`GET /api/demo/lead/:id`, remove "Make demo now"), `control-room/public/style.css` (`.demo-look`, `.demo-frame`
-390×700 with scroll, `.demo-card`); Modify `control-room/public/js/roadmap.js` (mark Demo built); Test
-`control-room/tests/demo-ui.test.mjs`.
+**Files:** Create `control-room/public/js/demo.js`; Modify `control-room/public/js/app.js` (register the route `demo`
+only, no nav item), `control-room/public/js/leads.js` (replace the old `demoCard`: fetch `GET /api/demo/lead/:id` and
+put `demoCardHtml` into stage 3's `#d-demo` mount point; remove "Make demo now"), `control-room/public/style.css`
+(`.demo-look`, `.demo-frame` 390×700 with scroll, `.demo-card`); Test `control-room/tests/demo-ui.test.mjs`.
 
 **Interfaces:**
 Consumes: Task 13 routes; `esc`, `safeUrl`, `api`, `toast`, `pageHead`, `fmtDate` from `lib.js`.

@@ -6,7 +6,9 @@
 > replied, call booked, won), and how each client is doing (days until their site is live, day N of the 90-day
 > guarantee, their Google position, the next monthly job). Tick something done and it's gone for good. A **KPIs**
 > page shows, week by week, how your first emails and Claude's replies are doing, and every Sunday evening Claude
-> writes you a short review with at most 3 changes to try. Money and Map Rank stay as they are.
+> writes you a short review with at most 3 changes to try. Money and Map Rank stay as they are. Once a month the
+> system deletes what we hold on people who never bought and haven't heard from us for 12 months (the privacy notice
+> promises this); the "no thanks" list is kept so they're never emailed again.
 
 ## Goal
 
@@ -19,13 +21,14 @@ phone, and the weekly numbers show which emails work so we can improve them.
   every 60 s.
 - Every page load updates the count badge on the Todo nav link (`GET /api/todo/count`).
 - Nik opens **KPIs** (`#/kpis`, optional `?week=2026-W43`).
-- The weekly-kpis Routine runs every Sunday at 18:47 UK.
+- The weekly-kpis Routine (`aetos-weekly-kpis`) runs every Sunday at 18:47 UK.
+- The tick's `purge` step does the 12-month clean-up once a month (see "Data clean-up").
 
 ## Who does what
 
 | Who | Does |
 | --- | --- |
-| System | Builds the board from `todos`, `prospects`, `clients`, `onboarding`, `lead_map_rank` and the health lights; marks todos done/dismissed; computes every KPI number in code (`kpis.js`); stores the weekly snapshot; adds the `kpi` todo when Claude's review arrives. |
+| System | Builds the board from `todos`, `prospects`, `clients`, `onboarding`, `lead_map_rank` and the health lights; marks todos done/dismissed; computes every KPI number in code (`kpis.js`); stores the weekly snapshot; adds the `kpi` todo when Claude's review arrives; runs the monthly purge. |
 | Claude | Sunday 18:47 UK: reads the week's numbers and samples, writes a plain-English review with at most 3 suggestions, each tied to a number. Never changes anything itself. |
 | Nik | Opens Todo, works top to bottom, ticks **Done** or **Dismiss**; sends or edits Claude's escalation drafts; reads the Monday `kpi` todo and decides which suggestions to try. |
 
