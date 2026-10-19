@@ -1915,7 +1915,7 @@ Everything in overview §8 is built here with exactly those signatures. These ar
 
 **App shell**
 - `PAGES` registry in `public/js/app.js`: each later stage adds `{route, label, icon, render}` until file 11 ships
-  (pages reached from a lead or a todo rather than the nav, e.g. 05 `demo` and 07 `call`, add `nav: false`).
+  (05's and 07's entries add `nav: false`: routable, not shown in the nav).
   `app.js` routes any first hash segment through `PAGES.find`, unknown → home. `shell.test.mjs` asserts stage 0's 5
   routes are present, not an exact list, so these additions don't break it; file 11 Task 11 deletes that assertion.
   File 11 then replaces it with `public/js/nav.js` (`NAV` + `routeFor`) and owns routing; later stages add their

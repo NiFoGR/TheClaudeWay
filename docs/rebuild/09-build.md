@@ -1586,9 +1586,13 @@ due 1, leads 0"`). The go-live email passes `noMailboxTodo: {dedupe: "setup:clie
 
 **Files:** Create `control-room/functions/api/setup/sites.js` (GET status, POST save, POST `?test=chat`, POST
 `?test=pages`, POST `?switch=chatbot|review_booster`), `control-room/functions/_lib/sites/readiness.js`. Modify
-`control-room/public/js/setup.js` (section "Client sites"). Test `control-room/tests/sites-setup.test.mjs`.
+`control-room/public/js/setup.js` (section "Client sites") and stage 0's `control-room/functions/_lib/site.js`
+(`renderLanding`: the chatbot lines of section 11, shown only when `extras.chatbot` is true). Test
+`control-room/tests/sites-setup.test.mjs`, `control-room/tests/site.test.mjs` (add assertions).
 
-**Interfaces:** Consumes `setSecret`, `secretStatus`, `setSetting`, `testModel` (20), `checkHost` (26). Produces
+**Interfaces:** Consumes `setSecret`, `secretStatus`, `setSetting`, `testModel` (20), `checkHost` (26), stage 0's
+`renderLanding({business, contactEmail, now, extras: {chatbot, reviews}})` (the middleware already reads
+`offer:chatbot_live` into `extras.chatbot`). Produces
 `sitesReadiness(DB, now) → Promise<{chatbot: {ready, reason?}, review_booster: {ready, reason?}}>`.
 
 - [ ] **Step 1: Write the failing test** — GET never returns a secret value (`secretStatus` booleans only); POST
@@ -1597,15 +1601,21 @@ due 1, leads 0"`). The go-live email passes `noMailboxTodo: {dedupe: "setup:clie
   connection first."}`; test older than 7 days → reason "The last chatbot test is over a week old: press Test again.";
   no live test site → "Put the test site live first (Create test client)."; when ready, switch POST sets
   `offer:chatbot_live = '1'`, and when not ready → 409 with the reason; `?switch=chatbot&off=1` sets `'0'` any time;
-  saving `care:nik_google_email` closes `setup:gbp-email`.
-- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/sites-setup.test.mjs` → 404.
+  saving `care:nik_google_email` closes `setup:gbp-email`. In `site.test.mjs`: `renderLanding` with
+  `extras: {chatbot: true, reviews: false}` contains `Never miss an enquiry.` once (under "What you get") and `Chat
+  assistant on your website, day and night` once (Full Package bullets, not in Website Only's); with the default
+  `extras` stage 0's assertion (no match for `/chatbot|chat assistant/i`) still passes.
+- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/sites-setup.test.mjs
+  control-room/tests/site.test.mjs` → 404 / the chatbot lines are missing.
 - [ ] **Step 3: Implement** the route and readiness; the Setup UI shows write-only fields with "saved ✓", Test buttons,
-  the switches disabled with the reason, and the confirm dialogs of sections 11–12.
-- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/sites-setup.test.mjs && node --check
-  control-room/public/js/setup.js` → PASS.
+  the switches disabled with the reason, and the confirm dialogs of sections 11–12. In `renderLanding`, add the two
+  chatbot lines from section 11 behind `extras.chatbot` (nothing else on the landing page changes).
+- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/sites-setup.test.mjs
+  control-room/tests/site.test.mjs && node --check control-room/public/js/setup.js` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/api/setup/sites.js control-room/functions/_lib/sites/readiness.js
-  control-room/public/js/setup.js control-room/tests/sites-setup.test.mjs && git commit -m "Setup for client sites:
-  chatbot connection, Pages address, offer switches"`
+  control-room/public/js/setup.js control-room/functions/_lib/site.js control-room/tests/sites-setup.test.mjs
+  control-room/tests/site.test.mjs && git commit -m "Setup for client sites: chatbot connection, Pages address, offer
+  switches, landing chatbot line"`
 
 ### Task 28: Health lights for sites and chat
 
@@ -1773,11 +1783,13 @@ CREATE TABLE IF NOT EXISTS rate_hits (
 **Produced for other stages:**
 - **Settings:** `offer:chatbot_live`, `offer:review_booster_live` (`'1'`/`'0'`; stage 9's order page reads them),
   `chat:model`, `chat:last_test`, `sites:pages_host`; secrets `cf_ai:account_id`, `cf_ai:token`. Shares
-  `care:nik_google_email` with stage 11 (either page may set it). Stage 0's landing page shows its chatbot line only
-  when `offer:chatbot_live = '1'`.
+  `care:nik_google_email` with stage 11 (either page may set it). This stage writes stage 0's landing-page chatbot
+  lines in `_lib/site.js` `renderLanding` (Task 27, section 11), shown only when `extras.chatbot` (=
+  `offer:chatbot_live = '1'`).
 - **Tick step** `sites` (`everyMinutes: 5`), placed after `calls` and before `care` in overview §8's order.
 - **Todo dedupe prefixes:** `build:<client_id>:approve|stuck|due|photos|gphotos|gbp|domain:<step>`;
-  `setup:gbp-email`, `setup:chatbot`; Send closes stage 9's `build:new:<client_id>`.
+  `setup:gbp-email`, `setup:chatbot`, `setup:client-mail:<client_id>:go-live|domain-nameservers|domain-cname` (via
+  stage 9's `sendClientMail`); Send closes stage 9's `build:new:<client_id>`.
 - **Health lights:** `sites`, `chat` (`{name, level, detail, fix}`, registered with stage 0's `registerLight`; no
   name is a prefix of another light). `routine:build` stays stage 0's light; the "Claude hasn't built {name}'s site"
   rule lives in `sites` (amber).
@@ -1793,6 +1805,10 @@ CREATE TABLE IF NOT EXISTS rate_hits (
 - **Onboarding `form` keys for stage 11** (it assumed other names): contact email `business.email`, phone
   `business.phone`, town `areas[0]`, `areas`, services `services[].name` where `on`, main service = first ticked
   service, photos = count of `photos[]` in `client_sites.content`; contact name = `research.owner.first`.
+- **Target keyword for the guarantee:** `client_sites.content.keyword` (e.g. "roofer Swindon") is the keyword the site
+  is built for; the home title and H1 carry `content.primary_category` + town (section 5). Stage 11's `loadCareState`
+  takes service and town from `content.keyword` when it is set (else the first ticked service + `areas[0]`), and its
+  `onPageCheck` accepts `primary_category` in the title and H1, so the guarantee is measured on what this stage built.
 - **`_lib/sites/hosts.js` `OUR_HOSTS` / `isOurHost(host)`**: the root domain, `www`, `localhost`, `127.0.0.1` and
   `*.pages.dev` skip the client-site lookup. Any other host (e.g. `control.aetoswebsites.com`) is looked up in
   `client_sites`; with no row, `serveClientHost` returns `null` and stage 0's routing runs unchanged, so no Control
@@ -1811,8 +1827,9 @@ CREATE TABLE IF NOT EXISTS rate_hits (
   emails `{origin}/onboard/<token>` (origin = an `OUR_HOSTS` host); `clients.package` is `full|weekend|website`;
   `client_links.email` holds the checkout email; `clients.cancelled_on` on cancellation; `_lib/client-mail.js`
   `systemMailbox(DB, now)` and `sendClientMail(DB, {client_id, place_id, to, business, compose, now})` carry every
-  client email here; its order page reads `offer:chatbot_live` / `offer:review_booster_live`; its `build:new:<id>`
-  todo is closed here on Send.
+  client email here, with the `noMailboxTodo` option (`null` for enquiries, `setup:client-mail:<client_id>:<kind>`
+  for go-live and domain emails; section 12); its order page reads `offer:chatbot_live` / `offer:review_booster_live`;
+  its `build:new:<id>` todo is closed here on Send.
 - **Stage 4 (05-demo.md):** `DemoData`, `renderSite(data, {mode, page})`, `templateIdFor`, `slugFor`, `h()`. This
   stage extends `DemoData.live` from `{form_action, canonical_url}` to `{form_action, canonical_url, page: {key, path,
   title, meta, h1, intro, sections, faq, photo}, nav: [{label, href}], footer: {nap, legal_line, review_url,
@@ -1824,8 +1841,9 @@ CREATE TABLE IF NOT EXISTS rate_hits (
   payloads; the client page links to `#/site/<client_id>`; care reads `site_leads` and `chat_usage`; its owner
   `access` action (`POST /api/care/:id {action: "access", on}`, sets `gbp_access_on`) is what this stage's "Invite
   accepted" checkbox calls (stage 11 is built later; until then the tick only closes `build:<client_id>:gbp`). Care
-  uses this stage's form keys (service = first ticked `services[].name`, town = `areas[0]`, contact =
-  `research.owner.first`) and skips its Google-access email when `form.gbp.invite_sent` is true.
+  uses this stage's form keys (keyword = `client_sites.content.keyword` when set, else service = first ticked
+  `services[].name` and town = `areas[0]`; contact = `research.owner.first`), accepts `content.primary_category` in
+  its on-page title/H1 check, and skips its Google-access email when `form.gbp.invite_sent` is true.
 - **Stage 0 (01-foundations.md):** `queueMessage` dispatches `kind: "system"` mail outside cold caps and send windows
   (at the next tick; a paused mailbox still sends `system`, and suppression isn't checked for `system`);
   `composeEmail` throws on CR/LF, so this stage strips every subject with `oneLine()` before queueing; `fireRoutine`,

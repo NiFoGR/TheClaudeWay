@@ -31,6 +31,8 @@ its own items to it (section 6), and file 11 adds the board page itself after st
 
 **Navigation owner:** once file 11 ships, it owns navigation and hash routing (`public/js/nav.js`: `NAV` and
 `routeFor`). Files 09 and 10 add their routes to `routeFor` (and `nav.test.mjs`), never to `PAGES` in `app.js`.
+Before that, stages add `PAGES` entries in `app.js` (05's and 07's with `nav: false`: routable, not in the nav);
+`app.js` routes any first hash segment through `PAGES.find`, unknown → home.
 
 ## 2. Architecture
 
@@ -45,7 +47,7 @@ Nothing that already exists in Cloudflare or GitHub changes (Nik's rule: same ke
                        │        ▼                                                           │
                        │   D1 ◄──────────── mail-relay Worker (NEW, folder mail-relay/)      │
                        │                     • cron every 5 min → POST {APP_URL}/api/tick    │
-                       │                       ?reason=cron, then …/api/tick?reason=health  │
+                       │                       ?reason=cron, then …/api/tick?reason=health   │
                        │                     • email() handler → saves raw mail to D1,       │
                        │                       then POST {APP_URL}/api/tick?reason=inbound   │
                        └────────────────────────────────────────────────────────────────────┘

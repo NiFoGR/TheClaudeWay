@@ -97,7 +97,7 @@ Stage 0 owns `_lib/offer.js` (`PACKAGES`, `MONTHLY_PENCE`, `offerFor`, `termsFor
      `{Extras}` = `The monthly Google work and the report`, plus `, the chat assistant` / `, the review booster` when
      those lines are shown (joined so the last one is "and …").
   4. `What happens when the free days end?` — `On day {freeDays+1} we take £249 from the card you paid with, then the same each month. Don't want to carry on? Tell us before then and you won't be charged.`
-  5. `How do you measure the top 3?` — `On Google's results for your main service and town (for example "roofer Leeds"), searched from your area. The map results at the top count. ` + `GUARANTEE.section` (overview §9 wording, never "work for free until you are").
+  5. `How do you measure the top 3?` — `On Google's results for your main service and town (for example "roofer Leeds"), searched from your area. The map results at the top count. ` + `GUARANTEE.section` (overview §9 wording; the old "…until you are" promise is gone).
   6. `Is paying online safe?` — `Yes. Payments are taken by Stripe, which handles card payments for millions of businesses. We never see your card details.`
   Stage 11 (10-monthly-care.md Task 19) appends `" " + CLOCK_START` (`Your 90 days start the day you give us access to your Google Business Profile.`,
   exported from its `care.js`) to answer 5 (Q-B default, "Manager access"); this stage ships the answer without it,
@@ -957,7 +957,8 @@ Then run the live checks 3–12 of "Perfect when" in Stripe test mode before sta
   `stripe(env, …)` is gone; stage 10's `pauseFee` uses these) and `tests/helpers/fakeStripe.mjs`.
 - Order page FAQ 5 (`…The map results at the top count. ` + `GUARANTEE.section`) and the welcome email's Full
   Package paragraph: stage 11 (10-monthly-care.md Task 19) appends `" " + CLOCK_START` to FAQ 5 and `CLOCK_START`
-  as the paragraph's last line (Q-B default). FAQ 5 must never say "work for free until you are" (`order-page.test`).
+  as the paragraph's last line (Q-B default). `order-page.test` asserts the old "…until you are" wording never
+  comes back.
 - `todo.js`: `closeLeadTodos(DB, place_id, {exceptKinds})`.
 - `onboarding` row with `status 'sent'` and `token`; link format `{origin}/onboard/{token}`, origin = the host the
   prospect ordered on (`metadata.origin`). Stage 10 owns `/onboard/:token` and must
