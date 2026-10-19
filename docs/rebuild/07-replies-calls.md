@@ -617,7 +617,7 @@ callTodoTitle({first, business, slot_at, phone}) → string
   });
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/replyGuard.test.mjs` → FAIL: cannot find module.
-- [ ] **Step 3: Implement `replyGuard(body, ctx)` in `_lib/replyGuard.js`** — words = whitespace split; hosts from `https?://` URLs and bare `name.tld(/path)` tokens (excluding the parts of email addresses), allowed when equal to or ending in `.` + an allowed host; amounts parsed from `£\s?[\d,]+(\.\d\d)?` and normalised; promise words searched in the body after removing every `offer.guarantees` sentence (case-insensitive); the price list in the reason is `offer.amounts` sorted ascending, formatted `£1,750`.
+- [ ] **Step 3: Implement `replyGuard(body, ctx)` in `_lib/replyGuard.js`** — words = whitespace split; hosts from `https?://` URLs and bare `name.tld(/path)` tokens (excluding the parts of email addresses), allowed when equal to or ending in `.` + an allowed host; amounts parsed from `£\s?[\d,]+(\.\d\d)?` and normalised, except an amount followed by `k`, which is reported only as "Write prices in full"; promise words searched in the body after removing every `offer.guarantees` sentence (case-insensitive); the price list in the reason is `offer.amounts` sorted ascending, formatted `£1,750`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/replyGuard.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/replyGuard.js control-room/tests/replyGuard.test.mjs && git commit -m "Replies: server-side reply guard" -m "$TRAILERS"`
 
@@ -786,7 +786,7 @@ health.js light from replyLight({...await waitingStats(DB), now, paused})
   await setSetting(DB, "replies:paused", "1");
   assert.match(await runReplyFire({ DB, env, now: D("2026-10-20T09:00:00Z"), fetchImpl }), /^skipped: paused/);
   assert.equal(calls.length, 2);
-  // drafts with no place_id never count
+  // a third waiting row with place_id NULL is seeded: it never counts
   assert.equal((await waitingStats(DB)).waiting, 2);
   // health light
   const lights = await healthFromDb(DB, D("2026-10-20T08:21:00Z"));
@@ -833,9 +833,9 @@ every action closes `call:<id>` and `call-outcome:<id>` and stores `note`.
   assert.equal((await confirmCall(DB, { place_id: "c", slot_at: D("2026-10-23T14:00:00Z"), phone: null, now: NOW, byNik: true })).warning, "You already have a call that day.");
   await updateCall(DB, c.call.id, "cancel", { now: NOW });
   assert.equal((await one(DB, "SELECT stage FROM prospects WHERE place_id='a'")).stage, "replied");
-  assert.equal(t.status === "open" && (await one(DB, `SELECT status FROM todos WHERE dedupe='call:${c.call.id}'`)).status, "done");
-  const c2 = await confirmCall(DB, { place_id: "a", slot_at: FRI, phone: "07700 900123", now: NOW });
-  await updateCall(DB, c2.call.id, "ordering", { note: "wants it", message: "Great speaking to you. Here's the link to get started:\n\nhttps://control.aetoswebsites.com/d/green-leaf-ab12/order", now: D("2026-10-23T10:40:00Z") });
+  assert.equal((await one(DB, `SELECT status FROM todos WHERE dedupe='call:${c.call.id}'`)).status, "done");
+  const c2 = await confirmCall(DB, { place_id: "a", slot_at: D("2026-10-25T11:00:00Z"), phone: "07700 900123", now: NOW }); // Sun, GMT
+  await updateCall(DB, c2.call.id, "ordering", { note: "wants it", message: "Great speaking to you. Here's the link to get started:\n\nhttps://control.aetoswebsites.com/d/green-leaf-ab12/order", now: D("2026-10-25T11:40:00Z") });
   const m = await one(DB, "SELECT * FROM messages WHERE author='nik' AND kind='reply'");
   assert.match(m.body, /\/d\/green-leaf-ab12\/order/);
   assert.equal((await one(DB, `SELECT note FROM calls WHERE id='${c2.call.id}'`)).note, "wants it");
@@ -857,7 +857,7 @@ every action closes `call:<id>` and `call-outcome:<id>` and stores `note`.
 Links: `demo = <app_url>/d/<slug>`, `order = <app_url>/d/<slug>/order`; `drill:`/`test:` leads use fixtures from Task 17
 and `https://aetoswebsites.com` when they have no demo.
 
-- [ ] **Step 1: Write the failing test** — seed (Wed 21 Oct 2026, 09:00 UK) prospect `p1` with Nik's first email, a follow-up, two waiting inbound (`m1` at 08:05Z, `m2` at 08:07Z, `m2` text `"How much?\n\nOn Tue, Nik wrote:\n> Hi"`), research grade A, demo slug `green-leaf-ab12`, `app_url` `https://control.aetoswebsites.com`; prospect `p2` stage `won` with a handled message.
+- [ ] **Step 1: Write the failing test** — seed (now = Wed 21 Oct 2026 09:30 UK = `2026-10-21T08:30:00Z`) prospect `p1` with Nik's first email, a follow-up, two waiting inbound (`m1` at 08:05Z, `m2` at 08:07Z, `m2` text `"How much?\n\nOn Tue, Nik wrote:\n> Hi"`), research grade A, demo slug `green-leaf-ab12`, `app_url` `https://control.aetoswebsites.com`; prospect `p2` stage `won` with a handled message.
   ```js
   const res = await onRequestGet({ request: req("/api/agent/inbox", TOKEN), env });
   assert.equal(res.status, 200);
@@ -899,7 +899,7 @@ required 422 → guard 422 `{error: "Reply refused", reasons}` → slot day not 
 On success one `DB.batch`: queue the reply (drill: `status 'cancelled'`, `error 'drill: not sent'`), mark waiting
 messages up to `message_id` handled with `intent`, apply `intentEffects`, then call/todo writes.
 
-- [ ] **Step 1: Write the failing test** — seed as Task 9; clock fixed at Wed 21 Oct 2026 09:00 UK via `now`.
+- [ ] **Step 1: Write the failing test** — seed as Task 9; `NOW = D("2026-10-21T08:30:00Z")` (Wed 09:30 UK).
   ```js
   const ok = await recordReply(DB, { message_id: "m2", intent: "price", body: "Hi Sam,\n\nIt's £1,950 for the website, then £249 a month, with the first 60 days free.\n\nhttps://control.aetoswebsites.com/d/green-leaf-ab12/order", now: NOW });
   assert.equal(ok.status, 200);
@@ -931,7 +931,7 @@ messages up to `message_id` handled with `intent`, apply `intentEffects`, then c
   // (p7 in its own thread)
   await recordReply(DB, { message_id: "m7", intent: "not_now", body: "Hi,\n\nNo problem. Would it be OK if I checked back in with you in 3 months?", now: NOW });
   assert.deepEqual(await one(DB, "SELECT stage, lost_reason FROM prospects WHERE place_id='p7'"), { stage: "lost", lost_reason: "not_now" });
-  assert.equal((await one(DB, "SELECT due_at FROM todos WHERE dedupe='checkback:p7'")).due_at, "2027-01-19T09:00:00Z");
+  assert.equal((await one(DB, "SELECT due_at FROM todos WHERE dedupe='checkback:p7'")).due_at, "2027-01-19T08:30:00Z");
   await recordReply(DB, { message_id: "m8", intent: "opt_out", now: NOW });
   assert.equal(await count(DB, "SELECT COUNT(*) n FROM messages WHERE in_reply_to='<m8@them.co.uk>'"), 0);
   assert.equal((await one(DB, "SELECT reason FROM suppression WHERE value='p8@them.co.uk'")).reason, "opt_out");
@@ -940,7 +940,7 @@ messages up to `message_id` handled with `intent`, apply `intentEffects`, then c
   assert.deepEqual(await one(DB, "SELECT status, error FROM messages WHERE place_id='drill:price' AND kind='reply'"), { status: "cancelled", error: "drill: not sent" });
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/agent-reply.test.mjs` → FAIL: `recordReply` is not exported.
-- [ ] **Step 3: Implement `recordReply` and `onRequestPost` in `api/agent/reply.js`** — `checkback` Todo due `now + 90 days` (kind `pick`, title `Check back with <business> (they said not now on <d Mon>)`); after the batch, if the prospect has a confirmed future call, apply `call_confirmed` so the stage reads `call_booked`.
+- [ ] **Step 3: Implement `recordReply` and `onRequestPost` in `api/agent/reply.js`** — with `call.action = "confirm"` the intent's `escalate`/`call_time` effects are skipped (a proposed time that is a free slot is simply booked); `call_time` Todo title is `Confirm a time with <greet_name> (<business>) by 6pm[ tomorrow] (they asked for <asked_time>)`, or `Confirm a time with <business> …` without a name; `checkback` Todo due `now + 90 days` (kind `pick`, title `Check back with <business> (they said not now on <d Mon>)`); after the batch, if the prospect has a confirmed future call, apply `call_confirmed` so the stage reads `call_booked`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/agent-reply.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/replies-db.js control-room/functions/api/agent/reply.js control-room/tests/agent-reply.test.mjs && git commit -m "Replies: checked, threaded replies from the Routine" -m "$TRAILERS"`
 
@@ -1130,16 +1130,17 @@ Promise<void>` (exported from `call.js`, used by the lead drawer and the thread 
     assert.doesNotMatch(readFileSync(new URL("../public/js/callscript.js", import.meta.url), "utf8"), /£\d/);
   });
   ```
-  and in `call-page.test.mjs`:
+  (the other `callScript` calls in that file gain `offer: WEEKDAY_OFFER`), and in `call-page.test.mjs`:
   ```js
-  const html = callPageHtml({ call: { id: "c1", status: "confirmed", phone: "07700 900123" }, label: "Tuesday 20 October at 11am", after_slot: true,
-    lead: { name: "DIAMOND KICKBOXING LTD", director_first_name: "Mark" }, offer: WEEKDAY_OFFER, thread_link: "/#/replies/p1" });
+  const data = { call: { id: "c1", status: "confirmed", phone: "07700 900123" }, label: "Tuesday 20 October at 11am", after_slot: true,
+    lead: { name: "DIAMOND KICKBOXING LTD", director_first_name: "Mark" }, offer: WEEKDAY_OFFER, thread_link: "/#/replies/p1" };
+  const html = callPageHtml(data);
   assert.match(html, /Tuesday 20 October at 11am/); assert.match(html, /href="tel:07700900123"/);
   for (const b of ["Done", "No answer", "They're ordering: send the order link", "Not for them"]) assert.match(html, new RegExp(b));
   assert.match(callPageHtml({ ...data, after_slot: false }), /Cancel call/);
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/callscript.test.mjs control-room/tests/call-page.test.mjs` → FAIL: `£\d` found in callscript.js; `call.js` missing.
-- [ ] **Step 3: Implement** — `callScript` builds the price and guarantee lines from `opts.offer` (weekend: "It's normally around £<anchor> for the build, but this weekend it's £<build>…"), drops its own `isWeekend`; `call.js` renders the page and box with copy exactly as Part A; the lead drawer mounts `renderCallBox` in a "Call" section.
+- [ ] **Step 3: Implement** — `callScript` builds the price and guarantee lines from `opts.offer` (weekend: "It's normally around £<anchor> for the build, but this weekend it's £<build>…"), replaces every guarantee line with the `offer.guarantees` sentences, drops its own `isWeekend`; `call.js` renders the page and box with copy exactly as Part A; the lead drawer mounts `renderCallBox` in a "Call" section.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs && for f in control-room/public/js/*.js; do node --check "$f"; done` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/public/js/call.js control-room/public/js/callscript.js control-room/public/js/leads.js control-room/public/js/app.js control-room/tests/callscript.test.mjs control-room/tests/call-page.test.mjs && git commit -m "Calls: call page, lead drawer box, script priced from the offer" -m "$TRAILERS"`
 
