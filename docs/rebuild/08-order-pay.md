@@ -97,10 +97,11 @@ Stage 0 owns `_lib/offer.js` (`PACKAGES`, `MONTHLY_PENCE`, `offerFor`, `termsFor
      `{Extras}` = `The monthly Google work and the report`, plus `, the chat assistant` / `, the review booster` when
      those lines are shown (joined so the last one is "and …").
   4. `What happens when the free days end?` — `On day {freeDays+1} we take £249 from the card you paid with, then the same each month. Don't want to carry on? Tell us before then and you won't be charged.`
-  5. `How do you measure the top 3?` — `On Google's results for your main service and town (for example "roofer Leeds"), searched from your area. The map results at the top count. If you're not in the top 3 within 90 days, we work for free until you are.`
+  5. `How do you measure the top 3?` — `On Google's results for your main service and town (for example "roofer Leeds"), searched from your area. The map results at the top count. ` + `GUARANTEE.section` (overview §9 wording, never "work for free until you are").
   6. `Is paying online safe?` — `Yes. Payments are taken by Stripe, which handles card payments for millions of businesses. We never see your card details.`
-  Stage 10 appends `Your 90 days start the day you give us access to your Google Business Profile.` to answer 5
-  (Q-B default, "Manager access"); this stage ships the answer without it.
+  Stage 11 (10-monthly-care.md Task 19) appends `" " + CLOCK_START` (`Your 90 days start the day you give us access to your Google Business Profile.`,
+  exported from its `care.js`) to answer 5 (Q-B default, "Manager access"); this stage ships the answer without it,
+  because `care.js` doesn't exist yet.
 - Footer: `Payments are taken securely by Stripe. We count visits to this page so we know you've seen it.` plus
   stage 0's `traderLine(business)` (D-7: Nik's name, "trading as Aetos Websites", address), omitted when it returns `""`.
 - `order_page` is recorded by a 4-second beacon (same rule as demo views; scanners don't count). The buttons carry
@@ -186,8 +187,9 @@ Ignored unless `payment_status` is `paid` or `no_payment_required` and `metadata
 From the active `system`-role mailbox; if none, the active cold mailbox with the most capacity left plus a `setup`
 Todo; if no active mailbox at all, nothing is queued and a `setup` Todo carries the email as its `draft`.
 Greeting: `Hi {greet_name},` when `prospects.greet_name` is set, else `Hi,`. Sign-off name = the
-`business:sender_name` setting (else `Nik`), for this and every client email. Stage 10 adds the line
-`Your 90 days start the day you give us access to your Google Business Profile.` to the Full Package paragraph (Q-B).
+`business:sender_name` setting (else `Nik`), for this and every client email. Stage 11 (10-monthly-care.md Task 19)
+adds `CLOCK_START` (`Your 90 days start the day you give us access to your Google Business Profile.`) as the last
+line of the Full Package paragraph (Q-B).
 Exact text:
 
 ```
@@ -580,6 +582,9 @@ ukLongDate("YYYY-MM-DD") → "Friday 18 December 2026"
     `Nothing more to pay until day 61. Cancel any time.`, `name="package" value="full"`,
     `name="seen" value="weekday"`, `action="/d/smith-roofing/checkout"`; does not contain `Weekend price — ends`
     or `Most popular`.
+  - `FAQ 5 uses the guarantee wording`: weekday and weekend pages contain
+    `` `The map results at the top count. ${GUARANTEE.section}` `` and
+    `assert.doesNotMatch(html, /work for free until you are/)`.
   - `weekend page`: offer at `2026-10-24T12:00:00Z` → contains `Weekend price — ends Sunday midnight`,
     `<s>£1,950</s>`, `£1,750`, `First 90 days free.`, `until day 91`, `value="weekend"`.
   - `extras only when live`: `extras {chatbot: false, reviews: false}` → no `chat assistant`, no `Review booster`,
@@ -916,8 +921,9 @@ Then run the live checks 3–12 of "Perfect when" in Stripe test mode before sta
   `setup:system_mailbox` todo.
 - `_lib/stripe.js`: `stripeApi(key, method, path, params, fetchImpl)`, `stripeKey(env, DB)` (the old
   `stripe(env, …)` is gone; stage 10's `pauseFee` uses these) and `tests/helpers/fakeStripe.mjs`.
-- Order page FAQ 5 and the welcome email's Full Package paragraph: stage 10 appends
-  `Your 90 days start the day you give us access to your Google Business Profile.` (Q-B default).
+- Order page FAQ 5 (`…The map results at the top count. ` + `GUARANTEE.section`) and the welcome email's Full
+  Package paragraph: stage 11 (10-monthly-care.md Task 19) appends `" " + CLOCK_START` to FAQ 5 and `CLOCK_START`
+  as the paragraph's last line (Q-B default). FAQ 5 must never say "work for free until you are" (`order-page.test`).
 - `todo.js`: `closeLeadTodos(DB, place_id, {exceptKinds})`.
 - `onboarding` row with `status 'sent'` and `token`; link format `{origin}/onboard/{token}`, origin = the host the
   prospect ordered on (`metadata.origin`). Stage 10 owns `/onboard/:token` and must

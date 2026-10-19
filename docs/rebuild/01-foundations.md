@@ -920,10 +920,12 @@ that UK day.
   - `WEEKEND_BANNER` and `NO_CONTRACT` equal the Part A strings.
   - `(await import("../functions/_lib/money.js")).PACKAGES === PACKAGES`.
   - "no other module hard-codes a price": no file in `functions/_lib` except `offer.js` matches
-    `/\b(195000|175000|24900)\b/`.
+    `/\b(195000|175000|24900)\b/`. Comments count (the test reads the raw source), which is why Step 3 rewrites the
+    existing `money.js` comment.
 - [ ] **Step 2: Run it to verify it fails.** `node --test control-room/tests/offer.test.mjs` fails with "Cannot find module".
-- [ ] **Step 3: Implement `offer.js` and re-export from `money.js`.** Existing tests (`money`, `stripe`, `demo`)
-  must stay green.
+- [ ] **Step 3: Implement `offer.js` and re-export from `money.js`.** In `money.js`, also rewrite the comment above
+  the pounds parser (about line 222, `"£1,950.00" → 195000`) to `"£12.50" → 1250`, so it no longer matches the price
+  regex. Existing tests (`money`, `stripe`, `demo`) must stay green.
 - [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/*.test.mjs` passes.
 - [ ] **Step 5: Commit.** `git add control-room/functions/_lib/offer.js control-room/functions/_lib/money.js control-room/tests/offer.test.mjs && git commit -m "One offer module for prices and the weekend deal"`.
 
@@ -1738,15 +1740,19 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
 **Interfaces:**
 - Consumes `GET /api/setup`, `/api/health`, `/api/setup/*`, `/api/stripe/setup`, and `api`, `esc`, `safeUrl`,
   `pageHead`, `toast`, `modal` from `lib.js`, plus `paymentLinks` and `bindCopy` from `money.js`.
-- Produces in `app.js`: `PAGES = [{route, label, icon, render}]`. Stage 0 has home, leads, scraper, maprank, money;
-  setup is in the bottom nav. Later stages push entries until file 11 replaces the nav with `public/js/nav.js`
+- Produces in `app.js`: `PAGES = [{route, label, icon, render, nav?}]`. Stage 0 has home, leads, scraper, maprank,
+  money; setup is in the bottom nav. An entry with `nav: false` is routable but not shown in the nav. `app.js`
+  routes by `PAGES.find` on the page name it is given (04's `parseRoute` returns the first hash segment for any
+  route) and falls back to home for an unknown page. Later stages push entries until file 11 replaces the nav with `public/js/nav.js`
   (`NAV` + `routeFor`), after which file 11 owns routing and later stages add routes there. `setupPage()` is
   exported from `setup.js`. The Health section shows each light's dot by `level` and its `detail`, with `fix` under
   it when the level isn't green or grey.
 
 - [ ] **Step 1: Write the failing test.** Add `control-room/tests/shell.test.mjs`:
   - `app.js` source contains no `"soon"` and no `roadmap`/`outreach` routes. The `PAGES` routes, extracted by a
-    regex on `route: "…"`, are exactly `["home","leads","scraper","maprank","money"]`.
+    regex on `route: "…"`, include each of `["home","leads","scraper","maprank","money"]` (present, not an exact
+    match, because 05 and 07 add `nav: false` entries). File 11 Task 11 deletes this `PAGES` assertion when it
+    removes `PAGES`.
   - `setup.js` contains the section headings `Health`, `Mailboxes`, `Receiving replies`, `Claude` and
     `Business details`, plus the D-2 text `Error 1102`.
   - `setup.js` imports `esc` from `./lib.js`. Every server value shown (addresses, names, errors, DNS values) goes
@@ -1756,7 +1762,8 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
   - Move `setupPage` and `stripeCard` from `app.js` into `setup.js` and add the sections from Part A ("What Nik
     sees"). The test send uses raw `fetch` so it can read a non-JSON 503 whose body contains `1102` and show the
     D-2 message.
-  - `app.js` builds the nav from `PAGES`, routes by `PAGES.find`, and on load fetches `/api/setup/business`. When
+  - `app.js` builds the nav from `PAGES` (skipping `nav: false` entries), routes by `PAGES.find` (unknown → home),
+    and on load fetches `/api/setup/business`. When
     `complete` is false, it shows `.banner-red` with the Part A text.
   - Update `CLAUDE.md`'s Repo layout table and the sentence about `roadmap.js` (the Roadmap page is gone; the Todo
     page replaces it in file 11).
@@ -1848,9 +1855,12 @@ Everything in overview §8 is built here with exactly those signatures. These ar
   prospect or a client, an `opt_out`-class email is handled as `human`.
 
 **Tick, health and setup**
-- `runTick` passes `ctx = {DB, env, now, reason, results, budget}` (`DB` counted; `budget.left()`). A tick makes at
-  most 50 D1 queries, keeps 6 for `health`, and reports `"deferred"` for a step it can't start with 10 left.
-  `countingDB(DB)` (`_lib/d1count.js`) and `TICK_BUDGET` are exported. `tick.js` has a marker for every slot of
+- `runTick` passes `ctx = {DB, env, now, reason, results, budget}` (`DB` counted). `ctx.budget` is an object, never
+  a number: every step reads `ctx.budget.left()`, and step tests pass `budget: {left: () => N}`. A tick makes at
+  most 50 D1 queries and reports `"deferred"` for a step it can't start with 10 left. `health` runs only in its own
+  invocation (`/api/tick?reason=health`, called by the relay after every cron tick) with the full 50; every other
+  reason skips it. Nothing is reserved for it. `countingDB(DB)` (`_lib/d1count.js`) and `TICK_BUDGET` are exported.
+  A registered light makes at most 1 D1 statement (its stage's test asserts it with `countingDB`). `tick.js` has a marker for every slot of
   overview §8 (inbound, reply_fire, followups, send, hot, pick, daily_find, stale_jobs, calls, sites, care, purge,
   health).
 - `loadSetupStatus`, `setupGaps` (`_lib/setupStatus.js`); `computeLights`, `registerLight`, `healthFromDb`,
@@ -1872,7 +1882,10 @@ Everything in overview §8 is built here with exactly those signatures. These ar
   `secret:agent_token`, `secret:routine:<name>:url`, `secret:routine:<name>:token`.
 
 **App shell**
-- `PAGES` registry in `public/js/app.js`: each later stage adds `{route, label, icon, render}` until file 11 ships.
+- `PAGES` registry in `public/js/app.js`: each later stage adds `{route, label, icon, render}` until file 11 ships
+  (pages reached from a lead or a todo rather than the nav, e.g. 05 `demo` and 07 `call`, add `nav: false`).
+  `app.js` routes any first hash segment through `PAGES.find`, unknown → home. `shell.test.mjs` asserts stage 0's 5
+  routes are present, not an exact list, so these additions don't break it; file 11 Task 11 deletes that assertion.
   File 11 then replaces it with `public/js/nav.js` (`NAV` + `routeFor`) and owns routing; later stages add their
   routes there.
 

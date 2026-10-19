@@ -314,8 +314,9 @@ demos and raises hot todos. The Control Room gets a Demo page and a demo card in
 - Contrast minimum 4.5:1 against `#ffffff`; fallback `CHARCOAL = "#1a1c20"`; landscaper default `#2f6b3a`.
 - HTML < 100,000 bytes; max 6 photos, 8 services, 12 areas, 3 reviews.
 - The `hot` tick step runs every 5 minutes and issues at most 25 D1 statements per run (free plan: 50 per invocation,
-  shared with every tick step). Stage 0's `runTick` gives each step `ctx.budget`; when it reports fewer than 25
-  queries left, `hotStep` skips the missing-demo part (the only optional part) and says so in its summary.
+  shared with every tick step). Stage 0's `runTick` gives each step `ctx.budget`, an object: `ctx.budget.left()` is
+  the queries this step may still make. When `ctx.budget.left()` is below 25, `hotStep` skips the missing-demo part
+  (the only optional part) and says so in its summary. Tests pass `budget: {left: () => N}`, never a number.
 - Every prospect stage change goes through stage 0's `applyStageEvent` (`_lib/prospects.js`), never a direct
   `nextStage` write.
 - All times written by this stage use `now()` format `YYYY-MM-DDTHH:MM:SSZ` so string comparison works.
@@ -783,8 +784,9 @@ Test `control-room/tests/demo-hot.test.mjs`.
 
 **Interfaces:**
 Consumes: `ensureDemo` (Task 8), `isHot(prospect, now)` (stage 3's `_lib/shortlist.js`, the app's only `isHot`, with
-the Part A §9 rule), `addTodo` (todo.js), `ukDate`, `ukParts` (ukTime.js), `shortName` (Task 2), `ctx.budget` (stage
-0's `runTick`).
+the Part A §9 rule), `addTodo` (todo.js), `ukDate`, `ukParts` (ukTime.js), `shortName` (Task 2), `ctx.budget.left()` (stage
+0's `runTick`; `ctx.budget` is an object, not a number), `countingDB(DB) → {DB, used}` (stage 0's `_lib/d1count.js`,
+tests only).
 Produces:
 ```js
 // demo-db.js
@@ -792,11 +794,11 @@ syncDemoExpiry(DB) → Promise<number>          // one UPDATE: latest demo per l
 missingDemos(DB, now, limit = 3) → Promise<string[]>   // eligible place_ids (Part A §1 checks in SQL) with no live demo or no prospect, prospect stage NULL or 'ready'
 // hot.js
 hotTitle(name, views) → string                 // pure: "Call now: <name> opened their site <N> times" / "… once"
-hotStep({ DB, env, now, budget }) → Promise<string>    // "expiry +<n> · demos made <n> · hot <n> · closed <n>" (+ " · demos skipped: low budget")
+hotStep({ DB, env, now, budget }) → Promise<string>    // budget = {left: () => number}; "expiry +<n> · demos made <n> · hot <n> · closed <n>" (+ " · demos skipped: low budget")
 ```
 `hotStep` order: `syncDemoExpiry` (1 statement) → close open `hot` todos whose dedupe starts `hot:<place_id>:` for
 prospects with `last_inbound_at` or stage not `emailed`/`viewed` (1 statement; no other dedupe is ever closed here) →
-`missingDemos` + `ensureDemo` each (≤ 1 + 3×4; skipped when `budget` reports fewer than 25 queries left) → select hot
+`missingDemos` + `ensureDemo` each (≤ 1 + 3×4; skipped when `budget.left() < 25`) → select hot
 prospects with no open todo for today or a stale title, max 3 (1) → per prospect one `DB.batch` of insert-or-ignore
 today's todo, update its title/detail, close older days of that lead's `hot:<place_id>:` todos (3 each).
 
@@ -815,8 +817,9 @@ today's todo, update its title/detail, close older days of that lead's `hot:<pla
   // setting last_inbound_at closes it; an open todo with dedupe "checkout:p1" (stage 9) stays open
   // a sent message on day 170 extends expires_at to sent_at + 180 days (latest demo only)
   // 50 eligible leads without demos → 3 made per run, each prospect created through applyStageEvent (stage 'ready')
-  // budget: wrap DB to count prepare() calls; with 50 eligible + 20 hot leads, one run uses ≤ 25
-  // budget below 25 → no demos made, summary ends "demos skipped: low budget"
+  // budget: with 50 eligible + 20 hot leads, one run uses ≤ 25 (each statement in a batch counts, as in stage 0):
+  //   const c = countingDB(DB); await hotStep({ DB: c.DB, env: {}, now: NOW, budget: { left: () => 50 } }); assert.ok(c.used() <= 25)
+  // budget: { left: () => 24 } → no demos made, summary ends "demos skipped: low budget"
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/demo-hot.test.mjs` → FAIL.
 - [ ] **Step 3: Implement `syncDemoExpiry`, `missingDemos` in `demo-db.js` and `hotTitle`, `hotStep` in `hot.js`
@@ -862,8 +865,10 @@ of that template, newest research first: first with ≥ 2 photos, first with 0 p
 
 ### Task 14: Demo page and the lead drawer card
 
-**Files:** Create `control-room/public/js/demo.js`; Modify `control-room/public/js/app.js` (register the route `demo`
-only, no nav item), `control-room/public/js/leads.js` (replace the old `demoCard`: fetch `GET /api/demo/lead/:id` and
+**Files:** Create `control-room/public/js/demo.js`; Modify `control-room/public/js/app.js` (add
+`{route: "demo", label: "Demo", icon, render: demoPage, nav: false}` to `PAGES`: routed, no nav item; stage 3's
+`parseRoute` passes any first hash segment through as `page` and `PAGES.find` resolves it, and stage 0's
+`shell.test.mjs` only checks its 5 routes are present, so it still passes), `control-room/public/js/leads.js` (replace the old `demoCard`: fetch `GET /api/demo/lead/:id` and
 put `demoCardHtml` into stage 3's `#d-demo` mount point; remove "Make demo now"), `control-room/public/style.css`
 (`.demo-look`, `.demo-frame` 390×700 with scroll, `.demo-card`); Test `control-room/tests/demo-ui.test.mjs`.
 
@@ -889,7 +894,8 @@ Produces: `demoPage()` (route `#/demo`), `demoCardHtml(info) → string` (pure, 
   (`demo.js` must import nothing that touches `document` at module load; DOM work happens inside `demoPage()`.)
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/demo-ui.test.mjs` → FAIL.
 - [ ] **Step 3: Implement `demoPage`, `demoCardHtml`, `lookCardHtml` in `control-room/public/js/demo.js`** and wire
-  the route (no nav item) and the drawer's `#d-demo` mount; "Approve this look" posts `{template, version}` and shows
+  the route (the `PAGES` entry with `nav: false`; if stage 0's nav builder doesn't already skip `nav: false` entries, add
+  that one check to it here) and the drawer's `#d-demo` mount; "Approve this look" posts `{template, version}` and shows
   the API's error text in a toast.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs && for f in control-room/public/js/*.js; do node --check "$f"; done` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/public/js/demo.js control-room/public/js/app.js control-room/public/js/leads.js control-room/public/style.css control-room/tests/demo-ui.test.mjs && git commit -m "Demo page: approve looks, see demos and views; demo card in the lead drawer" -m "$TRAILER"`
@@ -933,13 +939,15 @@ Then run the Part A "Perfect when" live checks 6–12 on the deployed site.
   === "ready"`, `nextStage("emailed", "demo_view") === "viewed"` and `nextStage(s, "demo_view") === s` for every
   other stage.
 - Stage 3's `_lib/shortlist.js`: `isHot(prospect, now)` with the Part A §9 rule (only `emailed`/`viewed`).
-- Stage 0's `runTick`: `ctx.budget` (queries left in this invocation).
+- Stage 0's `runTick`: `ctx.budget`, an object whose `ctx.budget.left()` is the queries left in this invocation;
+  stage 0's `countingDB(DB) → {DB, used}` for the budget test.
 - **Stage 0 middleware host routing:** `/d/*` must be public and served on the root domain `aetoswebsites.com` (not
   replaced by the landing page), and `/robots.txt` should disallow `/d/`.
 - **Stage 2:** `research.copy` is `{headline, intro, services: string[], areas: string[], about}`; `research.owner` is
   `{first, full, source_url, confident}`; `research.best_email` is a single address.
-- **Stage 3 / file 11:** the lead drawer keeps the `#d-demo` mount point for `demoCardHtml`; file 11's `routeFor`
-  keeps the `demo` route (there is no nav item for it).
+- **Stage 3 / file 11:** the lead drawer keeps the `#d-demo` mount point for `demoCardHtml`; stage 3's `parseRoute`
+  returns the first hash segment as `page` for any route (so `#/demo` reaches `PAGES.find` instead of Home); file
+  11's `routeFor` keeps the `demo` route (there is no nav item for it).
 - **Stage 9:** its payment-page todos use dedupe `checkout:<place_id>` (never `hot:…`), so the `hot` step can't close
   them.
 - **Stage 0 sending:** outbound rows in `messages` have `direction = 'out'`, `status = 'sent'`, `sent_at` and

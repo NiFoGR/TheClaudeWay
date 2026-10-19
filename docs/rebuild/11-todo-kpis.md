@@ -21,7 +21,8 @@ phone, and the weekly numbers show which emails work so we can improve them.
   every 60 s.
 - Every page load updates the count badge on the Todo nav link (`GET /api/todo/count`).
 - Nik opens **KPIs** (`#/kpis`, optional `?week=2026-W43`).
-- The weekly-kpis Routine (`aetos-weekly-kpis`) runs every Sunday at 18:47 UK.
+- The weekly-kpis Routine (`aetos-weekly-kpis`) runs every Sunday at 18:47 UK. It also has an API trigger, whose
+  URL and token go on Setup → Claude (Setup's Test fire and stage 0's `routine:weekly-kpis` light need them).
 - The tick's `purge` step does the 12-month clean-up once a month (see "Data clean-up").
 
 ## Who does what
@@ -64,8 +65,13 @@ What each row shows. All text comes from the todo row, enriched by the API.
 
 | kind | Shows | Buttons |
 | --- | --- | --- |
-| `escalation` | title, detail, Claude's `draft` in a read-only box | **Send** (sends the draft as Nik's reply in the thread), **Edit** (box becomes editable, button becomes **Send edited**), **Open email thread**, Done, Dismiss |
-| `call_time` | title, detail, `draft` if present | **Send** / **Edit** when a draft exists, **Open email thread**, Done, Dismiss |
+| `escalation` | title, detail, Claude's `draft` in a read-only box (when set) | **Send** (sends the draft as Nik's reply in the thread), **Edit** (box becomes editable, button becomes **Send edited**), **Open email thread**, Done, Dismiss |
+| `call_time` | title, detail, `draft` if present | **Send** / **Edit**, **Open email thread**, Done, Dismiss |
+
+- **Send / Edit** show only when the item's `can_send` is true: it has a `draft` and `messageIdFromDedupe(dedupe)`
+  gave a message id. Client and unknown-sender escalations (stage 0's `escalation:client:<id>` and
+  `escalation:unknown:<id>`, no draft and no thread) never get them; they show **Open** (`todos.link`) when set,
+  Done and Dismiss.
 | `call` | title, time "Tue 11:00", phone | **Call <phone>** (`tel:`), **Open email thread**, Done, Dismiss |
 | `hot` | title, phone | **Call <phone>** when there's a phone, **Open lead**, Done, Dismiss |
 | `health`, `payment`, `build`, `care`, `kpi`, `pick`, `setup` | title, detail | **Open** (`todos.link`), Done, Dismiss |
@@ -144,7 +150,7 @@ Under the cards: "<n> past clients on the Money page" when there are any.
 | Build | onboarding with no row: "Onboarding form not sent yet". `sent`: "Waiting for their onboarding form · sent <when created_at>". Building: days = UK days from today to `due_live_at`; ≥ 2 "Live by Sat 24 Oct · <n> days left", 1 "Live by tomorrow", 0 "Due live today", < 0 "<n> days late" (red, needs attention). `live`: no build line. |
 | Guarantee | A client with a `care` row (stage 11, 10-monthly-care.md) shows stage 11's `guaranteeLabel(care, ukToday)`; stage 11 owns the guarantee clock (Q-B). Without a `care` row (before stage 11 ships): only for packages with a monthly fee and `live_at` set. Day = UK days since `live_at` + 1. Up to day 90: "Guarantee day <d> of 90". After that: "90-day guarantee ended <live + 89 days, D Mon>". |
 | Rank | A client with a `care` row shows its latest scored `care_scans` row (stage 11's figures). Otherwise: no `lead_map_rank` row: "No Map Rank scan yet" (links `/#/maprank`). Else "Top 3 in <top3_pct>% of their area · average position <avg_rank 1 dp> · checked <when updated_at>" (links `/#/maprank?scan=<scan_id>&biz=<place_id>`). |
-| Monthly | `failed_on` set: "Card failed <D Mon>" (red, needs attention). Otherwise `free` "Free until <firstCharge D Mon>", `paying` "<formatPounds(monthly)> a month", `one-off` "Website only". |
+| Monthly | `failed_on` set: "Card failed <D Mon>" (red, needs attention). Otherwise `free` "Free until <firstCharge D Mon>", `paying` "<formatPounds(monthly)> a month", `one-off` "Website only". Stage 11 (10-monthly-care.md, Task 18) adds the key `working_free`: "Fee paused: working free". The wording is a lookup by `clientStatus` key, so an unknown key shows no Monthly line instead of throwing. |
 | Next care task | The earliest open todo with this `client_id` and kind `care` or `build`: "<title> · <future when due_at>". If there's none: "No care tasks due". |
 
 - **Card order:** needing attention first (late builds, then failed cards), then `building` by `due_live_at`, then
@@ -204,7 +210,8 @@ open Setup." It never shows a blank page.
 - **Speed:** the median minutes from the latest human inbound before each Claude reply to that reply (overnight mail
   counts in full).
 - **Escalated:** `escalation` todos created that week whose `dedupe` starts `escalation:` but not
-  `escalation:unknown:` (unknown-sender escalations aren't Claude's replies to a lead).
+  `escalation:unknown:` or `escalation:client:` (unknown-sender and client escalations aren't Claude's replies to a
+  lead).
 
 **Week totals**
 - Sent, bounced, human replies received, positive replies received and opt-outs received in the week.
@@ -384,7 +391,9 @@ Claude never edits templates, grades or anything else. Nik decides.
 ## Money, Map Rank and navigation
 
 **Money (kept)**
-- Prices come from stage 0's `offer.js` (`PACKAGES`, `MONTHLY_PENCE`, `formatPounds`) via `GET /api/offer`.
+- Prices come from stage 0's `offer.js` (`PACKAGES`, `MONTHLY_PENCE`, `formatPounds`). The Money page keeps reading
+  them from 08's `summary.packages`; other pages read them through `GET /api/offer` (`getOffer()`). Both are
+  serialisations of `offer.js`, so there is one source of truth.
 - Money's pipeline card counts `prospects` (`call_booked`; `replied` + `needs_nik`), not the old `leads.status`.
 - Nothing else changes.
 
@@ -414,7 +423,8 @@ Claude never edits templates, grades or anything else. Nik decides.
 The privacy notice (stage 0) promises: "If we contacted you and you didn't become a customer, we delete your details
 12 months after our last contact." The tick step `purge` keeps that promise.
 
-- **When:** once a month. The step runs in the tick right before `health`; it does nothing until the first tick of a
+- **When:** once a month. The step is the last one in `STEPS` before `health` (which runs on its own
+  `reason=health` invocation, stage 0); it does nothing until the first tick of a
   new UK month, then works through everything due over the following ticks and marks the month done (setting
   `purge:month = YYYY-MM`) when nothing is left.
 - **Who is deleted:** a `place_id` that has no `clients` row, whose last contact is more than 12 months ago. Last
@@ -424,7 +434,7 @@ The privacy notice (stage 0) promises: "If we contacted you and you didn't becom
 - **What is kept:** `suppression` (so a "no thanks" or bounce is never emailed again), every client's rows, and the
   scraped `leads` row (public business listing, owned by the scraper).
 - **Limits:** at most 90 leads per round, and only as many rounds as the tick's query budget allows (stage 0's
-  `ctx.budget`); the rest waits for the next tick.
+  `ctx.budget.left()`); the rest waits for the next tick.
 - **Result line:** "purged <n> leads" / "purged <n> leads, more next tick" / "nothing to purge" / "done this month" /
   "deferred" (not enough query budget left this tick).
 
@@ -497,9 +507,12 @@ JS, `style.css`.
   `health` todo is hidden from Today only when its dedupe is `health:<name>` of a current light.
 - `COLUMN_STAGES = ["ready","emailed","viewed","replied","needs_nik","call_booked","won"]`, plus `lost` apart.
 - `CARD_CAP = 50` per column. The Todo page polls every 60 s, and only while the hash is `#/` or `#/todo`.
-- Routine `aetos-weekly-kpis` (heartbeat name `weekly-kpis`): Sonnet, Sunday 18:47 Europe/London. Analysis 1–6000
+- Routine `aetos-weekly-kpis` (heartbeat name `weekly-kpis`): Sonnet, Sunday 18:47 Europe/London, plus an API
+  trigger (URL and token on Setup → Claude, used by Test fire). Analysis 1–6000
   chars, ≤ 3 suggestions. Its prompt starts with stage 0's standard preamble and uses `$CONTROL_ROOM_URL`.
-- In-app links use the `/#/…` form. Stored times have no milliseconds (`util.now()`/`iso()`).
+- In-app links use the `/#/…` form. Stored times have no milliseconds (`util.now()`/`iso()`; `iso` is imported
+  from `_lib/util.js`, never from `find.js`).
+- The tick budget is stage 0's object: steps call `ctx.budget.left()`, and tests pass `budget: {left: () => N}`.
 - `loadBoard` and `loadKpiRows` skip `place_id LIKE 'drill:%' OR place_id LIKE 'test:%'`.
 - Purge: `PURGE_BATCH = 90` leads per round; 12 months = the same UK calendar date a year earlier.
 - Phone: 375 px, 16 px gutter, no page-level sideways scroll, tap targets ≥ 40 px. Gold only for primary buttons,
@@ -694,12 +707,13 @@ JS, `style.css`.
   - `visibleTodos(rows, lights) → rows` (pure): drops `health` todos whose dedupe is `health:<name>` of a light in
     `lights`
   - `messageIdFromDedupe(dedupe) → string|null` (pure): `escalation:<id>` / `call_time:<id>` → `<id>`, with any
-    `@…` suffix stripped; anything else → null
+    `@…` suffix stripped; `escalation:client:…`, `escalation:unknown:…` and anything else → null
   - `loadBoard(DB, env, now) → Promise<{now, health, today: {overdue, today, later}, pipeline, clients, counts: {due,
     red}}>`
   - `setTodoStatus(DB, id, status, now) → Promise<"ok"|"missing">`
   - Todo item shape: `{id, kind, title, detail, link, draft, due_at, place_id, client_id, business, phone,
-    lead_link, thread_link}`
+    lead_link, thread_link, can_send}`, where `can_send = kind in (escalation, call_time) && !!draft &&
+    messageIdFromDedupe(dedupe) !== null`
   - Routes:
     - `GET /api/todo` → `loadBoard`
     - `GET /api/todo/count` → `{due, red}`
@@ -731,6 +745,7 @@ JS, `style.css`.
     assert.deepEqual(b.today.later.map((t) => t.id), ["t-call", "t-kpi"]);
     const call = b.today.later[0];
     assert.deepEqual([call.phone, call.thread_link, call.business], ["07969 123456", "/#/replies/pc", "<pc name>"]);
+    assert.equal(b.today.today[0].can_send, true);                       // t-esc: draft + message id
     assert.ok(!JSON.stringify(b.today).includes("t-health") && !JSON.stringify(b.today).includes("t-done"));
     assert.deepEqual(b.pipeline.columns.map((c) => c.count), [1, 1, 2, 1, 1, 1, 1]);
     assert.equal(b.counts.due, 6);
@@ -740,6 +755,8 @@ JS, `style.css`.
     assert.equal(messageIdFromDedupe("escalation:m2"), "m2");
     assert.equal(messageIdFromDedupe("call_time:m7@2026-10-22"), "m7");
     assert.equal(messageIdFromDedupe("hot:p1:views"), null);
+    assert.equal(messageIdFromDedupe("escalation:client:c1"), null);
+    assert.equal(messageIdFromDedupe("escalation:unknown:u1"), null);
     assert.deepEqual(visibleTodos([{ kind: "health", dedupe: "health:tick" }, { kind: "health", dedupe: "health:find:towns" }],
       [{ name: "tick", level: "red" }]).map((t) => t.dedupe), ["health:find:towns"]);
   });
@@ -766,6 +783,8 @@ JS, `style.css`.
     assert.equal((await DB.prepare("SELECT status FROM todos WHERE id = 't-esc'").first()).status, "done");
     assert.deepEqual(await (await send("t-pay", { body: "x" })).json(), { error: "Only replies can be sent from here." });
     assert.equal((await send("t-call", { body: "x" })).status, 400);           // kind call: not a reply
+    await DB.prepare("INSERT INTO todos (id, kind, client_id, title, draft, dedupe, status, created_at) VALUES ('t-cli','escalation','c2','x','y','escalation:client:c2','open','2026-10-22T11:00:00Z')").run();
+    assert.deepEqual(await (await send("t-cli", { body: "x" })).json(), { error: "Only replies can be sent from here." });
   });
   test("send passes stage 7's errors through", async () => {
     await DB.prepare("INSERT INTO todos (id, kind, place_id, title, dedupe, status, created_at) VALUES ('t-esc2','escalation','pn','x','escalation:m-pn1@2','open','2026-10-22T11:00:00Z')").run();
@@ -789,6 +808,7 @@ JS, `style.css`.
     `client_id`.
   - **Due:** `counts.due = overdue + today`; `counts.red` = the number of red lights.
   - **PATCH:** sets `status`, `done_at = iso(now)`. A missing id gives 404 with the message above.
+  - **Items:** each gets `can_send` (Interfaces above).
   - **Send:** allowed only for kinds `escalation`/`call_time` whose `messageIdFromDedupe(dedupe)` gives an id, else
     400 "Only replies can be sent from here.". Call `sendAsNik(DB, {message_id, body, now})` and return its `status`
     and `body` as given (stage 7 checks the body and the mailbox, and closes `escalation:<id>`/`call_time:<id>`).
@@ -935,7 +955,8 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
 - Produces:
   - `loadKpiRows(DB) → Promise<rows>`. It reads all lead-linked `messages` (including `intent`, a stage 0 column
     set by stage 7), `demo_events` views, `calls`, clients with a `place_id` as orders, `research` grades and rows,
-    and `escalation` todos whose dedupe starts `escalation:` but not `escalation:unknown:`. Every table skips
+    and `escalation` todos whose dedupe starts `escalation:` but not `escalation:unknown:` or `escalation:client:`.
+    Every table skips
     `place_id LIKE 'drill:%' OR place_id LIKE 'test:%'`.
   - `kpiPayload(DB, week, now) → Promise<{week, label, start, prev, next, still_counting, numbers, trend, analysis:
     {text, created_at}|null}>`
@@ -952,14 +973,15 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
     - `POST /api/agent/kpis/:week {analysis}` → `{ok, suggestions}`
 
 - [ ] **Step 1: Write the failing test** (seed = Task 5's week, inserted into the real tables via `fakeD1()`, plus
-  rows that must not count: a sent first email to `drill:1` on 2026-10-20T10:00Z and an `escalation:unknown:x9`
-  todo created 2026-10-22T09:00Z; `NOW = 2026-10-25T17:47:00Z`):
+  rows that must not count: a sent first email to `drill:1` on 2026-10-20T10:00Z, an `escalation:unknown:x9` todo
+  created 2026-10-22T09:00Z and an `escalation:client:c9` todo (`client_id` c9, no `place_id`) created
+  2026-10-23T09:00Z; `NOW = 2026-10-25T17:47:00Z`):
   ```js
   test("page payload matches the pure numbers", async () => {
     const r = await (await getKpis("2026-W43")).json();
     assert.deepEqual([r.week, r.label, r.prev, r.next, r.still_counting], ["2026-W43", "19–25 Oct", "2026-W42", null, true]);
     assert.deepEqual(r.numbers.totals.revenue_pence, 175000);
-    assert.deepEqual([r.numbers.totals.sent, r.numbers.claude.escalated], [9, 1]);   // drill and unknown-sender left out
+    assert.deepEqual([r.numbers.totals.sent, r.numbers.claude.escalated], [9, 1]);   // drill, unknown-sender and client left out
     assert.equal(r.trend.length, 4);
   });
   test("bad and future weeks", async () => {
@@ -1112,7 +1134,7 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
   ```js
   test("escapes everything", () => {
     const evil = "<img src=x onerror=alert(1)>";
-    const html = todoItemHtml({ id: "t1", kind: "escalation", title: evil, detail: evil, draft: "<script>x</script>", business: evil, place_id: "p1",
+    const html = todoItemHtml({ id: "t1", kind: "escalation", title: evil, detail: evil, draft: "<script>x</script>", can_send: true, business: evil, place_id: "p1",
       lead_link: "/#/lead/p1", thread_link: "/#/replies/p1", phone: "07969 123456" })
       + pipelineHtml({ columns: [{ stage: "ready", label: "Ready to email", count: 1, more: 0, cards: [{ place_id: "p1", business: evil, grade: "A", event: evil, next: null, lead_link: "/#/lead/p1", thread_link: "/#/replies/p1" }] }], lost: { count: 0, cards: [] } });
     assert.ok(html.includes("&lt;img") && !html.includes("<img") && !html.includes("<script"));
@@ -1122,6 +1144,11 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
     assert.match(row, /href="tel:07969123456"/); assert.match(row, /Open email thread/);
     const l = lightsHtml([{ name: "a", level: "green", detail: "ok", fix: "" }, { name: "b", level: "red", detail: "Sending stopped", fix: "Paste the password" }]);
     assert.ok(l.indexOf("Sending stopped") < l.indexOf("1 check fine") && l.includes("Paste the password"));
+  });
+  test("Send and Edit only when the item can be sent", () => {
+    assert.match(todoItemHtml({ id: "t3", kind: "escalation", title: "x", draft: "Hi", can_send: true, place_id: "p1", thread_link: "/#/replies/p1" }), />Send</);
+    const client = todoItemHtml({ id: "t4", kind: "escalation", title: "Client wrote in", draft: null, can_send: false, client_id: "c1", link: "/#/money" });
+    assert.ok(!/>Send|>Edit/.test(client) && client.includes(">Open<"));
   });
   test("empty states in plain English", () => {
     assert.match(todoListHtml({ overdue: [], today: [], later: [] }), /Nothing for you right now/);
@@ -1133,7 +1160,9 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
 - [ ] **Step 2: Run it to verify it fails.** `node --test control-room/tests/todoview.test.mjs` fails with "Cannot
   find module …/todoview.js".
 - [ ] **Step 3: Implement `todoview.js`, `todo.js` and the CSS.**
-  - Renderers produce Part A's exact labels and buttons. `tel:` strips spaces.
+  - Renderers produce Part A's exact labels and buttons. `tel:` strips spaces. Send/Edit render only when
+    `item.can_send`; an escalation without it renders like the `health` row (Open when `link` is set, Done,
+    Dismiss).
   - The page renders all four sections from one `GET /api/todo`.
   - Done, Dismiss and Send update optimistically and restore on error.
   - Edit swaps the draft box for a `<textarea>`.

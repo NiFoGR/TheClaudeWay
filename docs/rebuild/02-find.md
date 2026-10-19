@@ -298,8 +298,8 @@ D1, `node --test` with `tests/helpers/fakeD1.mjs`; plain-JS front end.
 - Decision time: first tick with UK time ≥ `06:00`; one decision per UK day, claimed by compare-and-set on `settings.find:day`.
 - `GOOD_WAITING_MIN = 30`, `RESEARCH_QUEUE_MAX = 40`, `RECENT_DAYS = 30`, `MIN_RESEARCH_SCORE = 35` (equals `research.MIN_SCORE`), `STALE_MINUTES = 45`, `RESEARCH_FIRE_GAP_HOURS = 6`.
 - Territory setting key `territory`, JSON `{on, trade, towns, next, max}`, same shape and defaults in JS and Python.
-- Timestamps written by this stage use util `now()` format `YYYY-MM-DDTHH:MM:SSZ` (no milliseconds), so string comparison with Python's `_now()` is exact.
-- `daily_find` uses at most 14 D1 statements per run; `stale_jobs` at most 6 (D1 free plan: 50 per invocation). Stage 0's `runTick` counts queries tick-wide (`ctx.budget`) and defers a step (result `"deferred"`) when fewer than 10 are left; both steps are idempotent, so a deferred run simply happens on a later tick.
+- Timestamps written by this stage use util `now()` / `iso(date)` format `YYYY-MM-DDTHH:MM:SSZ` (no milliseconds), so string comparison with Python's `_now()` is exact. `iso` is defined in `_lib/util.js` (Task 10); `find.js` only re-exports it.
+- `daily_find` uses at most 14 D1 statements per run; `stale_jobs` at most 6 (D1 free plan: 50 per invocation). Stage 0's `runTick` counts queries tick-wide (`ctx.budget` is an object; the remaining count is `ctx.budget.left()`) and defers a step (result `"deferred"`) when fewer than 10 are left; both steps are idempotent, so a deferred run simply happens on a later tick. Neither step reads `ctx.budget` itself; their fixed caps keep them inside it. `health` runs in its own `/api/tick?reason=health` invocation, so nothing here is reserved for it.
 - GitHub holds no Claude tokens; only the app fires Routines (`fireRoutine`).
 - Every issue line quoted to prospects needs a regression test; any new false alarm from real data → a test first.
 - Scraped text is rendered with `esc()` only.
@@ -621,11 +621,14 @@ todayLine(decision, job, now) → string                              // exact l
 
 ### Task 10: `_lib/find.js`: start a search, pipeline counts
 
-**Files:** Create `control-room/functions/_lib/find.js`, `control-room/tests/find.test.mjs`; Modify `control-room/functions/api/scrape.js` (use `startScrape`, same 201/502 responses).
+**Files:** Create `control-room/functions/_lib/find.js`, `control-room/tests/find.test.mjs`; Modify `control-room/functions/_lib/util.js` (add `iso`), `control-room/functions/api/scrape.js` (use `startScrape`, same 201/502 responses).
 
 **Interfaces:** Consumes `getSetting`, `setSetting` (`_lib/settings.js`), `startWorkflow(env, workflow, inputs) → Promise<""|string>` (`_lib/github.js`), `parseTerritory` (Task 9), `fakeD1()` (stage 0 test helper). Produces:
 ```js
-iso(date) → "YYYY-MM-DDTHH:MM:SSZ"
+// _lib/util.js (shared; stages 2, 3, 9, 10 and file 11 import it from here, never from find.js)
+export const iso = (d = new Date()) => new Date(d).toISOString().replace(/\.\d{3}Z$/, "Z")   // "YYYY-MM-DDTHH:MM:SSZ"
+// _lib/find.js
+export { iso } from "./util.js"   // re-export only; find.js imports iso from util.js for its own use
 loadTerritory(DB) → Promise<territory>;  saveTerritory(DB, territory) → Promise<void>
 startScrape(DB, env, {trade, town, max}, {start = startWorkflow, now = new Date()} = {}) → Promise<{job, error}>
 pipelineCounts(DB) → Promise<{goodWaiting, researchQueued, activeJobs}>
@@ -634,6 +637,10 @@ recentJobs(DB, now) → Promise<[{trade, town, status, created_at}]>   // create
 
 - [ ] **Step 1: Write the failing tests** (`find.test.mjs`):
   ```js
+  test("iso lives in util.js and find.js re-exports the same function", () => {
+    assert.equal(utilIso(new Date("2026-10-19T05:02:03.456Z")), "2026-10-19T05:02:03Z");   // import { iso as utilIso } from "../functions/_lib/util.js"
+    assert.equal(iso, utilIso);                                                            // iso imported from "../functions/_lib/find.js"
+  });
   test("startScrape records the run and starts the workflow", async () => {
     const DB = fakeD1(); const calls = [];
     const { job, error } = await startScrape(DB, {}, { trade: "landscaper", town: "Widnes", max: 60 },
@@ -655,9 +662,9 @@ recentJobs(DB, now) → Promise<[{trade, town, status, created_at}]>   // create
   });
   ```
 - [ ] **Step 2: Run to verify they fail** — `node --test control-room/tests/find.test.mjs` → FAIL (module not found).
-- [ ] **Step 3: Implement `control-room/functions/_lib/find.js`** — `startScrape` inserts the `jobs` row exactly as `api/scrape.js` does today and marks it failed on an error; `pipelineCounts` uses the Part A SQL (`research` ⨝ `leads`, `grade IN ('A+','A','B')`, `too_big = 0`, `excluded = 0`, `NOT EXISTS prospects with first_sent_at`). Move `api/scrape.js`'s insert/start/fail lines into `startScrape`.
+- [ ] **Step 3: Implement** — add `iso` to `control-room/functions/_lib/util.js` exactly as in Produces (beside `now()`); in `control-room/functions/_lib/find.js`, `import { iso } from "./util.js"` and `export { iso } from "./util.js"` (no second definition). `startScrape` inserts the `jobs` row exactly as `api/scrape.js` does today and marks it failed on an error; `pipelineCounts` uses the Part A SQL (`research` ⨝ `leads`, `grade IN ('A+','A','B')`, `too_big = 0`, `excluded = 0`, `NOT EXISTS prospects with first_sent_at`). Move `api/scrape.js`'s insert/start/fail lines into `startScrape`.
 - [ ] **Step 4: Run tests** — `node --test control-room/tests/*.test.mjs` → PASS.
-- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/find.js control-room/functions/api/scrape.js control-room/tests/find.test.mjs && git commit -m "Find: one way to start a search; pipeline counts" -m "$TRAILER"`
+- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/util.js control-room/functions/_lib/find.js control-room/functions/api/scrape.js control-room/tests/find.test.mjs && git commit -m "Find: one way to start a search; pipeline counts; shared iso() in util.js" -m "$TRAILER"`
 
 ### Task 11: Research queue and Routine fire
 
@@ -769,7 +776,7 @@ settings: "find:day", "find:today" (JSON {day, at, search, town?, job_id?, reaso
   test("tick order", () => {
     const names = STEPS.map((s) => s.name);
     assert.ok(names.indexOf("send") < names.indexOf("daily_find") && names.indexOf("daily_find") < names.indexOf("health"));
-    assert.ok(names.indexOf("pick") < names.indexOf("daily_find") && names.indexOf("daily_find") < names.indexOf("stale_jobs"));
+    // "pick" (stage 3) and "stale_jobs" (Task 13) don't exist yet; 04 Task 6 and Task 13's test assert their places.
   });
   test("lead_search light", () => {
     const now = new Date("2026-10-19T12:00:00Z");
@@ -821,6 +828,11 @@ Scans with `source = 'care'` are skipped (stage 11 owns them).
     assert.deepEqual(await markStale(DB, now), { jobs: 0, scans: 0 });
     assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM todos WHERE dedupe = 'health:stale:job:old'"), 1);
     assert.equal((await row(DB, "SELECT title FROM todos WHERE dedupe = 'health:stale:job:old'")).title, "Lead search stopped: landscaper in Leigh");
+  });
+  test("tick order: stale_jobs right after daily_find", () => {   // moved here from Task 12's "tick order" test
+    const names = STEPS.map((s) => s.name);
+    assert.ok(names.indexOf("daily_find") >= 0 && names.indexOf("daily_find") < names.indexOf("stale_jobs"));
+    assert.ok(names.indexOf("stale_jobs") < names.indexOf("health"));
   });
   ```
 - [ ] **Step 2: Run to verify it fails** — `node --test control-room/tests/stale-jobs.test.mjs` → FAIL (`markStale is not a function`).
@@ -890,7 +902,10 @@ PUT  /api/territory {on, trade, towns, max} → {territory} | 400 {error}
   D1-compatible object with the full schema, supporting `prepare/bind/first/all/run` (with `meta.changes`) and `batch`.
   `_lib/health.js` `registerLight(fn)` and `healthFromDb(DB, env, now) → {lights, gaps}`, lights shaped
   `{name, level: "green"|"amber"|"red"|"grey", detail, fix}`; tick slots `pick` (stage 3) before `daily_find` and
-  `calls` after `stale_jobs` (overview §8); `runTick`'s `ctx.budget`.
+  `calls` after `stale_jobs` (overview §8); `runTick`'s `ctx.budget` (object, `ctx.budget.left()`) and its separate
+  `reason === "health"` invocation.
+- **Produces for every later stage:** `iso(date) → "YYYY-MM-DDTHH:MM:SSZ"` in `_lib/util.js` (Task 10); import it from
+  `util.js`. `find.js` re-exports the same function for its own callers only.
 - **Produces for the health step:** the `lead_search` light (Task 12, registered; heartbeat `find`; red if `ok = 0`
   or older than 26 h, grey before the first beat). Its todo dedupe is `health:lead_search`, which is no prefix of
   this stage's `health:find:*` todos.

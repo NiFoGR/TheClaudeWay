@@ -814,14 +814,16 @@ moved it). Then `stopFollowups(DB, place_id, "replied", now)` and `last_inbound_
 
 **Interfaces:** Consumes `shouldFireReply`, `replyLight`, `fireRoutine(DB, name, text, {fetchImpl})`,
 `getSetting(DB, "replies:paused")`, `registerLight(fn)` and `healthFromDb(DB, env, now) → {lights, gaps}` (stage 0's
-`health.js`). Produces:
+`health.js`), `countingDB(DB) → {DB, used}` (stage 0's `_lib/d1count.js`, test only). Produces:
 ```js
-waitingStats(DB) → Promise<{waiting: number, oldestAt: Date|null, newestAt: Date|null}>
+waitingStats(DB) → Promise<{waiting: number, oldestAt: Date|null, newestAt: Date|null, paused: boolean}>
+  // one statement: the counts plus (SELECT value FROM settings WHERE key='replies:paused') = '1'
 runReplyFire(ctx: {DB, env, now, fetchImpl?}) → Promise<string>   // "fired (2 waiting)" | "skipped: <why>"
 STEPS entry {name: "reply_fire", everyMinutes: 0, run: runReplyFire} at the position-2 marker (overview §8)
-registerLight(async (DB, env, now) => replyLight({...await waitingStats(DB), now,
-  paused: (await getSetting(DB, "replies:paused")) === "1"}))                                  // at module load
+registerLight(async (DB, env, now) => replyLight({...await waitingStats(DB), now}))   // at module load; 1 statement
 ```
+The light is one D1 statement, as stage 0 caps every registered light (health runs in its own
+`/api/tick?reason=health` invocation, 01 Tasks 16–17).
 
 - [ ] **Step 1: Write the failing test** — stub `fetchImpl` returning 200 and counting calls; seed one waiting message received `2026-10-20T08:00:00Z`.
   ```js
@@ -836,6 +838,7 @@ registerLight(async (DB, env, now) => replyLight({...await waitingStats(DB), now
   assert.equal(calls.length, 2);
   // a third waiting row with place_id NULL is seeded: it never counts
   assert.equal((await waitingStats(DB)).waiting, 2);
+  const c = countingDB(DB); assert.equal((await waitingStats(c.DB)).paused, true); assert.equal(c.used(), 1);   // the light's only query
   // health light
   const light = (await healthFromDb(DB, env, D("2026-10-20T08:21:00Z"))).lights.find((l) => l.name === "replies");
   assert.equal(light.level, "grey");   // paused
@@ -1142,8 +1145,10 @@ matches `/price|how much|cost/i` (rules don't count).
 
 **Files:** Create `control-room/functions/api/replies.js` (GET list, POST `{paused}`),
 `control-room/functions/api/replies/[place_id].js` (GET thread), `control-room/public/js/replies.js`. Modify
-`control-room/public/js/app.js` (routes `#/replies`, `#/replies/<place_id>`, nav "Replies"; file 11 later moves these
-into its `nav.js` `routeFor` and `NAV`, which keep them). Test `control-room/tests/replies-page.test.mjs`.
+`control-room/public/js/app.js` (one `PAGES` entry `{route: "replies", label: "Replies", icon, render}`, shown in the
+nav; stage 3's `parseRoute` returns the first hash segment as `page`, so `#/replies` and `#/replies/<place_id>` both
+reach it and `render` calls `threadPage(id)` when the hash has a second segment, else `repliesPage()`; file 11 later
+moves these into its `nav.js` `routeFor` and `NAV`, which keep them). Test `control-room/tests/replies-page.test.mjs`.
 
 **Interfaces:** Consumes `medianReplyMinutes`, `waitingStats`, `sendAsNik` (via `/api/replies/send`),
 `/api/replies/dismiss`, `/api/calls`, `renderCallBox` (Task 16). Produces `GET /api/replies` →
@@ -1163,6 +1168,8 @@ text}]}`; pure exports in `replies.js`: `threadHtml(messages) → string`, `need
   assert.equal(list.median_minutes, 3);
   await replies.onRequestPost(ctx("/api/replies", { paused: true }));
   assert.equal(await getSetting(DB, "replies:paused"), "1");
+  const app = readFileSync(new URL("../public/js/app.js", import.meta.url), "utf8");
+  assert.match(app, /route: "replies", label: "Replies"/);   // in the nav until file 11's NAV takes over
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/replies-page.test.mjs` → FAIL: cannot find `public/js/replies.js`.
 - [ ] **Step 3: Implement the two routes and the page** — labels: `You` (nik), `Claude`, `Them`, `Follow-up <step>` (kind followup), `System`; median over replies by `claude` sent in the last 7 days, excluding `drill:`/`test:`; copy exactly as Part A "Replies page".
@@ -1172,8 +1179,10 @@ text}]}`; pure exports in `replies.js`: `threadHtml(messages) → string`, `need
 ### Task 16: Call page and call box
 
 **Files:** Create `control-room/public/js/call.js`. Modify `control-room/public/js/leads.js` (mount the call box in
-the drawer's `#d-call` slot), `control-room/public/js/app.js` (route `#/call/<id>`; file 11 later moves it into
-`nav.js` `routeFor`). Test `control-room/tests/call-page.test.mjs`. `callscript.js` and `callscript.test.mjs` are not
+the drawer's `#d-call` slot), `control-room/public/js/app.js` (one `PAGES` entry `{route: "call", nav: false, render}`:
+routed but not in the nav; stage 3's `parseRoute` gives `page: "call"` for `#/call/<id>` and `render` calls
+`callPage(id)` with the second hash segment; file 11 later moves it into `nav.js` `routeFor`). Test
+`control-room/tests/call-page.test.mjs`. `callscript.js` and `callscript.test.mjs` are not
 changed: stage 3 already made `callScript` read prices and the guarantee from `opts.offer` (and its "throws without
 offer" test stays).
 
@@ -1197,6 +1206,8 @@ thread view).
   for (const b of ["Done", "No answer", "They're ordering: send the order link", "Not for them"]) assert.match(html, new RegExp(b));
   assert.match(callPageHtml({ ...data, after_slot: false }), /Cancel call/);
   assert.doesNotMatch(callPageHtml({ ...data, lead: { ...data.lead, name: "<img src=x onerror=alert(1)>" } }), /<img src=x/);
+  const app = readFileSync(new URL("../public/js/app.js", import.meta.url), "utf8");
+  assert.match(app, /route: "call", nav: false/);   // routed, never a nav item
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/call-page.test.mjs` → FAIL: `call.js` missing.
 - [ ] **Step 3: Implement** — `call.js` renders the page and box with copy exactly as Part A, the script via stage 3's `callScript(data.lead, {offer: data.offer, guarantee: data.offer.guarantee, today: new Date(data.call.slot_at)})`, every data value through `esc()`/`safeUrl()`; in `leads.js`, after the drawer renders, `import("./call.js").then(m => m.renderCallBox(document.getElementById("d-call"), id))`.
@@ -1289,6 +1300,8 @@ Then run the Part A "Perfect when" live checks 2–8 with Nik.
 - **Stage 0 `_lib/mail/outbox.js`:** `dispatchDue(DB, env, now, {limit = 2, send, kinds = null}) → {sent, failed, held}`; a paused mailbox holds only `first`/`followup`, so `reply` still goes; suppression is checked for `first`/`followup`/`reply`.
 - **Stage 0 `_lib/health.js`:** `registerLight(fn)`; `healthFromDb(DB, env, now) → {lights, gaps}`; light shape `{name, level, detail, fix}`.
 - **Stage 0, other:** setting `business:sender_name` (sign-offs), `/api/agent/heartbeat`, `routines/README.md` with the standard preamble and per-Routine sections (`aetos-<name>`, Setup → Claude), environment variable `CONTROL_ROOM_URL` in the shared "Aetos" environment, `tests/helpers/fakeD1.mjs` exporting `fakeD1()`, tick step markers for `reply_fire` (2) and `calls` (9).
+- **Stage 0 `public/js/app.js`:** the `PAGES` registry `{route, label, icon, render, nav?}` (an entry with `nav: false` is routed but not in the nav); `shell.test.mjs` checks the 5 stage-0 routes are present, not an exact list.
+- **Stage 3 `leadview.js`:** `parseRoute(hash)` returns the first hash segment as `page` for any route (`lead/<id>` → `leads`), so `replies` and `call` reach `app.js`'s `PAGES.find`.
 - **Stage 3:** `callScript(lead, {sender, offer, guarantee, today})`; this stage passes `offer = {...offerFor(date), guarantee: GUARANTEE}` and `guarantee: offer.guarantee` and `lead.owner_first`; `drawerHtml` renders `<div id="d-call"></div>`, and `leads.js` binds the drawer (Task 16 mounts the call box there).
 - **Stage 4:** one `demos` row per `place_id` with `slug`; `demoLink(slug)` and `DEMO_BASE` (`https://aetoswebsites.com`) from `_lib/demo-db.js`; order page at `${DEMO_BASE}/d/<slug>/order`.
 - **Stage 5–6:** `stopFollowups(DB, placeId, "replied", now)` (called by `onHumanInbound`); `businessName` from `_lib/mail/rules.js`; the Voice page and `GET /api/voice` (`api/voice/index.js`) with `has_price_reply`, `POST /api/voice/examples`, `DELETE /api/voice/examples/:id`.

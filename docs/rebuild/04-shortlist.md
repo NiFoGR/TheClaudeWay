@@ -268,7 +268,7 @@ plain browser JS.
 - `pick` step: `everyMinutes: 30`, acts from 07:00 UK, dedupe `pick:YYYY-MM-DD`.
 - Re-queuing research is stage 2's "Research is wrong" route (it holds the 30-minute fire guard); this stage adds no
   research button or route of its own.
-- Stored timestamps and todo `due_at` use the shared `iso(date)` format (`YYYY-MM-DDTHH:MM:SSZ`, no milliseconds),
+- Stored timestamps and todo `due_at` use the shared `iso(date)` from `_lib/util.js` (`YYYY-MM-DDTHH:MM:SSZ`, no milliseconds),
   never `.toISOString()`. In-app links use `/#/…`.
 - Commits: `TRAILER=$'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_017h4iwgwaGCvQ5f9mmF4rDY'`
   then `git commit -m "<subject>" -m "$TRAILER"`. No push until all of Perfect when 1 passes.
@@ -591,7 +591,8 @@ Modify `control-room/functions/_lib/shortlist-db.js`; Test `control-room/tests/l
 
 **Interfaces:**
 - Consumes: `capacityNow`, `readyCounts` (Task 3); `pickTitle` (Task 1); `ukParts`, `ukDate`, `ukToUtc`;
-  `iso(date)` (stage 1's shared `YYYY-MM-DDTHH:MM:SSZ` formatter); `addTodo`, `closeTodos` from `_lib/todo.js`;
+  `iso(date)` from `_lib/util.js` (the shared `YYYY-MM-DDTHH:MM:SSZ` formatter added in 02 Task 10; never imported
+  from `find.js`); `addTodo`, `closeTodos` from `_lib/todo.js`;
   `getSetting`, `setSetting` from `_lib/settings.js`.
 - Produces: `pickStep({DB, env, now}) → Promise<string>` and the STEPS entry `{name: "pick", everyMinutes: 30, run: pickStep}`
   in overview §8's slot 6: after `hot`, immediately before `daily_find` (stage 0's marker for `pick`).
@@ -729,6 +730,8 @@ return title
 - Produces: `leadsPage(params)` and `openLeadDrawer(placeId)` exported from `leads.js`; app routes `#/leads?view=…&job=…`
   and `#/lead/<place_id>`; `state.leadsQuery = {view, grades, trade, town, email, stages, researched, q, excluded, job, page}`
   and `state.capacity`. Pure helpers added to `leadview.js`: `parseRoute(hash) → {page, params: URLSearchParams, leadId: string|null}`
+  (`page` is the first hash segment for any route, `"home"` when empty, `"leads"` for `lead/<id>`; it holds no page
+  list, so routes added later by stages 4–8 (`#/demo`, `#/voice`, `#/replies`, `#/call`, …) reach `app.js` unchanged)
   and `leadsQueryString(query) → string`.
 
 - [ ] **Step 1: Write the failing test** — add to `leadview.test.mjs`:
@@ -736,7 +739,11 @@ return title
   test("routes", () => {
     assert.deepEqual({ ...parseRoute("#/lead/ChIJ123"), params: undefined }, { page: "leads", leadId: "ChIJ123", params: undefined });
     assert.equal(parseRoute("#/leads?view=all&job=j1").params.get("job"), "j1");
-    assert.equal(parseRoute("#/nope").page, "home");
+    assert.equal(parseRoute("#/nope").page, "nope");          // unknown pages are app.js's job (PAGES.find → home)
+    assert.equal(parseRoute("#/replies?x=1").page, "replies"); // later stages' routes pass through
+    assert.equal(parseRoute("").page, "home");
+    assert.equal(parseRoute("#/").page, "home");
+    assert.equal(parseRoute("#/leads").leadId, null);
   });
   test("client query string round-trips through the server parser", () => {
     const q = { view: "all", grades: ["A+", "A", "none"], trade: "landscaper", town: null, email: true, stages: ["none"],
@@ -748,7 +755,8 @@ return title
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/leadview.test.mjs` → fails:
   `parseRoute` / `leadsQueryString` are not exported.
 - [ ] **Step 3: Implement** —
-  - `leadview.js`: `parseRoute` (known pages as in today's `app.js`, plus `lead/<id>` → `leads`); `leadsQueryString`
+  - `leadview.js`: `parseRoute` returns the first hash segment as `page` for any route (no hard-coded page list;
+    empty → `home`), with `lead/<id>` → `page: "leads"`, `leadId: <id>`; `leadsQueryString`
     writes only non-default fields, grades as tokens (`A+` → `ap`, `none` → `none`).
   - `leads.js`: builds the URL with `leadsQueryString(state.leadsQuery)`, fetches `/api/leads`, renders banner, tabs, chips, filters, table, pager; search debounced
     300 ms; filter change resets `page` to 1; row click → `openLeadDrawer(id)`; drawer actions call the APIs and
@@ -757,8 +765,9 @@ return title
     .catch(() => toast("Writing emails arrives with the next stage."))`; the research card's **Research is wrong**
     (stage 2's handler wiring, kept in the new drawer) posts the note to `/api/research/<id>/wrong`, toasts the
     route's `message` and re-renders the card; Not a fit dialog via `modal()`; Escape closes the drawer (kept).
-  - `app.js`: route via `parseRoute(location.hash)`; `leadId` set → `leadsPage(params)` then `openLeadDrawer(leadId)`;
-    nav "Leads" stays.
+  - `app.js`: route via `parseRoute(location.hash)`, then `PAGES.find((p) => p.route === page)` (stage 0's registry);
+    an unknown page falls back to the `home` entry, so `parseRoute` never needs editing when a stage adds a `PAGES`
+    entry; `leadId` set → `leadsPage(params)` then `openLeadDrawer(leadId)`; nav "Leads" stays.
   - `scraper.js`: drop the `leadsTable`/`bindTable` import; a finished run shows "See these {found} leads" →
     `#/leads?view=all&job=<id>`.
   - `home.js`: `openDrawer(lead, …)` → `openLeadDrawer(lead.place_id)`.
@@ -805,7 +814,8 @@ return title
   `PACKAGES`, `offerFor(date) → {weekend, full, website, banner}`, `formatPounds(pence)` and
   `GUARANTEE {headline, section}`, with `PACKAGES.weekend.wasBuild = 195000`.
 - Stage 0/4: `_lib/session.js` keeps stage 0's cookie name `cr_session` and its token derivation.
-- Stage 1: `iso(date) → "YYYY-MM-DDTHH:MM:SSZ"` (no milliseconds) for stored times.
+- Stage 1 (02 Task 10): `iso(date) → "YYYY-MM-DDTHH:MM:SSZ"` (no milliseconds) for stored times, exported from
+  `_lib/util.js` (`find.js` only re-exports it).
 - Stage 2: `research` rows as overview §4, parsed by `parseResearch(row)` from `_lib/research.js`; `points` =
   `{need, means, reach, fit, total, capped, reasons: {need, means, reach, fit}}`; `owner.first` set only from a
   confident source when `confident: true`; `researchCard({research, waiting}, {esc, safeUrl})` in

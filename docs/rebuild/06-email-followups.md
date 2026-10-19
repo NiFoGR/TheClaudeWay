@@ -377,10 +377,12 @@ messages, applies stops, closes finished sequences and queues due follow-ups. Tw
 - Every prospect stage change goes through `applyStageEvent(DB, placeId, event, now, {lost_reason})` in
   `_lib/prospects.js` (stage 0), never a direct `nextStage` write.
 - The `followups` tick step queues at most 3 follow-ups and handles at most 10 rows per other sub-step per run, and
-  uses at most 18 D1 round trips (each `prepare().run/all/first`, `batch` and `queueMessage` counts one; writes in
-  `DB.batch`). 3 per 5-minute tick = 36 an hour, far above need. The tick wraps `DB` in a counter and hands each step
-  `ctx.budget` (stage 0's `runTick`); `followupsStep` uses at most `min(18, ctx.budget)` and leaves the remaining
-  sub-steps for the next run when it's spent.
+  uses at most 18 D1 queries, counted the way stage 0's `countingDB` counts them (each `prepare().run/all/first`
+  counts one and each statement inside a `DB.batch` counts one; writes go in `DB.batch`). 3 per 5-minute tick = 36 an
+  hour, far above need. The tick wraps `DB` in a counter and hands each step `ctx.budget` (stage 0's `runTick`), an
+  object: `ctx.budget.left()` is the queries this step may still make. `followupsStep` uses at most
+  `Math.min(18, ctx.budget.left())` (18 when `ctx.budget` is absent, as in direct calls) and leaves the remaining
+  sub-steps for the next run when it's spent. Tests pass `budget: {left: () => N}`, never a number.
 - Sign-offs and cold footers use the `business:sender_name` setting (`getSetting`), never the mailbox `display_name`.
 - No tracking pixels, no link rewriting, no HTML part.
 - Stored times are UTC ISO strings without milliseconds (`2026-10-23T08:15:00Z`, same as `util.now()`).
@@ -740,7 +742,8 @@ test("sweepStops cancels queued follow-ups on opt-out, not on a demo view", asyn
 **Interfaces:**
 Consumes: `queueMessage(DB, msg)`; `demoReady(DB, placeId) → Promise<{ok, url, reason}>` (stage 4); `addTodo`,
 `closeTodos`; `businessName`; `renderFollowup`; `coldFooter`; `getSetting` (`business:sender_name`);
-`applyStageEvent` (stage 0); `nextUkWindowStart`, `addUkDays`, `ukToUtc`.
+`applyStageEvent` (stage 0); `nextUkWindowStart`, `addUkDays`, `ukToUtc`; `countingDB(DB) → {DB, used}` (stage 0's
+`_lib/d1count.js`) and `ctx.budget.left()` (stage 0's `runTick`).
 Produces:
 `INTERRUPTED_PREFIX = "The send was interrupted"` (stage 0's error text for a send stuck in `sending`);
 `retryFailed(DB, now, {limit = 10}) → Promise<number>` (leads in `emailed`/`viewed`, `next_followup_at` NULL, whose
@@ -751,7 +754,7 @@ retried (it may have gone): `stopFollowups` + `health` todo `health:followup-fai
 `closeFinished(DB, now, {limit = 10}) → Promise<number>` (`followup_step = 9` and `next_followup_at ≤ now` →
 `applyStageEvent(DB, place_id, "sequence_done", now, {lost_reason: "sequence_done"})`);
 `queueDue(DB, now, {limit = 3}) → Promise<{queued: number, held: string|null}>`;
-`followupsStep(ctx: {DB, env, now, budget?}) → Promise<string>` (runs `ensureTemplates`, `syncSent`, `sweepStops`,
+`followupsStep(ctx: {DB, env, now, budget?: {left: () => number}}) → Promise<string>` (runs `ensureTemplates`, `syncSent`, `sweepStops`,
 `retryFailed`, `closeFinished`, `queueDue`; summary like `"synced 1, stopped 0, retried 0, closed 0, queued 2"` or
 `"waiting: follow-ups 6/9 approved"`);
 tick.js `STEPS` entry `{name: "followups", everyMinutes: 5, run: followupsStep}` at position 3 (after `reply_fire`,
@@ -793,18 +796,26 @@ test("an interrupted send is never retried", async () => {
      → retryFailed: next_followup_at stays NULL, no new queued row, open todo health:followup-fail:p1 whose title has that error */
 });
 test("step 9 + 7 days → lost/sequence_done", async () => { /* followup_step 9, next_followup_at past → stage 'lost', lost_reason 'sequence_done' */ });
-test("bounded work: 40 due leads, ≤ 18 D1 round trips, 3 queued", async () => {
+test("bounded work: 40 due leads, ≤ 18 D1 queries, 3 queued", async () => {
   const DB = await manyDue(40); await approveAll(DB);
-  const counted = countingDB(DB);                                        // wraps prepare() and batch() with a counter
-  await followupsStep({ DB: counted, env: {}, now: new Date("2026-10-23T08:20:00Z") });
-  assert.ok(counted.calls <= 18, `used ${counted.calls}`);
+  const now = new Date("2026-10-23T08:20:00Z");
+  const c = countingDB(DB);                                              // stage 0's _lib/d1count.js → {DB, used}
+  await followupsStep({ DB: c.DB, env: {}, now });
+  assert.ok(c.used() <= 18, `used ${c.used()}`);
   assert.equal((await DB.prepare("SELECT COUNT(*) n FROM messages WHERE kind='followup'").first()).n, 3);
+});
+test("a smaller tick budget is respected", async () => {
+  const DB = await manyDue(40); await approveAll(DB);
+  const c = countingDB(DB);
+  await followupsStep({ DB: c.DB, env: {}, now: new Date("2026-10-23T08:20:00Z"), budget: { left: () => 12 } });
+  assert.ok(c.used() <= 12, `used ${c.used()}`);
 });
 ```
 (`demoReady` is injected for tests: `followupsStep(ctx, {demoReady})` defaulting to stage 4's import; one `demoReady`
-call per lead queued, at most 3 per run, inside the 18-round-trip budget. `dueLead`/`manyDue` seed the setting
+call per lead queued, at most 3 per run, inside the 18-query budget. `dueLead`/`manyDue` seed the setting
 `business:sender_name` = "Nik" and a mailbox whose `display_name` is "Nik Example", so the footer test proves the
-setting is used. When `ctx.budget` is set and below 18, the step stops starting sub-steps once it is spent.)
+setting is used. The step's cap is `Math.min(18, ctx.budget.left())`, read once at the start (18 when `ctx.budget`
+is absent); it checks its own `countingDB` count before each sub-step and each lead, and stops once the cap is spent.)
 - [ ] **Step 2: Run it to verify it fails** — → `followupsStep is not a function`.
 - [ ] **Step 3: Implement `retryFailed`, `closeFinished`, `queueDue`, `followupsStep`; add the STEPS entry in `tick.js`.**
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/followups-db.test.mjs control-room/tests/tick.test.mjs` → PASS.
@@ -1022,8 +1033,10 @@ test("helpers", () => {
 
 ### Task 14: Voice page (front end)
 
-**Files:** Create `control-room/public/js/voice.js`. Modify `control-room/public/js/app.js` (route `voice`, nav link
-"Voice"), `control-room/public/style.css` (`.voice-card`). Test `control-room/tests/voice-ui.test.mjs`.
+**Files:** Create `control-room/public/js/voice.js`. Modify `control-room/public/js/app.js` (add
+`{route: "voice", label: "Voice", icon, render: voicePage}` to `PAGES`, a nav item; stage 3's `parseRoute` passes
+`voice` through to `PAGES.find`, and stage 0's `shell.test.mjs` only checks its 5 routes are present, so it still
+passes), `control-room/public/style.css` (`.voice-card`). Test `control-room/tests/voice-ui.test.mjs`.
 
 **Interfaces:**
 Consumes: `GET/PUT/POST/DELETE /api/voice…` (Task 12); `api`, `esc`, `pageHead`, `toast` from `lib.js`.
@@ -1176,7 +1189,8 @@ test("cap respected; follow-ups before first emails; none skipped", async () => 
   list has room.
 - Stage 0 `registerLight(fn)` and `healthFromDb(DB, env, now) → {lights, gaps}` in `_lib/health.js`.
 - Stage 0 setting `business:sender_name` (set on Setup) for every sign-off and cold footer.
-- Stage 0 `runTick` passes `ctx.budget` (D1 queries left) to each step.
+- Stage 0 `runTick` passes `ctx.budget` to each step, an object whose `ctx.budget.left()` is the D1 queries left;
+  stage 0's `countingDB(DB) → {DB, used}` (`_lib/d1count.js`) counts each statement, including each one in a batch.
 - Stage 0 test helper: `fakeD1()` exported from `tests/helpers/fakeD1.mjs`, returning a D1-compatible object with
   the full schema applied.
 - Stage 0 inbound (and stage 7): inbound rows carry `place_id` and `class` (`human | auto | opt_out | bounce`); the

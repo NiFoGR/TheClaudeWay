@@ -430,13 +430,15 @@ you); every path above and below is under $CONTROL_ROOM_URL. Never call any othe
 - Failed payments are stage 9's (`payment` todos); care carries on while Stripe retries. A client whose collection is
   paused for the guarantee can't fail a payment.
 - Money page: a client with `care.guarantee = 'working_free'` has no retainer in the forecast or the monthly total
-  until it's `met` (Task 18 changes `_lib/money.js`).
+  until it's `met`; its status shows "Working free: fee paused" on the Money page and "Fee paused: working free" on its
+  Todo-board client card (Task 18 changes `_lib/money.js`, `public/js/money.js` and file 11's `clientCards`).
 
 ### R11. Tick step `care` (overview §8, slot 11, `everyMinutes: 10`)
 
 One pure planner, `careActions(state, now)`, decides; one executor applies at most 20 D1 statements per run, or fewer
-when the tick's `ctx.budget` has less left (stage 0 never starts a step with fewer than 10 and keeps 6 for `health`;
-the rest wait for the next tick). In priority order:
+when `ctx.budget.left()` says less is left (stage 0 never starts a step with fewer than 10 left; `health` runs in its
+own `/api/tick?reason=health` invocation, so nothing is reserved for it here; the rest wait for the next tick). In
+priority order:
 
 1. `create_care` for live monthly clients without a care row (+ `pre.access_*` tasks).
 2. `stop_care` for clients with `cancelled_on ≤ today`.
@@ -615,7 +617,7 @@ figures from care. Client email goes through stage 9's `sendClientMail`; Stripe 
   15th from care day 7. Referral at live_on + 30.
 - Review check: Mondays and the 1st from 06:00 UK, once per UK date; low-star alert ≤ 3 stars.
 - Tick step `care`: overview §8 slot 11 (after `sites`, before `health`), `everyMinutes: 10`, ≤ 20 D1 statements per
-  run and never more than `ctx.budget` allows, ≤ 2 scan starts, ≤ 10 todos, ≤ 2 template sends. Care scans running
+  run and never more than `ctx.budget.left()` allows (tests pass `budget: {left: () => N}`), ≤ 2 scan starts, ≤ 10 todos, ≤ 2 template sends. Care scans running
   45 minutes are failed by this step (stage 1's `stale_jobs` skips `source = 'care'`).
 - API responses carry plain text only (never HTML we render); review text cut to 600 chars, client email bodies to
   3,000.
@@ -1095,8 +1097,8 @@ CREATE TABLE IF NOT EXISTS care_reviews (
     `leads.town`, else `leads.search_town`; `invite_sent` = `form.gbp.invite_sent === true`.
   - `applyCareAction(ctx, action, deps) → Promise<number>` (D1 statements used); `deps = {fire = fireRoutine, start =
     startWorkflow, pause = pauseFee, resume = resumeFee, fetchImpl = fetch}`
-  - `runCare(ctx, deps = {}) → Promise<string>` (summary line; stops applying at 20 statements or when `ctx.budget`
-    is used up, whichever comes first)
+  - `runCare(ctx, deps = {}) → Promise<string>` (summary line; stops applying at 20 statements or when
+    `ctx.budget.left()` is used up, whichever comes first; `ctx.budget` is stage 0's object, never a number)
   - `stopCare(DB, clientId, ukToday) → Promise<void>`
   - `sendCareEmail(DB, {client_id, subject, body, author}, now) → Promise<{ok: true, id} | {ok: false, error}>` — a
     thin wrapper over stage 9's `sendClientMail` (`compose: () => ({subject, body})`, the body already signed with
@@ -1131,8 +1133,8 @@ CREATE TABLE IF NOT EXISTS care_reviews (
     `mailbox_id` of the system mailbox; with only a cold mailbox → sent from it and stage 9's `setup:system_mailbox`
     todo exists; with no mailbox → `{ok:false, error: "No mailbox to send from yet: add one on Setup → Mailboxes."}`,
     no `messages` row, no `setup:welcome:c1` todo.
-  - statement budget: with 30 due todos, one `runCare` opens exactly 10; with `ctx.budget` at 12, it applies no more
-    than 12 statements.
+  - statement budget: with 30 due todos and `budget: {left: () => 50}`, one `runCare` opens exactly 10; with
+    `budget: {left: () => 12}` (and `countingDB`: `const c = countingDB(DB)`, run with `DB: c.DB`), `c.used() <= 12`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/care-db.test.mjs` → cannot find module.
 - [ ] **Step 3: Implement the exports in `care-db.js` and register the step in `tick.js`** — writes use
   `INSERT OR IGNORE` on task ids and `addTodo` dedupe; todos carry `kind: "care"`, `client_id`, `due_at:
@@ -1261,7 +1263,7 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
 
 **Interfaces:**
 - Consumes: `/api/care/*` (Task 13), `esc`, `safeUrl` from `public/js/html.js`, `api()`/`toast()` from `lib.js`;
-  file 11's `NAV`/`routeFor` (`nav.js`), `clientCards(rows, now)`, `loadBoard(DB, now)`; `guaranteeLabel`,
+  file 11's `NAV`/`routeFor` (`nav.js`), `clientCards(rows, now)`, `loadBoard(DB, env, now)`; `guaranteeLabel`,
   `rankText` (Task 5).
 - Produces:
   - `clientRoute(params)` in `client.js` (`#/client/<id>`, `#/client/settings`);
@@ -1282,7 +1284,7 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
   care_gbp_access_on: "2026-09-18"`, `care_centre_rank: 2`, `care_top3_share: 51`, `care_scan_id: "cs1"` → card
   `guarantee` "Day 34 of 90" (NOW 2026-10-22), `rank` "#2 at their address, top 3 in 51% of their area", `rank_link`
   `"#/maprank?scan=cs1&biz=lp2"`; file 11's existing card tests stay green. In `todo-api.test.mjs`: after adding a
-  `care` row (`guarantee 'not_started'`) for a seeded live client, `loadBoard` gives its card the guarantee "Clock not
+  `care` row (`guarantee 'not_started'`) for a seeded live client, `loadBoard(DB, env, NOW)` gives its card the guarantee "Clock not
   started: waiting for Google profile access". In `nav.test.mjs`:
   `routeFor("#/client/c1")` → `{page: "client", id: "c1"}`, `routeFor("#/client/settings").id === "settings"`, and
   `NAV` has no client item.
@@ -1347,26 +1349,41 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
 
 ### Task 18: Money skips the retainer while working free
 
-**Files:** Modify `control-room/functions/_lib/money.js` (`loadMoney`, `ledger`, `summarise`); Test
-`control-room/tests/money.test.mjs` (add tests).
+**Files:** Modify `control-room/functions/_lib/money.js` (`loadMoney`, `ledger`, `summarise`),
+`control-room/public/js/money.js` (the Money page's status badge and "Stopped paying" button), file 11's
+`control-room/functions/_lib/board.js` (`clientCards` Monthly line); Test `control-room/tests/money.test.mjs`,
+`control-room/tests/board.test.mjs` (add tests).
 
 **Interfaces:**
-- Consumes: the `care` table (Task 1); file 11's `loadMoney(DB, today)` and `PACKAGES`.
+- Consumes: the `care` table (Task 1); file 11's `loadMoney(DB, today)`, `PACKAGES` and `clientCards(rows, now)`
+  (whose rows already carry `care_guarantee` from Task 15).
 - Produces: `loadMoney`'s clients query LEFT JOINs `care` and selects `care.guarantee AS care_guarantee`;
   `clientStatus(c, today)` returns key `"working_free"` for a non-stopped monthly client whose `care_guarantee` is
   `working_free`; `ledger` adds no forecast `Monthly retainers` item for such a client; `summarise`'s `mrr` and
   `mrrSoon` leave it out. Past income still comes from actual `payments`.
+- Every renderer of `clientStatus` keys knows `working_free`:
+  - `public/js/money.js` status map gains `working_free: () => <span class="badge gold">Working free: fee paused</span>`,
+    and the "Stopped paying" button shows for `paying`, `free` and `working_free` (they can still cancel);
+  - `clientCards`' Monthly line (file 11 §4) gains `working_free` → "Fee paused: working free" (a `failed_on` card
+    still shows "Card failed …" first, as for the other keys).
 
 - [ ] **Step 1: Write the failing test** — in `money.test.mjs`: a Stripe client paying `PACKAGES.full.monthly`,
   `care_guarantee: "working_free"` → `summarise(...)` forecast months have no `Monthly retainers` for them, `mrr` 0,
   and the client's status key is `working_free`; the same client with `care_guarantee: "met"` → the retainer is back
   in the forecast and `mrr`; a client with no care row (`care_guarantee` null) is unchanged. A `loadMoney` test on
-  `fakeD1()` with a `care` row `working_free` gives the same result.
-- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/money.test.mjs` → the retainer is still
-  forecast.
-- [ ] **Step 3: Implement** the join, the status key and the two filters.
-- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS.
-- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/money.js control-room/tests/money.test.mjs` +
+  `fakeD1()` with a `care` row `working_free` gives the same result. `public/js/money.js` imports DOM helpers and
+  can't load in node, so a source test reads it: `readFileSync("control-room/public/js/money.js", "utf8")` matches
+  `/working_free:\s*\(\)\s*=>[^\n]*Working free: fee paused/` and the "Stopped paying" condition mentions
+  `"working_free"`. In `board.test.mjs`: a live full-package row with `care_guarantee: "working_free"` → card
+  `monthly` "Fee paused: working free"; file 11's existing card tests stay green.
+- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/money.test.mjs
+  control-room/tests/board.test.mjs` → the retainer is still forecast; no `working_free` label.
+- [ ] **Step 3: Implement** the join, the status key, the two filters, the Money page badge and button, and the
+  `clientCards` Monthly wording.
+- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` and
+  `node --check control-room/public/js/money.js` → PASS.
+- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/money.js control-room/public/js/money.js
+  control-room/functions/_lib/board.js control-room/tests/money.test.mjs control-room/tests/board.test.mjs` +
   `git commit -m "Money: no retainer forecast while a client's guarantee is working free" -m "$TRAILER"`.
 
 ### Task 19: "Your 90 days start…" on the order page, welcome email and landing page
@@ -1408,7 +1425,7 @@ the guarantee before paying or right after says so.
 - Tables `care`, `care_tasks`, `care_scans`, `care_reviews` (Task 1), listed in overview §4 "Tables added by later
   stages" and in `test_rebuild_tables_present` (they add no column to any existing table).
 - Tick step `{name: "care", everyMinutes: 10, run: runCare}` at overview §8 slot 11, after `sites` and before
-  `health` (Task 11); it respects `ctx.budget`.
+  `health` (Task 11); it respects `ctx.budget.left()`. (`health` itself runs only in `/api/tick?reason=health`.)
 - Care figures on file 11's client cards: `loadBoard` joins `care` and the latest scored `care_scans` row;
   `clientCards` uses `guaranteeLabel(care, ukToday)` and `careRankText(scan)` (Task 15). There is no
   `/api/care/clients` and no second Clients section.
@@ -1436,7 +1453,9 @@ the guarantee before paying or right after says so.
   `care:template:nudge` (JSON `{subject, body}`), `care:template:<name>:approved`, `care:reviews:last`.
 
 **Assumed from other stages (exact shapes this file relies on):**
-- Stage 0: `fakeD1()` (`{prepare, batch, exec, raw}`), mutable `STEPS` in `tick.js` with `ctx.budget`,
+- Stage 0: `fakeD1()` (`{prepare, batch, exec, raw}`) and `countingDB(DB) → {DB, used}`, mutable `STEPS` in
+  `tick.js` with `ctx.budget` (an object: `ctx.budget.left()` = statements left; `runTick` with `reason === "health"`
+  runs only `health`, every other reason skips it),
   `addTodo`/`closeTodos`, `fireRoutine`, `beat`, `requireAgent(request, env, DB)`, `getSetting`/`setSetting`,
   `ukTime.js`, `util.now()`/`iso()`, `registerLight(fn)` and `healthFromDb(DB, env, now) → {lights, gaps}` in
   `health.js`; `ROUTINES` entry `monthly-care` (768 h cadence light); the standard Routine preamble in
@@ -1465,8 +1484,9 @@ the guarantee before paying or right after says so.
   review booster) off; the "Invite accepted" checkbox calls care's `access` action; the client site's home page
   carries the on-page basics the `w5.onpage_check` looks for; the build Routine handles the `site update` payload
   above.
-- File 11: `board.js` `clientCards(rows, now)` and `todo.js` `loadBoard(DB, now)` (Task 15 extends both), `nav.js`
-  `routeFor` (Task 15 adds the client routes), `money.js` `loadMoney` (Task 18).
+- File 11: `board.js` `clientCards(rows, now)` and `todo.js` `loadBoard(DB, env, now)` (Task 15 extends both; Task 18
+  adds the `working_free` Monthly line to `clientCards`), `nav.js` `routeFor` (Task 15 adds the client routes),
+  `money.js` `loadMoney` (Task 18).
 
 ## Questions for Nik
 
