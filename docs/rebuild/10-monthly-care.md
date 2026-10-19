@@ -124,11 +124,11 @@ requested **2 days before** their due day (R6) and open as Nik's todo on the due
 | 2 | `w2.gbp_basics` | 7 | Claude → Nik on GBP | Edit profile: leave the business name alone; categories as recommended; description ≤ 750 chars; website = site URL; booking link = `<site_url>/contact`; phone; hours; address or service area. | "Fix categories, description and booking link on <name>'s Google profile" |
 | 2 | `w2.services_email` | 8 | Claude → Nik sends | The playbook's email: "I'm completing the services list for your Google profile. It helps you show up for more searches. Could you tell me which of these you DON'T do?" + `{{services_list}}`. | "Approve the services list email to <name>" |
 | 3 | `w3.services` | 14 | Claude → Nik on GBP | Final list ≤ 99 (minus what the client said they don't do; if no reply, only services on their site or onboarding form), each name ≤ 120 chars; descriptions ≤ 300 chars for the top 20 by search interest. | "Add services to <name>'s Google profile" |
-| 3 | `w3.faq` | 15 | Claude → Nik | 5 questions and answers for this trade in this town; Nik adds them to the profile if it has a Q&A/FAQ section, otherwise they go on the site (system turns it into a site update). | "Add FAQs to <name>'s Google profile" |
+| 3 | `w3.faq` | 15 | Claude → Nik | 5 questions and answers for this trade in this town; Nik adds them to the profile if it has a Q&A/FAQ section (**Done**), otherwise presses **Put them on the site instead**, which turns the task into a site task (Approve → build). | "Add FAQs to <name>'s Google profile" |
 | 3 | `w3.photos` | 15 | Nik | "Upload every photo they sent at onboarding (aim for 10+). Real job photos beat stock." | "Upload <name>'s photos to their Google profile" |
 | 3 | `w3.email` | 16 | Claude → Nik sends | Profile done; asks one thing: send a few photos of their work every week (reply to this email or WhatsApp). | "Approve week 3 update to <name>" |
 | 4 | `w4.email` | 23 | Claude → Nik sends | Overview: what's done on the profile (from tasks done), what's next (the website). | "Approve week 4 update to <name>" |
-| 5 | `w5.onpage_check` | 28 | System | Fetch the site home page and check: title has service + town; H1 has service + town; business name, phone and postcode on the page; LocalBusiness JSON-LD; a Google Maps embed. All pass → done, no todo. Any fail → a site update task listing the failures. | (on fail) "Fix <n> things on <name>'s site" |
+| 5 | `w5.onpage_check` | 28 | System | Fetch the site home page and check: title has service + town; H1 has service + town; business name, phone and postcode on the page; LocalBusiness JSON-LD; a Google Maps embed. All pass → done, no todo. Any fail → a site task `w5.site_fixes` (due the same day) listing the failures. | (on fail) "Fix <n> things on <name>'s site" |
 | 5 | `w5.email` | 30 | Claude → Nik sends | Website basics done (what was checked, in plain words). | "Approve week 5 update to <name>" |
 | 6 | `w6.inventory` | 35 | Claude → Nik approves | Pages the site has; pages Google has indexed (Claude searches `site:<domain>`; number or "unknown"); plan: one page per core service (≤ 5), an "Areas we serve" page + 5 area pages (from onboarding areas; if fewer than 5, say so), the interlinking map. Target 30+ indexed pages over time. | "Approve the new pages plan for <name>'s site" |
 | 6 | `w6.email` | 37 | Claude → Nik sends | What we mapped (playbook week 6/7 wording); asks one thing: confirm the 5 areas. | "Approve week 6 update to <name>" |
@@ -573,7 +573,8 @@ GitHub Actions. The browser gets one page, `client.js`.
   15th from care day 7. Referral at live_on + 30.
 - Review check: Mondays and the 1st from 06:00 UK, once per UK date; low-star alert ≤ 3 stars.
 - Tick step `care`: `everyMinutes: 10`, ≤ 20 D1 statements per run, ≤ 2 scan starts, ≤ 10 todos, ≤ 2 template sends.
-- API responses never include raw HTML; review text cut to 600 chars, client email bodies to 3,000.
+- API responses carry plain text only (never HTML we render); review text cut to 600 chars, client email bodies to
+  3,000.
 - Commits: `TRAILER=$'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_017h4iwgwaGCvQ5f9mmF4rDY'`
   then `git commit -m "<subject>" -m "$TRAILER"`.
 
@@ -588,7 +589,7 @@ GitHub Actions. The browser gets one page, `client.js`.
    tests the exact bodies and errors; Task 10 tests that pause is planned only when `paused = 0` and never for a
    stopped client.
 4. **Untrusted text flowing out** (review text with `<script>`, a client email saying "ignore your instructions",
-   digits smuggled as "²" or "five-star 5"): Task 7 digit rule covers Unicode digits (`\p{Nd}`); Task 12 test that
+   digits smuggled as "³" or "５"): Task 7 digit rule covers every Unicode number (`\p{N}`); Task 12 test that
    `client_emails`/`reviews` are returned as plain strings, cut to length; Task 16 renders with `esc()`.
 5. **Duplicate work after a missed or repeated tick** (two ticks in one minute, a tick down for 40 days, the Routine
    creating monthly tasks while the tick does): Task 10 (only the latest scan day), Task 11 (`INSERT OR IGNORE` on
@@ -880,10 +881,13 @@ CREATE TABLE IF NOT EXISTS care_reviews (
 - Consumes: `rankText` (care.js), `gbp`, `MONTHLY_PENCE` (offer.js).
 - Produces:
   - `TEMPLATES = {A, B, C, D, E, F}` each `{subject, body}` (R7 copy verbatim)
-  - `factsFor(ctx) → {[token]: string}` (only tokens with data; R6 table rendering rules)
+  - `factsFor(ctx) → {[token]: string}` (only tokens with data; R6 table rendering rules). In `ctx`, `rank_*` is a
+    number, or `null` = scanned but not in the top 20 ("outside the top 20"); a missing `rank_*` key = no such scan
+    (token absent). Every other fact that is `null` or missing = no data (token absent).
   - `tokensIn(text) → string[]`; `renderTokens(text, facts) → string` (throws `Error("Unknown or empty token {{x}}")`)
-  - `copyProblems(text, facts) → string[]` — digits (`/\p{Nd}/u`) outside tokens and outside the allowed phrases,
-    `/\bSEO\b/i`, unknown/empty tokens; each problem a plain sentence
+  - `copyProblems(text, facts) → string[]` — any number character (`/\p{N}/u`, so "³" and "５" count) outside tokens
+    and outside the allowed phrases → `Remove the number "<n>": numbers only come from {{tokens}}.`; `/\bSEO\b/i` →
+    `Don't say "SEO" to clients.`; a token without data → `{{<token>}} has no data this month: leave it out.`
   - `domainTransferText({domain}) → {client, nik}` (R10 copy)
 
 - [ ] **Step 1: Write the failing test** — `care-copy.test.mjs`:
@@ -993,7 +997,8 @@ CREATE TABLE IF NOT EXISTS care_reviews (
   - done unscored scan on day 90 not Top 3 with `paused: 0` → `score_scan` carrying `{guarantee: "working_free",
     stripe: "pause", email: "E"}`; same with `status: "stopped"` care → `stop_care` and no `stripe`.
   - care day 92, guarantee `running`, no scored day-90 scan → `day90_late`.
-  - Monday 2026-11-16 05:59 UK → no `dispatch_reviews`; 06:00 → one; with `care:reviews:last = "2026-11-16"` → none.
+  - Monday 2026-11-16 05:59 UK → no `dispatch_reviews`; 06:00 → one; with `care:reviews:last = "2026-11-16"` → none;
+    Wednesday 2026-11-11 with a client whose day 0 is today and no review row → one (baseline).
   - a `w1.email` task due 2026-11-13 at 2026-11-11T09:00Z → `request_drafts {client_id}`; at 2026-11-10 → none;
     `m.report.2027-03` due 03-01 at 2027-03-01T10:00Z → not requested, at 2027-03-02T06:00Z → requested.
   - two clients with due drafts → one `request_drafts` (oldest due first).
@@ -1069,8 +1074,9 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
     client_emails, pending}>` (`pending` = tasks `drafting` or `planned` due within 2 days, each `{task_id, key, title,
     instructions, format}`)
   - `saveDrafts(DB, clientId, drafts, now) → Promise<{saved: string[], rejected: [{task_id, errors}]}>` (saved →
-    status `ready`, `drafted_at`; a `w1.analysis` draft with `suspected_fakes.length > 0` also creates
-    `w1.fake_report`; a `w6.inventory` draft is stored for `w7`/`w8` instructions)
+    status `ready`, `drafted_at`; an `m.posts` task goes straight to `done` (its posts feed the `post.*` todos by
+    slot date); a `w1.analysis` draft with `suspected_fakes.length > 0` also creates `w1.fake_report`; the approved
+    `w6.inventory` draft is included in `w7`/`w8` instructions)
   - `GET /api/agent/care` → `{clients: [{client_id, name, care_day, pending}]}`;
     `GET /api/agent/care/:id` → `careContext`; `POST /api/agent/care/:id/drafts {drafts}` → `saveDrafts` (200, or
     400 "Send {drafts: [...]}"); `GET /api/agent/care/:id/tasks/:task` → `{task, draft}` (approved site tasks only);
@@ -1110,7 +1116,8 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
   - `POST /api/care/:id {action}`: `access {on}`, `no_gbp`, `place_id {place_id}`, `keyword {service, town}`,
     `scan {retry_day?}`, `paused {paused: 0|1}` (Nik's manual Stripe ticks), `domain` (returns `domainTransferText`)
   - `POST /api/care/tasks/:id {action}`: `send {subject, body}`, `done`, `skip`, `approve` (site tasks: fires `build`
-    with `site update: client <c> task <t>`), `redraft` (fires `monthly-care` once; 409 if fired < 10 min ago)
+    with `site update: client <c> task <t>`), `to_site` (`w3.faq` only: action becomes `site`), `redraft` (fires
+    `monthly-care` once; 409 if fired < 10 min ago)
   - `GET/POST /api/care/settings` → `{nik_google_email, templates: {referral, nudge}: {subject, body, approved_at}}`
 
 - [ ] **Step 1: Write the failing test** — `care-owner.test.mjs` (logged-in request helper from stage 0):
@@ -1122,7 +1129,9 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
   - `scan {}` → manual `care_scans` row; `scan {retry_day: 90}` only when the day-90 scheduled scan failed, else 400.
   - task `send` with edited body → a `messages` row `kind 'system'`, `author 'nik'`, `client_id`, status `queued`;
     task and its todo `done`.
-  - `GET /api/care/clients` returns the R-section line fields; Website Only client has `status: "website_only"`.
+  - `GET /api/care/clients` rows have exactly the keys `client_id, name, package, status, guarantee, last_rank,
+    reviews, next_task, open_todos`; a working-free client sorts first; a Website Only client has
+    `status: "website_only"` and `guarantee: null`.
   - settings: editing the referral body clears its `approved_at`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/care-owner.test.mjs` → 404.
 - [ ] **Step 3: Implement the routes and `clientSummary`** — day-0 set rebuilds tasks with `buildPlan` + the day-0
@@ -1153,25 +1162,29 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
 
 ### Task 15: Client page and care settings page
 
-**Files:** Create `control-room/public/js/client.js`; Modify `control-room/public/js/app.js` (routes `client`),
+**Files:** Create `control-room/public/js/clientview.js` (pure renderers, importable in node),
+`control-room/public/js/client.js` (DOM and buttons); Modify `control-room/public/js/app.js` (routes `client`),
 `control-room/public/style.css`.
 
 **Interfaces:**
 - Consumes: `/api/care/*` (Task 13), `esc`, `safeUrl` from `public/js/html.js`, `api()`/`toast()` from `lib.js`.
-- Produces: `clientRoute(params)` (`#/client/<id>`, `#/client/settings`); `renderClientsSection(clients) → string`
-  (pure HTML for file 11's Todo board).
+- Produces: `clientRoute(params)` in `client.js` (`#/client/<id>`, `#/client/settings`);
+  `renderClientsSection(clients) → string` and `renderClientPage(data) → string` in `clientview.js` (pure HTML; file
+  11's Todo board imports `renderClientsSection`).
 
-- [ ] **Step 1: Write the failing test** — `control-room/tests/care-ui.test.mjs`: `renderClientsSection([])` contains
-  "No clients yet. When someone pays and their site goes live, they'll show up here."; a client named
-  `<img src=x onerror=1>` renders escaped; the line contains "Day 34 of 90" and "#2 at their address, top 3 in 51%".
+- [ ] **Step 1: Write the failing test** — `control-room/tests/care-ui.test.mjs` (imports `clientview.js`):
+  `renderClientsSection([])` contains "No clients yet. When someone pays and their site goes live, they'll show up
+  here."; a client named `<img src=x onerror=1>` renders escaped; the line contains "Day 34 of 90" and "#2 at their
+  address, top 3 in 51%"; `renderClientPage` with a review text `<script>alert(1)</script>` contains `&lt;script&gt;`
+  and a task in `drafting` for 25 h shows an "Ask Claude again" button.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/care-ui.test.mjs` → cannot find module.
-- [ ] **Step 3: Implement `client.js`** — sections and buttons exactly as "What Nik sees"; every scraped/inbound/
-  Claude string through `esc()`, links through `safeUrl()`; route registration in `app.js`.
+- [ ] **Step 3: Implement `clientview.js` and `client.js`** — sections and buttons exactly as "What Nik sees"; every
+  scraped/inbound/Claude string through `esc()`, links through `safeUrl()`; route registration in `app.js`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/care-ui.test.mjs` and
   `for f in control-room/public/js/*.js; do node --check "$f"; done` → PASS.
-- [ ] **Step 5: Commit** — `git add control-room/public/js/client.js control-room/public/js/app.js
-  control-room/public/style.css control-room/tests/care-ui.test.mjs` + `git commit -m "Care: client page and Clients
-  section" -m "$TRAILER"`.
+- [ ] **Step 5: Commit** — `git add control-room/public/js/clientview.js control-room/public/js/client.js
+  control-room/public/js/app.js control-room/public/style.css control-room/tests/care-ui.test.mjs` +
+  `git commit -m "Care: client page and Clients section" -m "$TRAILER"`.
 
 ### Task 16: The monthly-care Routine prompt
 
@@ -1200,7 +1213,8 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
 - Consumes: `runCare`, `saveDrafts`, `careContext`, owner `access` action, `fakeD1()`.
 - Produces: nothing new (end-to-end proof).
 
-- [ ] **Step 1: Write the failing test** — seed the Perfect-when-1 client; loop UK days 2026-11-09 → 2027-03-02,
+- [ ] **Step 1: Write the failing test** — seed the Perfect-when-1 client, a `system` mailbox, `care:nik_google_email`
+  and both template approvals; set day 0 through the owner `access` action on 2026-11-11; loop UK days 2026-11-09 → 2027-03-02,
   running `runCare` at 06:30, 09:00 and 18:00 UK each day; the stub `fire` immediately answers with valid drafts built
   from `careContext(...).pending` formats; stub `start` marks the scan `done` with ranks (not Top 3 until day 120);
   stub `pause`/`resume` record calls. Assert every date in Perfect when 1, `pause` once on 2027-02-09, scans on days
@@ -1222,7 +1236,7 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
 - Tables `care`, `care_tasks`, `care_scans`, `care_reviews` (Task 1). Overview §4 should list them as stage 11's
   tables (they add no column to any existing table).
 - Tick step `{name: "care", everyMinutes: 10, run: runCare}` at overview §8 position 9 (Task 11).
-- `GET /api/care/clients` JSON and `renderClientsSection(clients)` in `public/js/client.js` — file 11's Todo board
+- `GET /api/care/clients` JSON and `renderClientsSection(clients)` in `public/js/clientview.js` — file 11's Todo board
   renders the Clients section with them. Route `#/client/<client_id>` (+ `?task=<id>`) and `#/client/settings`.
 - `careLights(...)` (Task 14) — stage 0's health step adds its three lights.
 - File 11 (Money): exclude a client's retainer from the forecast while `care.guarantee = 'working_free'`.
