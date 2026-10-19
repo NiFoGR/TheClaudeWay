@@ -488,13 +488,17 @@ the Routine prompt. Every stage change goes through stage 0's `applyStageEvent` 
 
 ### Task 2: Offer facts for replies
 
-**Files:** Modify `control-room/functions/_lib/offer.js` (create it with this API if no earlier stage has). Test
-`control-room/tests/offer-facts.test.mjs`.
+**Files:** Modify `control-room/functions/_lib/offer.js` (owned by stage 0; this task only adds one export). Test
+`control-room/tests/offer-facts.test.mjs` (new file; stage 0's `offer.test.mjs` is not touched).
 
-**Interfaces:** Consumes `isWeekendUK(date)`, `ukDate`, `addUkDays`, `ukParts`, `ukToUtc` (ukTime.js). Produces
-`offerFacts(at: Date) → {weekend: boolean, weekend_ends_at: string|null, website_only: {build}, full: {build, anchor,
-monthly, free_days}, amounts: number[], guarantees: string[], terms: string[], included: string[]}` built from the
-module's existing price constants (no second copy of any price).
+**Interfaces:** Consumes `PACKAGES`, `offerFor(date)`, `GUARANTEE` (stage 0's `offer.js`), `ukDate`, `addUkDays`,
+`ukToUtc` (ukTime.js). Produces
+`offerFacts(at: Date, {chatbot = false, reviews = false} = {}) → {weekend: boolean, weekend_ends_at: string|null,
+website_only: {build}, full: {build, anchor, monthly, free_days}, amounts: number[], guarantees: string[],
+terms: string[], included: string[]}`, in whole pounds, built from `offerFor(at)` and `PACKAGES` (no second copy of
+any price): `full` is `offerFor(at).full` (`build/100`, `monthly/100`, `freeDays`), `anchor` is
+`PACKAGES.weekend.wasBuild/100` (£1,950), `website_only.build` is `PACKAGES.website.build/100`. The flags come from
+the settings `offer:chatbot_live` / `offer:review_booster_live` (`'1'` = on), read by the caller.
 
 - [ ] **Step 1: Write the failing test**
   ```js
@@ -502,22 +506,29 @@ module's existing price constants (no second copy of any price).
     const o = offerFacts(new Date("2026-10-21T10:00:00Z"));
     assert.equal(o.weekend, false);
     assert.equal(o.weekend_ends_at, null);
-    assert.deepEqual(o.full, { build: 1950, anchor: 2000, monthly: 249, free_days: 60 });
+    assert.deepEqual(o.full, { build: 1950, anchor: 1950, monthly: 249, free_days: 60 });
     assert.deepEqual(o.website_only, { build: 1750 });
-    assert.deepEqual([...o.amounts].sort((a, b) => a - b), [249, 1750, 1950, 2000]);
-    assert.ok(o.guarantees.includes("Top 3 in Google search results in 90 days. GUARANTEED."));
-    assert.ok(o.guarantees.includes("The guarantee: we will work for FREE if you aren't in the top 3 of Google results within 90 days."));
+    assert.deepEqual([...o.amounts].sort((a, b) => a - b), [249, 1750, 1950]);
+    assert.ok(o.guarantees.includes(GUARANTEE.headline));
+    assert.ok(o.guarantees.includes(GUARANTEE.section));
     assert.ok(o.terms.some((t) => /no contract/i.test(t)));
   });
   test("weekend offer ends Monday 00:00 UK, across the clock change", () => {
     const o = offerFacts(new Date("2026-10-24T10:00:00Z"));
     assert.equal(o.weekend, true);
-    assert.deepEqual(o.full, { build: 1750, anchor: 2000, monthly: 249, free_days: 90 });
+    assert.deepEqual(o.full, { build: 1750, anchor: 1950, monthly: 249, free_days: 90 });
     assert.equal(o.weekend_ends_at, "2026-10-26T00:00:00Z");
+  });
+  test("extras are listed only when switched on", () => {
+    const off = offerFacts(new Date("2026-10-21T10:00:00Z"));
+    assert.ok(!off.included.some((l) => /chat assistant|Google reviews/i.test(l)));
+    const on = offerFacts(new Date("2026-10-21T10:00:00Z"), { chatbot: true, reviews: true });
+    assert.ok(on.included.includes("A chat assistant on your website."));
+    assert.ok(on.included.some((l) => /Google reviews/.test(l)));
   });
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/offer-facts.test.mjs` → FAIL: `offerFacts` is not exported.
-- [ ] **Step 3: Implement `offerFacts(at)` in `_lib/offer.js`** — compose from the existing constants; `terms` = "No contract and no cancellation fees.", "If we're not making you money, we don't want your money.", "If you stop paying, you keep the website; the monthly work stops.", "Your card is taken at checkout and charged automatically when the free days end."; `included` = "A new website, live within 7 days of you sending us your details.", "Monthly work to get you into the top 3 on Google for your main service in your town.", "Getting more Google reviews from your customers: your review link, QR card and messages.", "A chat assistant on your website.", "A monthly report.", "If you haven't got a domain, we buy one in your name and you keep it."
+- [ ] **Step 3: Implement `offerFacts(at, extras)` in `_lib/offer.js`** — compose from `offerFor`/`PACKAGES`/`GUARANTEE`; `amounts` = the distinct pound values of `website_only.build`, `full.build`, `full.anchor`, `full.monthly`; `terms` = "No contract and no cancellation fees.", "If we're not making you money, we don't want your money.", "If you stop paying, you keep the website; the monthly work stops.", "Your card is taken at checkout and charged automatically when the free days end."; `included` = "A new website, live within 7 days of you sending us your details.", "Monthly work to get you into the top 3 on Google for your main service in your town.", then "Getting more Google reviews from your customers: your review link, QR card and messages." only when `reviews`, "A chat assistant on your website." only when `chatbot`, then "A monthly report.", "If you haven't got a domain, we buy one in your name and you keep it."
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/offer.js control-room/tests/offer-facts.test.mjs && git commit -m "Offer: offerFacts for replies" -m "$TRAILERS"`
 
@@ -597,27 +608,32 @@ callTodoTitle({first, business, slot_at, phone}) → string
 **Files:** Create `control-room/functions/_lib/replyGuard.js`. Test `control-room/tests/replyGuard.test.mjs`.
 
 **Interfaces:** Consumes `offerFacts` shape (Task 2). Produces
+`REPLY_HOSTS = ["aetoswebsites.com", "www.aetoswebsites.com"]` and
 `replyGuard(body: string, ctx: {offer, hosts: string[], slug: string|null, signName: string}) → {ok: boolean, reasons: string[]}`
-(reasons in the order of the Part A table, each once).
+(reasons in the order of the Part A table, each once). Callers pass `hosts: REPLY_HOSTS` and `signName` = the
+`business:sender_name` setting.
 
 - [ ] **Step 1: Write the failing test**
   ```js
   const WEEKDAY = offerFacts(new Date("2026-10-21T10:00:00Z"));
-  const CTX = { offer: WEEKDAY, hosts: ["aetoswebsites.com", "control.aetoswebsites.com"], slug: "green-leaf-ab12", signName: "Nik" };
-  const OK = "Hi Sam,\n\nSure. Click the link below to see the website I made for you and browse around.\n\nhttps://control.aetoswebsites.com/d/green-leaf-ab12\nOur own site: aetoswebsites.com\n\nIf you have any further questions, feel free to ask here.";
+  const CTX = { offer: WEEKDAY, hosts: REPLY_HOSTS, slug: "green-leaf-ab12", signName: "Nik" };
+  const OK = "Hi Sam,\n\nSure. Click the link below to see the website I made for you and browse around.\n\nhttps://aetoswebsites.com/d/green-leaf-ab12\nOur own site: aetoswebsites.com\n\nIf you have any further questions, feel free to ask here.";
   const why = (b, c = CTX) => replyGuard(b, c).reasons;
   test("a good reply passes", () => assert.deepEqual(replyGuard(OK, CTX), { ok: true, reasons: [] }));
   test("length", () => assert.deepEqual(why("word ".repeat(181)), ["Too long: 181 words (180 max)."]));
   test("prices", () => {
-    assert.deepEqual(why("It's £1,500."), ["£1,500 isn't one of our prices (£249, £1,750, £1,950, £2,000)."]);
+    assert.deepEqual(why("It's £1,500."), ["£1,500 isn't one of our prices (£249, £1,750, £1,950)."]);
+    assert.deepEqual(why("Normally £2,000."), ["£2,000 isn't one of our prices (£249, £1,750, £1,950)."]);
     assert.deepEqual(why("It's £1950 then £249.00 a month."), []);
     for (const b of ["About 2k.", "1950 pounds", "1950 quid", "£1.95k"]) assert.deepEqual(why(b), ["Write prices in full with £, e.g. £1,950."]);
   });
   test("SEO in any form", () => { for (const b of ["We do SEO.", "s.e.o work", "local Seo"]) assert.deepEqual(why(b), ["Don't say \"SEO\": say \"top 3 on Google\" or \"the front page of Google\"."]); });
   test("links and addresses", () => {
     assert.deepEqual(why("See bit.ly/x"), ["Links can only go to their demo, their order page or aetoswebsites.com (found bit.ly)."]);
-    assert.deepEqual(why("https://control.aetoswebsites.com/d/other-slug"), ["That link is another business's demo (/d/other-slug)."]);
-    assert.deepEqual(why("https://control.aetoswebsites.com/d/green-leaf-ab12/order"), []);
+    assert.deepEqual(why("https://control.aetoswebsites.com/d/green-leaf-ab12"), ["Links can only go to their demo, their order page or aetoswebsites.com (found control.aetoswebsites.com)."]);
+    assert.deepEqual(why("https://aetoswebsites.com/d/other-slug"), ["That link is another business's demo (/d/other-slug)."]);
+    assert.deepEqual(why("https://aetoswebsites.com/d/green-leaf-ab12/order"), []);
+    assert.deepEqual(why("www.aetoswebsites.com"), []);
     assert.deepEqual(why("Email dave@smith.co.uk"), ["No email addresses in replies (found dave@smith.co.uk)."]);
   });
   test("promises only in the exact guarantee wording", () => {
@@ -637,7 +653,7 @@ callTodoTitle({first, business, slot_at, phone}) → string
   });
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/replyGuard.test.mjs` → FAIL: cannot find module.
-- [ ] **Step 3: Implement `replyGuard(body, ctx)` in `_lib/replyGuard.js`** — words = whitespace split; hosts from `https?://` URLs and bare `name.tld(/path)` tokens (excluding the parts of email addresses), allowed when equal to or ending in `.` + an allowed host; amounts parsed from `£\s?[\d,]+(\.\d\d)?` and normalised, except an amount followed by `k`, which is reported only as "Write prices in full"; promise words searched in the body after removing every `offer.guarantees` sentence (case-insensitive); the price list in the reason is `offer.amounts` sorted ascending, formatted `£1,750`.
+- [ ] **Step 3: Implement `replyGuard(body, ctx)` in `_lib/replyGuard.js`** — words = whitespace split; hosts from `https?://` URLs and bare `name.tld(/path)` tokens (excluding the parts of email addresses), allowed only when exactly equal to an allowed host; amounts parsed from `£\s?[\d,]+(\.\d\d)?` and normalised, except an amount followed by `k`, which is reported only as "Write prices in full"; promise words searched in the body after removing every `offer.guarantees` sentence (case-insensitive); the price list in the reason is `offer.amounts` sorted ascending, formatted `£1,750`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/replyGuard.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/replyGuard.js control-room/tests/replyGuard.test.mjs && git commit -m "Replies: server-side reply guard" -m "$TRAILERS"`
 

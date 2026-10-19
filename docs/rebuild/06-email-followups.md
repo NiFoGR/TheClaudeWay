@@ -694,7 +694,7 @@ which `stopReason` is non-null → `stopFollowups`).
 - [ ] **Step 1: Write the failing test**
 ```js
 test("first email sent → emailed, schedule, style example", async () => {
-  const DB = fakeD1(); await seedReady(DB, "p1");                       // prospect 'ready', mailbox m1, display_name "Nik"
+  const DB = fakeD1(); await seedReady(DB, "p1");                       // prospect 'ready', mailbox m1, business:sender_name "Nik"
   await insertMessage(DB, { id: "x1", place_id: "p1", kind: "first", author: "nik", status: "sent", message_id: "<a@aetoswebsites.com>",
     sent_at: "2026-10-22T08:15:00Z", body: `Hi,\n\nLook: https://d\n\n${coldFooter("Nik")}` });
   assert.deepEqual(await syncSent(DB, new Date("2026-10-22T08:20:00Z")), { firsts: 1, followups: 0, stopped: 0 });
@@ -751,7 +751,7 @@ retried (it may have gone): `stopFollowups` + `health` todo `health:followup-fai
 `closeFinished(DB, now, {limit = 10}) → Promise<number>` (`followup_step = 9` and `next_followup_at ≤ now` →
 `applyStageEvent(DB, place_id, "sequence_done", now, {lost_reason: "sequence_done"})`);
 `queueDue(DB, now, {limit = 3}) → Promise<{queued: number, held: string|null}>`;
-`followupsStep(ctx: {DB, env, now}) → Promise<string>` (runs `ensureTemplates`, `syncSent`, `sweepStops`,
+`followupsStep(ctx: {DB, env, now, budget?}) → Promise<string>` (runs `ensureTemplates`, `syncSent`, `sweepStops`,
 `retryFailed`, `closeFinished`, `queueDue`; summary like `"synced 1, stopped 0, retried 0, closed 0, queued 2"` or
 `"waiting: follow-ups 6/9 approved"`);
 tick.js `STEPS` entry `{name: "followups", everyMinutes: 5, run: followupsStep}` at position 3 (after `reply_fire`,

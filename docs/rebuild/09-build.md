@@ -1619,16 +1619,21 @@ calls `registerLight` twice (one function per light, each returning one light fr
 ### Task 29: Build Routine prompt
 
 **Files:** Create `routines/build.md` (section 6 prompt, verbatim). Modify `routines/README.md` (build Routine: name
-"Aetos build", model Sonnet, API trigger only, environment with the Control Room network secret; paste its `/fire` URL
-and token into Setup → Routines → build). Test `control-room/tests/routines-build.test.mjs`.
+`aetos-build`, model Sonnet, API trigger only, the shared "Aetos" environment with the network secret and
+`CONTROL_ROOM_URL`; paste its `/fire` URL and token into Setup → Claude → build). Test
+`control-room/tests/routines-build.test.mjs`.
 
-**Interfaces:** Consumes `LIMITS` (Task 2).
+**Interfaces:** Consumes `LIMITS` (Task 2); stage 0's standard preamble (`routines/README.md` step 4).
 
-- [ ] **Step 1: Write the failing test** — `routines/build.md` contains `/api/agent/build/`, `/content`,
+- [ ] **Step 1: Write the failing test** — `routines/build.md` starts with stage 0's preamble verbatim with `<name>`
+  replaced by `build` (the test reads the preamble from `routines/README.md` and compares); it uses
+  `$CONTROL_ROOM_URL` for every address and contains none of `{APP}`, `{APP_URL}`, `CONTROL_ROOM}`; it contains
+  `/api/agent/build/`, `/content`,
   `/api/agent/heartbeat`, `<routine-fire-payload>`, `"build: client <id>"`, `"changes: client <id>"`, `"site update:
   client <id> task <task_id>"`, `{"applied": true}`, "Never invent
   anything", "at most 4 tries", and "docs/rebuild/09-build.md section 5"; it contains no `£` and no number that
-  contradicts `LIMITS` (the strings "max 12" and "first 8" are present); `routines/README.md` has a "build" section.
+  contradicts `LIMITS` (the strings "max 12" and "first 8" are present); `routines/README.md` has a "build" section
+  naming `aetos-build` and "Setup → Claude", and no "Setup → Routines".
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/routines-build.test.mjs` → ENOENT.
 - [ ] **Step 3: Implement** — copy the prompt from section 6.
 - [ ] **Step 4: Run tests to verify they pass** — same command → PASS.
@@ -1752,9 +1757,14 @@ CREATE TABLE IF NOT EXISTS rate_hits (
 - **Tick step** `sites` (`everyMinutes: 5`), placed after `calls` and before `care` in overview §8's order.
 - **Todo dedupe prefixes:** `build:<client_id>:approve|stuck|due|photos|gphotos|gbp|domain:<step>`;
   `setup:gbp-email`, `setup:chatbot`; Send closes stage 9's `build:new:<client_id>`.
-- **Health lights:** `sites`, `chat` (from `siteLightsFromDb`), plus heartbeat `routine:build`.
-- **Routes in the app shell:** `#/sites` and `#/site/<client_id>` registered in `PAGES` without a nav item (file 11's
-  nav stays as it is); stage 11's client page links "Website" → `#/site/<client_id>`.
+- **Health lights:** `sites`, `chat` (`{name, level, detail, fix}`, registered with stage 0's `registerLight`; no
+  name is a prefix of another light). `routine:build` stays stage 0's light; the "Claude hasn't built {name}'s site"
+  rule lives in `sites` (amber).
+- **Routes in the app shell:** `sites` and `site/<client_id>` added to file 11's `routeFor` in `public/js/nav.js` (and
+  `nav.test.mjs`) without a `NAV` item (file 11's nav stays as it is); stage 11's client page links "Website" →
+  `#/site/<client_id>`.
+- **Tables** `client_sites`, `site_leads`, `chat_usage`, `site_files`, `rate_hits` belong in overview §4's "Tables added
+  by later stages" and in `test_rebuild_tables_present` (Task 1).
 - **`setSiteFeature(DB, client_id, "chatbot"|"review_booster", on, now)`** in `_lib/sites/db.js` (stage 11 calls it
   on cancellation; `now` defaults to `new Date()`).
 - **Build Routine** handles stage 11's `site update: client <client_id> task <task_id>` payload; a content POST on a
@@ -1762,13 +1772,18 @@ CREATE TABLE IF NOT EXISTS rate_hits (
 - **Onboarding `form` keys for stage 11** (it assumed other names): contact email `business.email`, phone
   `business.phone`, town `areas[0]`, `areas`, services `services[].name` where `on`, main service = first ticked
   service, photos = count of `photos[]` in `client_sites.content`; contact name = `research.owner.first`.
-- **`_lib/sites/hosts.js` `OUR_HOSTS` / `isOurHost(host, env)`**: stage 0's middleware landing-page routing and any
-  extra Control Room hostname must be listed there (or set as `env.APP_HOST`).
+- **`_lib/sites/hosts.js` `OUR_HOSTS` / `isOurHost(host)`**: the root domain, `www`, `localhost`, `127.0.0.1` and
+  `*.pages.dev` skip the client-site lookup. Any other host (e.g. `control.aetoswebsites.com`) is looked up in
+  `client_sites`; with no row, `serveClientHost` returns `null` and stage 0's routing runs unchanged, so no Control
+  Room hostname needs listing and there is no `APP_HOST` variable.
 - **For stage 11 (monthly care):** `site_leads` and `chat_usage` feed the monthly report; any change stage 11 makes to
   `client_sites.content` goes through `validateContent` and `saveContent`-style storage (not raw writes);
   `client_sites.review_url` is the review link; `rate_hits` pruning is done here.
-- **Public routes:** `/onboard/<token>` (+ `/save`, `/submit`), `/s/f/<id>`, `/w/<slug>/…`; login-gated `/c/<slug>/…`,
-  `/api/sites/*`, `/api/setup/sites`; agent `/api/agent/build/:client_id` (+ `/content`).
+- **Public routes:** `/onboard/<token>` (+ `/save`, `/submit`), `/s/f/<id>`, `/w/<slug>/…` (each new public prefix is
+  also asserted in stage 0's `site.test.mjs`: Tasks 13 and 23); login-gated `/c/<slug>/…`, `/api/sites/*`,
+  `/api/setup/sites`; agent `/api/agent/build/:client_id` (+ `/content`).
+- **Routine:** `routines/build.md` starts with stage 0's preamble and uses `$CONTROL_ROOM_URL`; Routine name
+  `aetos-build`, connected on Setup → Claude → build.
 
 **Needed from other stages:**
 - **Stage 9 (08-order-pay.md):** creates the `onboarding` row (`status = sent`, 32-char base64url `token`) and
@@ -1785,22 +1800,33 @@ CREATE TABLE IF NOT EXISTS rate_hits (
   not change (stage 4's tests keep passing). `checkDemoHtml` is not used on live sites (their copy is checked by
   `validateContent`).
 - **Stage 11 (10-monthly-care.md):** `GET`/`POST /api/agent/care/<client_id>/tasks/<task_id>` for `site update`
-  payloads; the client page links to `#/site/<client_id>`; care reads `site_leads` and `chat_usage`.
+  payloads; the client page links to `#/site/<client_id>`; care reads `site_leads` and `chat_usage`; its owner
+  `access` action (`POST /api/care/:id {action: "access", on}`, sets `gbp_access_on`) is what this stage's "Invite
+  accepted" checkbox calls (stage 11 is built later; until then the tick only closes `build:<client_id>:gbp`). Care
+  uses this stage's form keys (service = first ticked `services[].name`, town = `areas[0]`, contact =
+  `research.owner.first`) and skips its Google-access email when `form.gbp.invite_sent` is true.
 - **Stage 0 (01-foundations.md):** `queueMessage` dispatches `kind: "system"` mail outside cold caps and send windows
-  (at the next tick); `composeEmail` strips CR/LF from subjects; `fireRoutine`, `beat`, `addTodo`, `closeTodos`,
-  `getSecret`/`setSecret`/`secretStatus`, `ukTime.js`, tick `STEPS` registration, `healthFromDb` accepting extra lights,
-  `requireAgent`, the `PAGES` registry in `app.js`, and a middleware where the client-host check can run before the
-  login gate.
+  (at the next tick; a paused mailbox still sends `system`, and suppression isn't checked for `system`);
+  `composeEmail` throws on CR/LF, so this stage strips every subject with `oneLine()` before queueing; `fireRoutine`,
+  `beat`, `addTodo`, `closeTodos`, `getSecret`/`setSecret`/`secretStatus`, `getSetting` (`business:sender_name`),
+  `ukTime.js`, tick `STEPS` registration (slot `sites` between `calls` and `care`), `registerLight(fn)` in
+  `_lib/health.js` (`healthFromDb(DB, env, now)` returns `{lights, gaps}` including registered lights), `requireAgent`,
+  the routine preamble and `CONTROL_ROOM_URL` in `routines/README.md`, the public-prefix rule in `site.test.mjs`, and
+  a middleware where the client-host check can run before the login gate.
+- **File 11 (11-todo-kpis.md):** `public/js/nav.js` `routeFor(hash) → {page, id, tab, params}` (the routing owner).
 - **Stage 3 (04-shortlist.md):** `public/js/html.js` exports `esc`, `safeUrl`.
 
 ## Questions for Nik
 
-1. **Title tag length.** Your brief said ≤ 60 characters; the SEO playbook says long titles ("BEST + category + city +
-   name + services + near me", ~200). **Default:** up to 120 characters in the form "Roofing contractor in Swindon |
-   Smith Roofing – Roof repairs, flat roofs" (the playbook's own prompt range, 60–120), without "BEST" (we only state
-   what's true). Say if you want "BEST" in titles.
-2. **Website Only domains.** Full Package domains are paid from the £249/month. **Default:** for Website Only we pay
-   the first year (~£10) out of the £1,750, then it renews in their name at their cost, and we tell them a month
-   before.
-3. **Client sign-off before going live.** **Default:** no; you approve, it goes live, and they reply with changes.
-   Waiting for client approval would put the 7-day guarantee in their hands.
+- **Q-AF. Title tag length and "BEST".** Your brief said ≤ 60 characters; the SEO playbook says long titles ("BEST +
+  category + city + name + services + near me", ~200). **Default:** up to 120 characters, no "BEST", in the form
+  "Roofing contractor in Swindon | Smith Roofing – Roof repairs, flat roofs" (the playbook's own prompt range, 60–120;
+  we only state what's true). Say if you want "BEST" in titles.
+- **Q-AC. Website Only ongoing costs (hosting and domain renewal)** (shared with 08). Full Package domains are paid
+  from the £249/month. **Default:** hosting free for good; we pay year 1 of the domain, then it renews at their cost
+  with a month's notice.
+- **Q-AG. Client sign-off before go-live?** **Default:** no; you approve, it goes live, and they reply with changes.
+  Waiting for client approval would put the 7-day guarantee in their hands.
+- **Q-AK. Review booster: does the system send the "job finished" message, or does the client?** (decisions.md says
+  "A message sent when each job finishes, plus one reminder".) **Default:** the client sends it, using our ready-made
+  text, email and QR templates (section 12); nothing automated.

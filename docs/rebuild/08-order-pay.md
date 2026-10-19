@@ -569,7 +569,7 @@ Produces:
 ORDER_NOTICES = {back, busy, failed, not_connected, already_client}   // exact Part A text; {Business} filled in
 renderOrder({lead, slug, offer, extras: {chatbot: boolean, reviews: boolean}, notice: keyof ORDER_NOTICES|null,
              trader: string}) → string
-renderThanks({lead, slug, state: "done"|"pending"|"not_found", onboardUrl?, terms?, amountPaid?, firstChargeOn?}) → string
+renderThanks({lead, slug, outcome: "done"|"pending"|"not_found", onboardUrl?, terms?, amountPaid?, firstChargeOn?}) → string
 ukLongDate("YYYY-MM-DD") → "Friday 18 December 2026"
 ```
 
@@ -589,7 +589,8 @@ ukLongDate("YYYY-MM-DD") → "Friday 18 December 2026"
     `<button`; `notice: "busy"` → notice text and buttons present.
   - `escaping`: `lead.name = "<script>x</script>"` → output has no `<script>x` and has `&lt;script&gt;`.
   - `trader line`: `trader: "Nik P, trading as Aetos Websites, 1 High St"` → the footer contains it (escaped);
-    `trader: ""` → the footer has only the Stripe line.  - `thanks done (full)`: `renderThanks({state: "done", onboardUrl: "https://x.test/onboard/T", terms: termsFor("full", false), amountPaid: 195000, firstChargeOn: "2026-12-18"})`
+    `trader: ""` → the footer has only the Stripe line.
+  - `thanks done (full)`: `renderThanks({outcome: "done", onboardUrl: "https://x.test/onboard/T", terms: termsFor("full", false), amountPaid: 195000, firstChargeOn: "2026-12-18"})`
     contains `Thank you, you're all set`, `Your payment of £1,950 has gone through.`, `href="https://x.test/onboard/T"`,
     `The first £249 is taken on Friday 18 December 2026.`
   - `thanks website`: no `monthly plan`. `thanks not_found`: `We couldn't find that payment` and a link to
@@ -933,26 +934,35 @@ Then run the live checks 3–12 of "Perfect when" in Stripe test mode before sta
 - `payments` ids: `build:<stripe_customer>`, `<invoice>:monthly`, `refund:<charge>`; category `Refunds` (negative).
 
 **Needed from other stages (not fully defined in the overview)**
-- Stage 0 `stages.js`: `nextStage("lost", "paid")` must return `won` (§5 says "from any open stage"; money beats a
-  "no"). Task 7 amends it if not.
-- Stage 0 `queueMessage`/`dispatchDue`: kind `system` must not wait for the cold send window and must not count
-  against cold caps (`sentToday` already counts first/followup only), so a welcome email goes on the next tick.
-- Stage 0: the D-7 trader line (Nik's name, "trading as Aetos Websites", address) as a helper or settings keys,
-  for the order page footer.
+- Stage 0 `_lib/offer.js` (Task 6): `PACKAGES` (with `PACKAGES.weekend.wasBuild = 195000`), `MONTHLY_PENCE`,
+  `offerFor(date) → {weekend, full, website, banner}`, `termsFor`, `checkoutWeekend`, `formatPounds` (pennies and
+  negatives), `GUARANTEE{headline, section}`, `BUILD_GUARANTEE`, `WEEKEND_BANNER`, `NO_CONTRACT`; `money.js`
+  re-exports `PACKAGES`.
+- Stage 0 `stages.js` / `prospects.js`: `paid` goes from any stage to `won`;
+  `applyStageEvent(DB, placeId, event, now, {lost_reason, email, greet_name})` inserts a row when none exists;
+  `isSuppressed`, `suppress`. An `opt_out` from a `won` prospect is handled as `human`.
+- Stage 0 `queueMessage`/`dispatchDue`: kind `system` doesn't wait for the cold send window, doesn't count against
+  cold caps, still goes from a paused mailbox, and is not checked against suppression (only `first`/`followup`/`reply`
+  are), so a welcome email goes on the next tick.
+- Stage 0 `health.js`: `registerLight(fn)`; `healthFromDb(DB, env, now) → {lights, gaps}`.
+- Stage 0 landing module (Task 22): `traderLine(business) → string|""` for the order page footer.
+- Stage 0 settings `business:sender_name` (every sign-off) and the `business:*` keys `traderLine` reads.
 - Stage 0 `tests/helpers/fakeD1.mjs` exporting `fakeD1()` whose `.run()` returns `meta.changes`.
 - Stage 4: `h()` from the template engine, `demoBySlug(DB, slug)`, `recordEvent(DB, demo, kind, at)` with
   `EVENT_KINDS` including `order_page`, `order_click`, `ordered`, and the expired-preview renderer. The demo's
-  "Make it mine" button links to `/d/:slug/order`.
-- Stage 7: the reply Routine must not answer mail from `won` prospects or known client addresses as a sales reply;
-  send it to Nik as an `escalation` (or a stage 10–11 rule).
+  "Order this site" button links to `/d/:slug/order`.
+- Stage 7: mail from `won` prospects or known client addresses goes to Nik, never a sales reply; `onHumanInbound`
+  sets `messages.client_id` for `won` prospects.
 
 ## Questions for Nik
 
-1. **Weekend crossed-out price:** show ~~£1,950~~ £1,750 (the real weekday price) instead of ~~£2,000~~? Crossing out
-   a price we never charge breaks UK price-comparison rules. **Default: £1,950.**
-2. **Website Only hosting:** keep hosting Website Only sites at no charge for as long as they want it (it costs us
-   nothing on Cloudflare)? The page says "Hosting included". **Default: yes.**
-3. **Reminder before the free days end:** Stripe can email clients 7 days before the first £249. You decided no
-   reminder; it would cut "I couldn't cancel in time" refunds. **Default: off.**
-4. **Invoices for Website Only:** Stripe makes a proper invoice for one-off payments but charges a small invoicing
-   fee on them (check stripe.com/pricing). Monthly plans get invoices anyway. **Default: on.**
+- **Q-A. Weekend crossed-out price: £1,950 or £2,000?** Crossing out a price we never charge breaks UK
+  price-comparison rules, so the order page shows the real weekday price. **Default: ~~£1,950~~ £1,750 in writing;
+  "around £2,000" only when spoken.**
+- **Q-AC. Website Only ongoing costs (hosting and domain renewal):** the page says "Hosting included" (it costs us
+  nothing on Cloudflare). **Default: hosting free for good; we pay year 1 of the domain, then it renews at their
+  cost with a month's notice.**
+- **Q-AD. Remind clients before the free days end?** Stripe can email clients 7 days before the first £249. Nothing
+  is decided on this yet; a reminder would cut "I couldn't cancel in time" refunds. **Default: off.**
+- **Q-AE. Stripe invoices for Website Only:** Stripe makes a proper invoice for one-off payments but charges a small
+  invoicing fee on them (check stripe.com/pricing). Monthly plans get invoices anyway. **Default: on.**

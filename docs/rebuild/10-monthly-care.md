@@ -503,7 +503,8 @@ Clients without a `care` row keep file 11's `guaranteeWords`/`lead_map_rank` fig
 section and no `/api/care/clients` list.
 
 **Client page** `#/client/<client_id>` (`public/js/client.js`):
-- Header: name, site link, package, status, phone/email. Buttons: **Domain transfer**, **Run scan now**.
+- Header: name, site link, "Website" → `#/site/<client_id>` (stage 10's Site page), package, status, phone/email.
+  Buttons: **Domain transfer**, **Run scan now**.
 - **Guarantee box:** the label (R2); before day 0, the date picker and **I'm a Manager on their Google profile**
   (date must be between go-live and today: "Pick a date between <live date> and today."). When working free:
   "Fee paused in Stripe since <date>" or the manual pause buttons from R2.
@@ -527,11 +528,12 @@ section and no `/api/care/clients` list.
 subscription), `health` (scan failed, day-90 waiting, reviews not checked), `setup` ("Add your Google account email
 for client access", "Approve the 2 automatic client emails", added when the first care row is created).
 
-**Health lights fed** (`careLights` → stage 0's health step):
-- `care_scans`: red if a scheduled care scan failed or is still not done 2 h after it started.
+**Health lights fed** (`careLights`, registered with stage 0's `registerLight`; each `{name, level, detail, fix}`,
+`level` grey when there are no active care clients):
+- `care_scans`: red if a scheduled care scan failed or is still running 45 minutes after it started.
 - `care_reviews`: red if an active client's latest review check is more than 9 days old.
-- `routine:monthly-care`: red if there are active clients and no heartbeat for 32 days; amber if any task has been
-  `drafting` for more than 24 h.
+- `care_drafts`: amber if any care task has been `drafting` (waiting for Claude) for more than 24 h. Whether the Routine
+  runs at all is stage 0's `routine:monthly-care` light; care adds no second light for it.
 
 ## Perfect when
 
@@ -560,11 +562,16 @@ for client access", "Approve the 2 automatic client emails", added when the firs
 7. **Live, scan:** on the real database, add a care row for one real lead (test client), press Run scan now. The
    heatmap's middle dot sits on the business's map pin; the Money page lists "Client scan centres" calls.
 8. **Live, drafts:** with the Routine created, press Ask Claude again on a test client's `w1.email`. Within 15 minutes
-   the draft shows with real numbers filled; Send delivers it from the client mailbox to Nik's own address (used as the
-   test client's email).
+   the draft shows with real numbers filled; Send delivers it from the system mailbox (or a cold one if there's no
+   system mailbox) to Nik's own address (used as the test client's email).
 9. **Live, Stripe (test mode):** on a test-mode subscription, force the day-90 check to "not Top 3" (test client with
    a fake scan): Stripe Dashboard shows "Collection paused (void)"; a later Top 3 scheduled scan shows it resumed.
-10. All commands in overview §9 pass.
+10. **Money** (`money.test.mjs`): a working-free client adds no retainer to the forecast or the monthly total; once
+    `met`, it does again.
+11. **Clock wording** (`order-page.test.mjs`, `client-mail.test.mjs`, `site.test.mjs`): the order page's FAQ 5, the
+    Full Package welcome email and the landing page's guarantee paragraph all say "Your 90 days start the day you give
+    us access to your Google Business Profile."
+12. All commands in overview §9 pass.
 
 ---
 
@@ -581,7 +588,8 @@ resume, and a monthly-care Routine whose drafts can only use true numbers.
 `care-copy.js` tokens and templates, `care-drafts.js` draft validation and site checks, `care-tick.js` the action
 planner); `care-db.js` loads state and applies actions inside the tick and the APIs; `care-stripe.js` makes the two
 Stripe calls. The Python engine gains a place-centred scan and a review check, both started by the tick through
-GitHub Actions. The browser gets one page, `client.js`.
+GitHub Actions. The browser gets one page, `client.js`, and file 11's client cards take their guarantee and rank
+figures from care. Client email goes through stage 9's `sendClientMail`; Stripe through stage 9's `stripeApi`.
 
 **Tech Stack:** Cloudflare Pages Functions (plain ES modules), D1, node:test with `tests/helpers/fakeD1.mjs`, Python
 3.11 + httpx + respx (pytest), GitHub Actions, Stripe API 2024-06-20, Claude Routine (Sonnet).
@@ -591,8 +599,12 @@ GitHub Actions. The browser gets one page, `client.js`.
 ## Global Constraints
 
 - Overview §9 applies: truth, escaping (`esc`/`safeUrl`), copy rules (never "SEO" to clients), exact guarantee
-  wording, prices only from `offer.js` (`MONTHLY_PENCE`, `gbp()`), UTC storage with UK rules via `ukTime.js`,
-  plain-English errors, all test commands green before any push.
+  wording (`GUARANTEE` from `offer.js`), prices only from `offer.js` (`MONTHLY_PENCE`, `PACKAGES`, `formatPounds()`;
+  `offer.js` is stage 0's and this stage adds nothing to it), UTC storage via `util.now()`/`iso()` (no milliseconds)
+  with UK rules via `ukTime.js`, plain-English errors, all test commands green before any push.
+- Every client-email sign-off uses the setting `business:sender_name` (`{{nik_name}}`).
+- Health lights have the shape `{name, level: "green"|"amber"|"red"|"grey", detail, fix}` and are added with stage 0's
+  `registerLight(fn)`; `health.js` is not edited.
 - Care scan: keyword `"<service> <town>"` lower case, grid 7, spacing 800 m, centred on `care.place_id`; scheduled
   care days 0, 30, 60, 90, …; Top 3 = centre rank ≤ 3 AND `2 × top3Points ≥ points`.
 - Guarantee: 90 days; decided only by the first scheduled scan with day ≥ 90; `health` todo at care day 92.
@@ -602,7 +614,9 @@ GitHub Actions. The browser gets one page, `client.js`.
 - Post slots: days 1, 8, 15, 22 of the month, first on/after care day 7. Monthly report from care day 84. Nudge on the
   15th from care day 7. Referral at live_on + 30.
 - Review check: Mondays and the 1st from 06:00 UK, once per UK date; low-star alert ≤ 3 stars.
-- Tick step `care`: `everyMinutes: 10`, ≤ 20 D1 statements per run, ≤ 2 scan starts, ≤ 10 todos, ≤ 2 template sends.
+- Tick step `care`: overview §8 slot 11 (after `sites`, before `health`), `everyMinutes: 10`, ≤ 20 D1 statements per
+  run and never more than `ctx.budget` allows, ≤ 2 scan starts, ≤ 10 todos, ≤ 2 template sends. Care scans running
+  45 minutes are failed by this step (stage 1's `stale_jobs` skips `source = 'care'`).
 - API responses carry plain text only (never HTML we render); review text cut to 600 chars, client email bodies to
   3,000.
 - Commits: `TRAILER=$'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_017h4iwgwaGCvQ5f9mmF4rDY'`
@@ -629,7 +643,8 @@ GitHub Actions. The browser gets one page, `client.js`.
 
 ### Task 1: Care tables
 
-**Files:** Modify `lead-manager/schema.sql`, `control-room/functions/_lib/schema.js` (generated); Test
+**Files:** Modify `lead-manager/schema.sql`, `control-room/functions/_lib/schema.js` (generated),
+`lead-manager/tests/test_schema_sync.py` (add the four tables to `test_rebuild_tables_present`); Test
 `control-room/tests/care-schema.test.mjs`.
 
 **Interfaces:**
@@ -699,15 +714,18 @@ CREATE TABLE IF NOT EXISTS care_reviews (
 
 - [ ] **Step 1: Write the failing test** — `care-schema.test.mjs`: `test("care tables exist with their columns")`:
   for each table, `PRAGMA table_info(<t>)` on `fakeD1()` returns exactly the column names above, in order; inserting
-  two `care_reviews` rows with the same `(client_id, checked_on)` throws.
+  two `care_reviews` rows with the same `(client_id, checked_on)` throws. In `test_schema_sync.py`, add `"care",
+  "care_tasks", "care_scans", "care_reviews"` to the list in `test_rebuild_tables_present` (the statement count test
+  is `>= 52`, so it needs no change).
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/care-schema.test.mjs` → fails: no
-  such table `care`.
+  such table `care`; `cd lead-manager && python -m pytest -q tests/test_schema_sync.py` → fails on `care`.
 - [ ] **Step 3: Implement** — append the SQL to `lead-manager/schema.sql` after `client_links`; run
   `python scripts/sync_schema.py`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/care-schema.test.mjs` and
   `cd lead-manager && python -m pytest -q tests/test_schema_sync.py` → PASS.
 - [ ] **Step 5: Commit** — `git add lead-manager/schema.sql control-room/functions/_lib/schema.js
-  control-room/tests/care-schema.test.mjs` + `git commit -m "Care: tables for plans, scans and reviews" -m "$TRAILER"`.
+  lead-manager/tests/test_schema_sync.py control-room/tests/care-schema.test.mjs` + `git commit -m "Care: tables for
+  plans, scans and reviews" -m "$TRAILER"`.
 
 ### Task 2: Two new Google SKUs on the Money page
 
@@ -908,10 +926,12 @@ CREATE TABLE IF NOT EXISTS care_reviews (
 **Files:** Create `control-room/functions/_lib/care-copy.js`; Test `control-room/tests/care-copy.test.mjs`.
 
 **Interfaces:**
-- Consumes: `rankText` (care.js), `gbp`, `MONTHLY_PENCE` (offer.js).
+- Consumes: `rankText` (care.js), `formatPounds`, `MONTHLY_PENCE` (offer.js, stage 0).
 - Produces:
   - `TEMPLATES = {A, B, C, D, E, F}` each `{subject, body}` (R7 copy verbatim)
-  - `factsFor(ctx) → {[token]: string}` (only tokens with data; R6 table rendering rules). In `ctx`, `rank_*` is a
+  - `factsFor(ctx) → {[token]: string}` (only tokens with data; R6 table rendering rules; `monthly_price` =
+    `formatPounds(MONTHLY_PENCE)`). The caller fills `ctx.nik_name` from the setting `business:sender_name` and
+    `ctx.first_name` from `research.owner.first` only when `owner.confident` (else `null` → "Hi,"). In `ctx`, `rank_*` is a
     number, or `null` = scanned but not in the top 20 ("outside the top 20"); a missing `rank_*` key = no such scan
     (token absent). Every other fact that is `null` or missing = no data (token absent).
   - `tokensIn(text) → string[]`; `renderTokens(text, facts) → string` (throws `Error("Unknown or empty token {{x}}")`)
@@ -940,6 +960,8 @@ CREATE TABLE IF NOT EXISTS care_reviews (
     assert.match(TEMPLATES.E.body, /you won't be charged your monthly fee until you're in the top 3/);
     assert.equal(TEMPLATES.C.subject, "Reviews this month");
     assert.deepEqual(TEMPLATES.F.body.match(/\{\{\w+\}\}/g).includes("{{monthly_price}}"), true);
+    assert.equal(factsFor({ first_name: null }).greeting, "Hi,");
+    assert.equal(factsFor({}).monthly_price, formatPounds(MONTHLY_PENCE)); // "£249"
   });
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/care-copy.test.mjs` → cannot find module.

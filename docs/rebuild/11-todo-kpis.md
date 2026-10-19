@@ -611,6 +611,7 @@ JS, `style.css`.
   - Task 1's `pastWhen`, `futureWhen`, `ukShortDate`, `ukDayDate`.
 - Produces:
   - `guaranteeWords(liveAtIso, ukToday) → string`
+  - `rankWords(row, now) → {rank, rank_link}`
   - `clientCards(rows, now) → {cards: [{client_id, name, place_id, phase, build, late, guarantee, rank, rank_link,
     monthly, card_failed, attention, care}], past: number}`
   - Each input row is a `clients` row joined with `onboarding` (`ob_status, ob_created_at, due_live_at, live_at`),
@@ -682,13 +683,19 @@ JS, `style.css`.
 **Interfaces:**
 - Consumes:
   - `addTodo`, `groupBoard` (stage 0, `todo.js`);
-  - `healthFromDb(DB, now) → Promise<Light[]>` (stage 0);
+  - `healthFromDb(DB, env, now) → Promise<{lights, gaps}>` (stage 0; lights `{name, level, detail, fix}`, level
+    `green|amber|red|grey`);
   - `pipelineColumns`, `clientCards`, `leadLink`, `threadLink` (Tasks 1–2);
-  - `sendNikReply(DB, {place_id, body, now}) → Promise<{message_id}>` (stage 7);
-  - `db`, `json`, `bad` from `_lib/util.js`.
+  - `sendAsNik(DB, {message_id, body, now}) → Promise<{status, body}>` (stage 7, `_lib/replies-db.js`);
+  - `db`, `json`, `bad`, `iso` from `_lib/util.js`.
 - Produces:
   - `KIND_ORDER`, `sortTodos(items) → items` (pure, in `todo.js`)
-  - `loadBoard(DB, now) → Promise<{now, health, today: {overdue, today, later}, pipeline, clients, counts: {due, red}}>`
+  - `visibleTodos(rows, lights) → rows` (pure): drops `health` todos whose dedupe is `health:<name>` of a light in
+    `lights`
+  - `messageIdFromDedupe(dedupe) → string|null` (pure): `escalation:<id>` / `call_time:<id>` → `<id>`, with any
+    `@…` suffix stripped; anything else → null
+  - `loadBoard(DB, env, now) → Promise<{now, health, today: {overdue, today, later}, pipeline, clients, counts: {due,
+    red}}>`
   - `setTodoStatus(DB, id, status, now) → Promise<"ok"|"missing">`
   - Todo item shape: `{id, kind, title, detail, link, draft, due_at, place_id, client_id, business, phone,
     lead_link, thread_link}`
@@ -700,32 +707,43 @@ JS, `style.css`.
 
 - [ ] **Step 1: Write the failing test.**
   - Setup: `fakeD1()`, then `DB.exec(board-seed.sql)`. The seed holds the Task 1 prospects with matching `leads`
-    rows (pc's lead phone `01234 567890`), the Task 2 clients, and these todos:
-    - `t-esc`: escalation, pn, `draft` "Hi Sam, …", due today.
+    rows (pc's lead phone `01234 567890`), a `ready` prospect `drill:1` (must not be counted), the Task 2 clients, a
+    mailbox, pn's inbound message `m-pn1` (`kind 'inbound'`, `class 'human'`, `mailbox_id` set) and these todos:
+    - `t-esc`: escalation, pn, dedupe `escalation:m-pn1`, `draft` "Hi Sam, …", due today.
     - `t-call`: call, pc, due 2026-10-23T10:00Z, with a `calls` row `phone '07969 123456'`, `confirmed`.
     - `t-hot`: hot, ph, no due.
     - `t-pay`: payment, due 2026-10-21T09:00Z.
     - `t-setup`: setup, `place_id` NULL.
     - `t-gone`: hot, `place_id` 'deleted-lead'.
-    - `t-health`: health.
+    - `t-health`: health, dedupe `health:tick` (the seed has no tick heartbeat, so the `tick` light is red and shows
+      it).
+    - `t-find`: health, dedupe `health:find:towns`, no due (no light covers it).
     - `t-kpi`: kpi, due 2026-10-26T08:00Z.
     - `t-done`: status done.
-  - `NOW = 2026-10-22T12:00:00Z`.
+  - `NOW = 2026-10-22T12:00:00Z`, `ENV = {}`.
 
   ```js
   test("board groups, sorts and enriches today's items", async () => {
-    const b = await loadBoard(DB, NOW);
+    const b = await loadBoard(DB, ENV, NOW);
     assert.deepEqual(b.today.overdue.map((t) => t.id), ["t-pay"]);
-    assert.deepEqual(b.today.today.map((t) => t.id), ["t-esc", "t-gone", "t-hot", "t-setup"]);
+    assert.deepEqual(b.today.today.map((t) => t.id), ["t-esc", "t-find", "t-gone", "t-hot", "t-setup"]);
     assert.deepEqual(b.today.later.map((t) => t.id), ["t-call", "t-kpi"]);
     const call = b.today.later[0];
-    assert.deepEqual([call.phone, call.thread_link, call.business], ["07969 123456", "#/lead/pc/thread", "<pc name>"]);
+    assert.deepEqual([call.phone, call.thread_link, call.business], ["07969 123456", "/#/replies/pc", "<pc name>"]);
     assert.ok(!JSON.stringify(b.today).includes("t-health") && !JSON.stringify(b.today).includes("t-done"));
     assert.deepEqual(b.pipeline.columns.map((c) => c.count), [1, 1, 2, 1, 1, 1, 1]);
-    assert.equal(b.counts.due, 5);
+    assert.equal(b.counts.due, 6);
+    assert.ok(b.counts.red >= 1);
+  });
+  test("dedupe helpers", () => {
+    assert.equal(messageIdFromDedupe("escalation:m2"), "m2");
+    assert.equal(messageIdFromDedupe("call_time:m7@2026-10-22"), "m7");
+    assert.equal(messageIdFromDedupe("hot:p1:views"), null);
+    assert.deepEqual(visibleTodos([{ kind: "health", dedupe: "health:tick" }, { kind: "health", dedupe: "health:find:towns" }],
+      [{ name: "tick", level: "red" }]).map((t) => t.dedupe), ["health:find:towns"]);
   });
   test("todos without a lead still show", async () => {
-    const b = await loadBoard(DB, NOW); const s = b.today.today.find((t) => t.id === "t-setup"), g = b.today.today.find((t) => t.id === "t-gone");
+    const b = await loadBoard(DB, ENV, NOW); const s = b.today.today.find((t) => t.id === "t-setup"), g = b.today.today.find((t) => t.id === "t-gone");
     assert.deepEqual([s.lead_link, s.thread_link, s.business], [null, null, null]);
     assert.deepEqual([g.business, g.phone], [null, null]);
   });

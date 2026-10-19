@@ -561,9 +561,9 @@ Modify `control-room/functions/_lib/shortlist-db.js`; Test `control-room/tests/l
     changed here.").
   - `POST /api/leads/:id/not-a-fit {reason}` → `{ok: true}`; 400 "Say why in a few words (3 to 200 characters)."; 409
     "Already emailed. Stop the follow-ups from the conversation instead." when `prospects.stage` is set and not `ready`.
-  - `POST /api/leads/:id/research-again` → `{queued: true, fired: boolean, message}` (messages exactly as the spec).
-  - In `shortlist-db.js`: `markNotFit(DB, placeId, reason, now) → Promise<{ok: true} | {error, status}>` and
-    `researchAgain(DB, placeId, now, {fire = fireRoutine} = {}) → Promise<{queued, fired, message}>`.
+  - In `shortlist-db.js`: `markNotFit(DB, placeId, reason, now) → Promise<{ok: true} | {error, status}>`.
+  - No research route here: re-queuing (with the 30-minute guarded fire and its three messages) is stage 2's
+    `POST /api/research/:place_id/wrong`.
 
 - [ ] **Step 1: Write the failing test** — `leads-api.test.mjs`, calling each handler with
   `{request: new Request(url, init), env: {DB}, params: {id}}`:
@@ -571,34 +571,30 @@ Modify `control-room/functions/_lib/shortlist-db.js`; Test `control-room/tests/l
   - `GET /api/leads/<id>` → 200 with `detail.lead.place_id`; unknown id → 404 with the exact message.
   - `PATCH {notes: "Call Friday"}` → 200; `PATCH {status: "won"}` → 400 "Only notes can be changed here."
   - Not a fit on a `ready` A lead with `{reason: "Wrong trade"}` → 200; afterwards `listLeads(view ready)` excludes
-    it, `research.status === "skipped"`, `research.notes` starts with `"Not a fit (Nik): Wrong trade\n"`, prospects
-    row gone. `{reason: "x"}` → 400 exact message. On an `emailed` lead → 409 exact message.
-  - Research again with a `fire` stub returning `{ok: true}` → `fired === true`, message "Queued. Claude has been
-    asked to research it now. Check back in 15 minutes.", `research.status === "queued"`, old `grade` still stored.
-    Second call within 30 min (a `routine_fires` row for `research` exists) → `fired === false`, message "Queued.
-    Claude will pick it up on its current or next run.", stub not called. Stub returning `{ok: false, error: "HTTP
-    400"}` → message "Queued, but Claude couldn't be started (HTTP 400). It will be researched at 06:47 tomorrow."
+    it, `research.status === "skipped"`, the first line of `research.notes` matches
+    `/^\[Nik \d{4}-\d{2}-\d{2}\] Not a fit: Wrong trade$/` (UK date of the call) and earlier note lines are kept
+    below it, prospects row gone. `{reason: "x"}` → 400 exact message. On an `emailed` lead → 409 exact message.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/leads-api.test.mjs` → fails:
   `markNotFit` not exported / `not-a-fit.js` missing.
-- [ ] **Step 3: Implement the routes and `markNotFit` / `researchAgain`** — handlers parse with
+- [ ] **Step 3: Implement the routes and `markNotFit`** — handlers parse with
   `parseLeadFilters(new URL(request.url).searchParams)` and pass `new Date()`; `markNotFit` upserts research
-  (`INSERT … ON CONFLICT(place_id) DO UPDATE`) and deletes a `ready` prospect in one `DB.batch`; `researchAgain`
-  upserts `status='queued', queued_at`, checks `routine_fires` for `routine = 'research' AND at > now − 30 min`, then
-  calls `fire(DB, "research", "research queued: 1 lead (Nik asked)")`.
+  (`INSERT … ON CONFLICT(place_id) DO UPDATE`, `status = 'skipped'`, notes = `[Nik ${ukDate(now)}] Not a fit:
+  ${reason}` + `\n` + old notes when there are any) and deletes a `ready` prospect in one `DB.batch`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/leads-api.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/api/leads.js control-room/functions/api/leads control-room/functions/_lib/shortlist-db.js control-room/tests/leads-api.test.mjs`
-  + `git commit -m "Shortlist: leads API, Not a fit and Research again" -m "$TRAILER"`.
+  + `git commit -m "Shortlist: leads API and Not a fit" -m "$TRAILER"`.
 
-### Task 7: Morning `pick` todo (tick step)
+### Task 6: Morning `pick` todo (tick step)
 
 **Files:** Modify `control-room/functions/_lib/shortlist-db.js`, `control-room/functions/_lib/tick.js`; Test
 `control-room/tests/pick.test.mjs`.
 
 **Interfaces:**
-- Consumes: `capacityNow`, `readyCounts` (Task 4); `pickTitle` (Task 2); `ukParts`, `ukDate`, `ukToUtc`;
-  `addTodo`, `closeTodos` from `_lib/todo.js`; `getSetting`, `setSetting` from `_lib/settings.js`.
+- Consumes: `capacityNow`, `readyCounts` (Task 3); `pickTitle` (Task 1); `ukParts`, `ukDate`, `ukToUtc`;
+  `iso(date)` (stage 1's shared `YYYY-MM-DDTHH:MM:SSZ` formatter); `addTodo`, `closeTodos` from `_lib/todo.js`;
+  `getSetting`, `setSetting` from `_lib/settings.js`.
 - Produces: `pickStep({DB, env, now}) → Promise<string>` and the STEPS entry `{name: "pick", everyMinutes: 30, run: pickStep}`
-  placed immediately before `daily_find`.
+  in overview §8's slot 6: after `hot`, immediately before `daily_find` (stage 0's marker for `pick`).
 
 Algorithm (order matters):
 ```
@@ -608,7 +604,7 @@ title = pickTitle({top: counts.top, b: counts.b, room: cap.room, bIncluded: coun
 if getSetting(DB, "pick:last") !== today → closeTodos(DB, "pick:"); setSetting(DB, "pick:last", today); fresh = true
 if !title → closeTodos(DB, "pick:" + today); return "nothing to pick"
 if fresh → addTodo(DB, {kind: "pick", title, detail: "Open Leads → Ready to email, and write each first email from the lead's panel.",
-                        link: "/#/leads?view=ready", due_at: ukToUtc(today, "07:00").toISOString(), dedupe: "pick:" + today})
+                        link: "/#/leads?view=ready", due_at: iso(ukToUtc(today, "07:00")), dedupe: "pick:" + today})
 else    → UPDATE todos SET title = ? WHERE dedupe = ? AND status = 'open'
 return title
 ```
@@ -617,13 +613,15 @@ return title
   follow-ups):
   - BST: `pickStep` at `2026-10-20T05:59:00Z` → `"before 07:00"`, no todos; at `2026-10-20T06:00:00Z` → one open
     todo `{kind: "pick", title: "8 A-grade leads ready: you can send 3 first emails today", link: "/#/leads?view=ready",
-    due_at: "2026-10-20T06:00:00.000Z", dedupe: "pick:2026-10-20"}`.
+    due_at: "2026-10-20T06:00:00Z", dedupe: "pick:2026-10-20"}`.
   - Same day at 10:00 UK: 2 ready prospects moved to `emailed` with 2 `sent` first messages → title updates to
     "6 A-grade leads ready: you can send 1 first email today"; one more the same way → room 0 → the todo's status is
     no longer `open`.
   - GMT: at `2026-10-26T06:59:00Z` → `"before 07:00"`; at `2026-10-26T07:00:00Z` → the earlier `pick:2026-10-20`
-    todo is closed and `pick:2026-10-26` is open with `due_at "2026-10-26T07:00:00.000Z"` (re-seed today's room).
-  - `STEPS.map(s => s.name)` has `"pick"` directly before `"daily_find"`.
+    todo is closed and `pick:2026-10-26` is open with `due_at "2026-10-26T07:00:00Z"` (re-seed today's room).
+  - `STEPS.map(s => s.name)` has `"pick"` directly after `"hot"` and directly before `"daily_find"` (overview §8
+    order: inbound, reply_fire, followups, send, hot, pick, daily_find, stale_jobs, calls, sites, care, health; only
+    the steps already built at this stage are present).
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/pick.test.mjs` → fails: `pickStep` is
   not exported.
 - [ ] **Step 3: Implement `pickStep` in `control-room/functions/_lib/shortlist-db.js` and register it in
