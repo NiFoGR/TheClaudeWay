@@ -70,10 +70,10 @@ Shown in the lead drawer under **Email**, only while the prospect is `ready` and
 | `placeholder` | any `{word}` other than `{demo_link}` | `{<word>}` isn't filled in for you. Only {demo_link} is. |
 | `demo_not_ready` | stage 4 `demoReady(DB, place_id).ok` is false | Their demo isn't ready: `<stage 4's reason>`. Fix it on the Demo card first. |
 | `no_mailbox` | no cold mailbox is active | No mailbox is set up for cold email yet. Add one on Setup → Mailboxes. |
-| `warming_up` | every active cold mailbox has cap 0 that day | Your mailbox is still warming up: cold emails can start on `<Mon 3 Nov>`. |
+| `warming_up` | every active cold mailbox has cap 0 that day | Your mailbox is still warming up: cold emails can start on `<Tue 3 Nov>`. |
 | `no_room` | no mailbox has room on the send day and on all 9 follow-up days | Your mailboxes are full on `<Mon 9 Nov>` (follow-ups already booked that day). Send this one tomorrow. |
 | `not_in_list` | To isn't one of the lead's sourced addresses | Pick an address from the list. |
-| `suppressed` | the address, or its domain, is in `suppression` | `<address>` asked not to be emailed (`<reason>`, `<date>`). You can't email it. |
+| `suppressed` | the address, or its domain, is in `suppression` | `<address>` is on your do-not-email list (`<opted out / bounced / reason>` on `<3 Nov>`). You can't email it. |
 | `shared_address` | another prospect not in `ready`/`lost` already uses this address | `<address>` is already being emailed as `<other business>`. |
 | `already_emailed` | prospect stage isn't `ready` (or `first_sent_at` set) | You've already emailed `<business>` on `<22 Oct>`. The thread is below. |
 | `queued_already` | a first email for this lead is `queued` or `sending` | A first email to `<business>` is already waiting to go out. Cancel it below to write a new one. |
@@ -368,9 +368,11 @@ messages, applies stops, closes finished sequences and queues due follow-ups. Tw
 - First email: exactly one demo link, no other link, no "SEO", under 150 words, greeting added by the system.
 - Follow-up templates: ≤ 60 words after `{greeting}`, placeholders only `{greeting}`, `{business}`, `{demo_link}`.
 - Every prospect stage change goes through `nextStage` in `_lib/stages.js`.
-- The `followups` tick step handles at most 5 due follow-ups and 10 rows per sub-step per run and uses at most 12 D1
-  round trips (writes in `DB.batch`).
+- The `followups` tick step queues at most 3 follow-ups and handles at most 10 rows per other sub-step per run, and
+  uses at most 18 D1 round trips (each `prepare().run/all/first`, `batch` and `queueMessage` counts one; writes in
+  `DB.batch`). 3 per 5-minute tick = 36 an hour, far above need, and leaves the tick's other steps room under D1's 50.
 - No tracking pixels, no link rewriting, no HTML part.
+- Stored times are UTC ISO strings without milliseconds (`2026-10-23T08:15:00Z`, same as `util.now()`).
 - Commit messages end with the two Co-Authored-By / Claude-Session lines from common rules.
 
 ## Review Focus
@@ -458,7 +460,7 @@ test("ten firsts on one day fill every follow-up day", () => {
   assert.equal(load.m1["2026-10-23"], 10);
   assert.equal(load.m1["2026-12-21"], 10);
   assert.deepEqual(roomFor(load, mb, "2026-10-22T09:00:00Z"), { room: 0, fullDay: "2026-10-22" });
-  assert.deepEqual(roomFor(load, mb, "2026-10-25T09:00:00Z".replace("25", "27")), { room: 0, fullDay: "2026-10-29" });
+  assert.deepEqual(roomFor(load, mb, "2026-10-27T09:00:00Z"), { room: 0, fullDay: "2026-10-29" }); // its day-2 follow-up hits Thu 29
 });
 test("overdue follow-ups count on today", () =>
   assert.equal(loadByDay({ cold: [], sequences: [{ mailbox_id: "m1", first_at: "2026-10-20T08:00:00Z", step_done: 0, next_at: "2026-10-21T08:00:00Z" }] }, "2026-10-22").m1["2026-10-22"], 1));
@@ -808,7 +810,10 @@ test("second send is refused", async () => {
 test("outside the window it is due at the next window start", async () =>
   assert.equal((await sendFirst(await readyLead(), "p1", input, new Date("2026-10-25T10:00:00Z"))).due_at, "2026-10-26T07:00:00Z"));
 test("each db check has its exact message", async () => {
-  assert.equal(await issueFor({ suppress: "mark@greenleaf.co.uk" }), "mark@greenleaf.co.uk asked not to be emailed (opt_out, 3 Nov). You can't email it.");
+  assert.equal(await issueFor({ suppress: { value: "mark@greenleaf.co.uk", reason: "opt_out", created_at: "2026-11-03T10:00:00Z" } }),
+    "mark@greenleaf.co.uk is on your do-not-email list (opted out on 3 Nov). You can't email it.");
+  assert.equal(await issueFor({ suppress: { value: "greenleaf.co.uk", kind: "domain", reason: "bounce", created_at: "2026-11-03T10:00:00Z" } }),
+    "mark@greenleaf.co.uk is on your do-not-email list (bounced on 3 Nov). You can't email it.");
   assert.equal(await issueFor({ to: "typo@x.com" }), "Pick an address from the list.");
   assert.equal(await issueFor({ otherProspectEmail: "mark@greenleaf.co.uk" }), "mark@greenleaf.co.uk is already being emailed as Other Ltd.");
   assert.equal(await issueFor({ stage: "emailed", first_sent_at: "2026-10-22T08:15:00Z" }), "You've already emailed Green Leaf Landscapes on 22 Oct. The thread is below.");

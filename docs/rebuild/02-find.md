@@ -730,13 +730,27 @@ settings: "find:day", "find:today" (JSON {day, at, search, town?, job_id?, reaso
     assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM jobs WHERE status = 'failed'"), 1);
     assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM todos WHERE dedupe = 'health:find:2026-10-19' AND kind = 'health'"), 1);
   });
-  test("every town recent → 'Add more towns' todo; a later search closes it", async () => { /* 18 recent done jobs */ });
+  test("every town recent → 'Add more towns' todo; a later search closes it", async () => {
+    // jobs: one 'done' landscaper job per DEFAULT_TERRITORY town, created 2026-10-10T06:00:00Z
+    await runDailyFind(DB, {}, new Date("2026-10-19T05:00:00Z"), { start, fire });
+    assert.equal(starts.length, 0);
+    assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM todos WHERE dedupe = 'health:find:towns' AND status = 'open'"), 1);
+    await runDailyFind(DB, {}, new Date("2026-11-10T06:00:00Z"), { start, fire });   // 31 days later
+    assert.equal(starts.length, 1);
+    assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM todos WHERE dedupe = 'health:find:towns' AND status = 'open'"), 0);
+  });
   test("a job finished since the last enqueue queues research at 14:00", async () => {
     // research:enqueued_at = 2026-10-19T05:00:00Z; jobs row done updated_at 2026-10-19T05:40:00Z; lead score 60
     await runDailyFind(DB, {}, new Date("2026-10-19T13:00:00Z"), { start, fire });
     assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM research WHERE status = 'queued'"), 1);
   });
-  test("today's automatic job failing adds a health todo", async () => { /* find:today.job_id → jobs failed → dedupe health:find:failed:<id> */ });
+  test("today's automatic job failing adds a health todo", async () => {
+    await runDailyFind(DB, {}, new Date("2026-10-19T05:00:00Z"), { start, fire });
+    const { job_id } = JSON.parse(await getSetting(DB, "find:today"));
+    await DB.prepare("UPDATE jobs SET status = 'failed', error = 'Google refused the search.' WHERE id = ?").bind(job_id).run();
+    await runDailyFind(DB, {}, new Date("2026-10-19T05:30:00Z"), { start, fire });
+    assert.equal((await row(DB, `SELECT title FROM todos WHERE dedupe = 'health:find:failed:${job_id}'`)).title, "Today's lead search failed: Warrington");
+  });
   test("tick order", () => {
     const names = STEPS.map((s) => s.name);
     assert.ok(names.indexOf("send") < names.indexOf("daily_find") && names.indexOf("daily_find") < names.indexOf("health"));
@@ -855,7 +869,7 @@ PUT  /api/territory {on, trade, towns, max} → {territory} | 400 {error}
 
 ## Questions for Nik
 
-1. **When the 18 towns are used up** (each searched in the last 30 days), should it add the next ring of towns
-   (Liverpool, St Helens outskirts, Manchester suburbs) or start a second trade (roofers)? Default: it pauses and adds
-   the todo "Add more towns to your automatic search"; Claude suggests the next 12 towns in that todo's detail when
-   it happens.
+1. **When the 18 towns are used up** (each searched in the last 30 days), do you want the next ring of towns
+   (e.g. Liverpool suburbs, Lymm, Culcheth, Manchester suburbs) or a second trade (roofers)? Default: searching pauses
+   and the todo "Add more towns to your automatic search" appears; you add towns or change the trade on the Lead
+   Scraper page.
