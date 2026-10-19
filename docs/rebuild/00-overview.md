@@ -45,11 +45,13 @@ Nothing that already exists in Cloudflare or GitHub changes (Nik's rule: same ke
                        │        ▼                                                           │
                        │   D1 ◄──────────── mail-relay Worker (NEW, folder mail-relay/)      │
                        │                     • cron every 5 min → POST {APP_URL}/api/tick    │
+                       │                       ?reason=cron, then …/api/tick?reason=health  │
                        │                     • email() handler → saves raw mail to D1,       │
                        │                       then POST {APP_URL}/api/tick?reason=inbound   │
                        └────────────────────────────────────────────────────────────────────┘
  /api/tick (in Pages) does all timed work: send due emails (SMTP to Namecheap over cloudflare:sockets), process
- inbound mail, fire Claude Routines, start the daily scrape, mark stale jobs, compute health.
+ inbound mail, fire Claude Routines, start the daily scrape, mark stale jobs. Health (lights, health/setup todos)
+ runs in its own invocation, /api/tick?reason=health, straight after each cron tick.
 
  GitHub Actions (existing): scrape-leads.yml, map-rank.yml (Python engine in lead-manager/, writes D1 over the
  Cloudflare API with the existing secrets). NEW: deploy-relay.yml deploys mail-relay/ with wrangler.
@@ -74,8 +76,10 @@ Why this shape:
   return early. It never accepts input except `?reason=`.
 - **CPU:** Pages Functions on the free plan get 10 ms CPU per request. Each tick does a bounded amount of work
   (at most 2 SMTP sends, 10 inbound mails, 3 Routine fires) and at most 50 D1 queries: `runTick` counts them, gives
-  each step `ctx.budget`, never starts a step with fewer than 10 left (it reports `"deferred"`) and always keeps 6
-  for `health`; `inbound` stops at 30. Stage 0 measures SMTP CPU on the live deploy; if it
+  each step `ctx.budget` (an object; steps read `ctx.budget.left()`) and never starts a step with fewer than 10 left
+  (it reports `"deferred"`); `inbound` stops at 30. `health` runs alone in the `?reason=health` invocation with the
+  full 50 (its own gap and lease keys), and every other reason skips it, so nothing is reserved for it. Stage 0
+  measures SMTP CPU on the live deploy; if it
   doesn't fit, Nik decides on the $5/month plan (decisions.md). Nothing else in the design changes either way.
 
 ## 3. Folder layout
@@ -297,7 +301,7 @@ CREATE INDEX IF NOT EXISTS todos_open ON todos (status, due_at);
 
 -- Health: last time each automatic part checked in.
 CREATE TABLE IF NOT EXISTS heartbeats (
-  name     TEXT PRIMARY KEY,              -- tick | relay | routine:research | routine:reply | ...
+  name     TEXT PRIMARY KEY,              -- tick | health | relay | routine:research | routine:reply | ...
   last_at  TEXT NOT NULL,
   ok       INTEGER NOT NULL,
   detail   TEXT NOT NULL DEFAULT ''
@@ -438,7 +442,7 @@ carrying `{ok, summary}`.
 | --- | --- | --- | --- |
 | `aetos-research` | Sonnet | daily schedule 06:47 UK + API fire after each scrape | stage 2 |
 | `aetos-reply` | Sonnet | API fire per inbound human email; schedule 07:03 UK daily (overnight catch-up) | stages 7–8 |
-| `aetos-weekly-kpis` | Sonnet | schedule Sun 18:47 UK | KPI analysis |
+| `aetos-weekly-kpis` | Sonnet | schedule Sun 18:47 UK + API trigger (used by Setup's Test fire) | KPI analysis |
 | `aetos-build` | Sonnet | API fire when an onboarding form is submitted | stage 10 |
 | `aetos-monthly-care` | Sonnet | schedule 1st of month 08:47 UK + API trigger | stage 11 |
 
@@ -518,8 +522,12 @@ dispatchDue(DB, env, now, {limit = 2, send = sendViaSmtp, kinds = null}) → Pro
 sentToday(DB, now) → Promise<{[mailbox_id]: number}>   // counts kind first + followup only (cold sends)
 
 // _lib/tick.js
-STEPS: [{name, everyMinutes, run: async (ctx) => summaryString}]   // ctx = {DB, env, now, budget}
+STEPS: [{name, everyMinutes, run: async (ctx) => summaryString}]   // ctx = {DB, env, now, reason, results, budget}
+  // ctx.budget is an object, never a number: ctx.budget.left() → queries this step may still make (50 − used).
+  // Step tests pass budget: {left: () => N}.
 runTick(env, reason, now = new Date()) → Promise<{ran, steps: {[name]: string|error|"deferred"}}>
+  // reason "health" runs only the health step (full 50-query budget, own gap/lease keys); every other reason
+  // runs every step except health.
 ```
 
 Tick step order, `everyMinutes` in brackets (each stage adds its step at the position shown, and stage 0's
@@ -539,7 +547,9 @@ and the remaining steps still run):
 11. `care` [10] (stage 11): monthly care checks.
 12. `purge` [monthly] (file 11): delete non-clients' `prospects`/`messages`/`research` rows with no message in 12
     months (`suppression` is kept).
-13. `health` [0] (stage 0): compute lights, add/close `health` todos, beat `tick`.
+13. `health` [0] (stage 0): only in the `?reason=health` invocation (the relay calls it after every cron tick):
+    compute lights, add/close `health` and stage 0's `setup` todos in one batched sync, beat `health`. Every other
+    tick skips it and beats `tick` itself.
 
 ## 9. Global rules (every stage)
 
@@ -583,8 +593,8 @@ These appear as `setup` todos with a "Test" button where possible, so he never h
 5. Receiving replies: decision Q-D (below), then the steps Setup shows for it.
 6. Add two permissions to the existing Cloudflare API token if the relay deploy says so.
 7. Create the five Routines (`aetos-<name>`) from `routines/README.md`, in the shared "Aetos" environment with
-   `CONTROL_ROOM_URL` set. Create API triggers for research, reply, build and monthly-care, and paste each one's URL
-   and token into Setup → Claude.
+   `CONTROL_ROOM_URL` set. Create API triggers for research, reply, weekly-kpis, build and monthly-care, and paste
+   each one's URL and token into Setup → Claude.
 8. Approve the 9 follow-up emails and the landscaper template look.
 9. Pay the ICO fee (£52) and put his name + an address in the website footer (legal requirement).
 10. Stage 10 only, if the own-build chatbot is used: create a Cloudflare Workers AI token and paste it on Setup. This

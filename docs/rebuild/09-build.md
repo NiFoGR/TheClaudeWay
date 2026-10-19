@@ -607,7 +607,11 @@ Chats without contact details are not stored.
 `offer:chatbot_live = '1'`. The switch is disabled with the reason until `sitesReadiness` says: the last chat Test
 passed within 7 days, and a test site has `live_at` set. Pressing it asks "Have the chat checks in 'Perfect when'
 (items 5 and 6) passed on the test site?" (OK / Cancel). Stage 9's order page shows the chatbot line only when it is
-`'1'`.
+`'1'`. This stage also writes stage 0's landing-page chatbot copy (Task 27), shown only while it is `'1'`
+(`renderLanding`'s `extras.chatbot`):
+- under "What you get", after the reviews item: **Never miss an enquiry.** A chat assistant on your website answers
+  questions and passes enquiries to you, day and night.
+- in the Full Package bullets, after "Review booster": Chat assistant on your website, day and night
 
 ## 12. Review booster setup and client emails
 
@@ -658,8 +662,13 @@ All client mail here (enquiry, go-live, domain steps) goes through stage 9's `se
 place_id, to, business, compose, now})`, which picks the mailbox with `systemMailbox(DB, now)` (system role first) and
 owns the `setup:system_mailbox` todo when none exists. `{Nik's first name}` = the `business:sender_name` setting
 exactly as stored (else "Nik"), which `sendClientMail` passes to `compose` as the sign name; every sign-off in this
-stage uses it, never the mailbox's `display_name`. With no mailbox at all the enquiry is still stored in `site_leads`
-and shown on the Site page.
+stage uses it, never the mailbox's `display_name`. With no mailbox at all, `sendClientMail`'s `noMailboxTodo` option
+decides the todo (never stage 9's default welcome todo):
+- enquiry emails pass `noMailboxTodo: null`: no todo; the enquiry is still stored in `site_leads` and shown on the
+  Site page;
+- go-live and domain-step emails pass `{dedupe: "setup:client-mail:<client_id>:<kind>", title: "Send {name} this email
+  yourself (no mailbox yet)", link: "/#/site/<client_id>"}` with `<kind>` = `go-live`, `domain-nameservers` or
+  `domain-cname`; the todo's `draft` is the composed email.
 
 ## 13. What Nik sees in the Control Room
 
@@ -710,7 +719,9 @@ Todos (kind `build`, all dedupe `build:<client_id>:<what>`, link `/#/site/<clien
 Business Profile with {name}" when No; "Check whether {name} has a Google Business Profile" when Not sure),
 `domain:<step>` (section 7). All close when the site goes live except `gbp` (closed by its checkbox). Pressing Send also closes stage 9's
 `build:new:<client_id>`. `setup` todos: `setup:gbp-email`, `setup:chatbot` ("Connect the chatbot (Cloudflare Workers
-AI) on Setup", only once a Full Package client exists); `setup:system_mailbox` belongs to stage 9.
+AI) on Setup", only once a Full Package client exists), and with no mailbox at all
+`setup:client-mail:<client_id>:go-live|domain-nameservers|domain-cname` ("Send {name} this email yourself (no mailbox
+yet)", filed by stage 9's `sendClientMail`, section 12); `setup:system_mailbox` belongs to stage 9.
 
 Health lights (overview shape `{name, level: "green"|"amber"|"red"|"grey", detail, fix}`, added with stage 0's
 `registerLight`; stage 0's `computeLights` is not edited; grey means "not in use" and never adds a todo):
@@ -1286,13 +1297,14 @@ section 6 (exact response shapes there).
 **Files:** Create `control-room/functions/_lib/sites/notify.js`, `control-room/functions/_lib/sites/contact.js`. Test
 `control-room/tests/sites-contact.test.mjs`.
 
-**Interfaces:** Consumes stage 9's `sendClientMail(DB, {client_id, place_id, to, business, compose, now})`
-(`_lib/client-mail.js`), Tasks 9, 15. Produces `notifyLead(DB, lead, site, now) → Promise<{queued: boolean}>` (sets
-`notified_at`, `message_id`); `handleContact(request, env, site, now, {waitUntil} = {}) → Promise<Response>`.
+**Interfaces:** Consumes stage 9's `sendClientMail(DB, {client_id, place_id, to, business, compose, now,
+noMailboxTodo})` (`_lib/client-mail.js`), Tasks 9, 15. Produces `notifyLead(DB, lead, site, now) → Promise<{queued:
+boolean}>` (sets `notified_at`, `message_id`; always passes `noMailboxTodo: null`); `handleContact(request, env, site,
+now, {waitUntil} = {}) → Promise<Response>`.
 
 - [ ] **Step 1: Write the failing test** — fakeD1 with a live site and a `system` mailbox: `notifyLead` with no
-  mailbox at all stores nothing in `messages`, returns `{queued: false}` and leaves `notified_at` NULL (stage 9's
-  `setup:system_mailbox` todo is its business); valid POST (`name=Dave&phone=07700900123&message=Leak`)
+  mailbox at all stores nothing in `messages`, adds no `todos` row (no `setup:welcome:` and no `setup:client-mail:`
+  todo), returns `{queued: false}` and leaves `notified_at` NULL; valid POST (`name=Dave&phone=07700900123&message=Leak`)
   → 303 to `/contact?sent=1`, one `site_leads` row `source = "form"`, one `messages` row `kind = "system"`, `to_addr`
   = the form's `leads_email`, subject "New enquiry from your website: Dave"; honeypot `website=x` → 303 and no rows;
   `t=1200` → 303 and no rows; no phone and no email → 400 with "Please add a phone number or an email so Smith Roofing
@@ -1476,7 +1488,9 @@ now), `control-room/functions/api/sites/test-client.js` (POST create / DELETE). 
 `control-room/tests/sites-api.test.mjs`.
 
 **Interfaces:** Consumes Tasks 6 (`checkHost`, `checkNs`), 7–10, 13, `fireRoutine`, stage 9's `sendClientMail`, `addTodo`,
-`closeTodos`.
+`closeTodos`. `send-domain-email.js` calls `sendClientMail` with `noMailboxTodo: {dedupe:
+"setup:client-mail:<client_id>:domain-nameservers"` (or `:domain-cname`), `title: "Send {name} this email yourself (no
+mailbox yet)", link: "/#/site/<client_id>"}` (section 12).
 Produces JSON: list `[{client_id, name, status_label, countdown: {label, level}, host, live: boolean, enquiries_30d}]`;
 detail `{…site, label, countdown, pages: [{path, title, words}], steps: [{id, title, detail, done_at, auto}], chat: {on,
 reason, today, month, fallbacks_today}, leads: [...20], files: [...], form, review: {url, qr_svg, card_url, messages},
@@ -1492,7 +1506,9 @@ last_errors}`.
   `www.smithroofing.co.uk`; duplicate host → 409 with the Task 7 message; review link `https://evil.com` → 400 "That
   isn't a Google review link."; test-client POST creates `clients` (notes `TEST`, monthly 0), `onboarding`,
   `client_sites` with `is_test = 1`, host `site-test.aetoswebsites.com`; DELETE removes all of them and their
-  `site_leads`, `site_files`, `chat_usage`, `todos`; every route 401 without login.
+  `site_leads`, `site_files`, `chat_usage`, `todos`; send-domain-email (`cname`) with no mailbox at all → todo
+  `setup:client-mail:c1:domain-cname` titled "Send Smith Roofing this email yourself (no mailbox yet)" with the
+  email as `draft`, and no `setup:welcome:c1` todo; every route 401 without login.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/sites-api.test.mjs` → 404s.
 - [ ] **Step 3: Implement** the routes as thin wrappers over Tasks 7–10 and 26.
 - [ ] **Step 4: Run tests to verify they pass** — same command → PASS.
@@ -1543,7 +1559,9 @@ quality = 0.8) → Promise<Blob>` (browser only); the GBP "Invite accepted" tick
 
 **Interfaces:** Consumes Tasks 6 (`checkHost`, `checkNs`), 7–9, 15, 16, stage 9's `sendClientMail`, `addTodo`, `closeTodos`,
 `getSetting`. Produces `sitesStep({DB, env, now}, {fetchImpl}) → Promise<string>` (summary like `"checked 2, live 1,
-due 1, leads 0"`).
+due 1, leads 0"`). The go-live email passes `noMailboxTodo: {dedupe: "setup:client-mail:<client_id>:go-live", title:
+"Send {name} this email yourself (no mailbox yet)", link: "/#/site/<client_id>"}`; chat-lead emails go through Task
+16's `notifyLead` (`noMailboxTodo: null`).
 
 - [ ] **Step 1: Write the failing test** — fake DoH fetch: approved site with CNAME to `goldbarwebsites.pages.dev.` and
   `seen_at` set → `markLive`, go-live email queued once (second run queues none), all `build:c1:` todos closed except
@@ -1553,7 +1571,9 @@ due 1, leads 0"`).
   `build:c1:due` "Smith Roofing's site is due live Sat and isn't live yet: the domain isn't connected"; fired 3 h 1 min
   ago with no content → `build:c1:stuck`; a chat lead updated 11 min ago and not notified → enquiry email queued with
   the transcript, `notified_at` set; updated 5 min ago → not yet; a live site failing twice → `host_check.fails === 2`;
-  `pruneHits` called.
+  `pruneHits` called; with no mailbox at all, going live files todo `setup:client-mail:c1:go-live` ("Send Smith
+  Roofing this email yourself (no mailbox yet)", go-live email as `draft`) and no `setup:welcome:c1`, and a chat lead
+  adds no todo.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/sites-tick.test.mjs` → module not found.
 - [ ] **Step 3: Implement** — select sites (`status = live AND live_at IS NULL`, `host_check.at` ≥ 15 min old; live
   ones ≥ 24 h old), oldest check first, limit 5; then due/stuck todos, chat-lead emails, `pruneHits`.

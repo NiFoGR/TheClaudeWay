@@ -1096,7 +1096,7 @@ CREATE TABLE IF NOT EXISTS care_reviews (
   `guaranteeAfterScan` (Task 5), `TEMPLATES`/`factsFor`/`renderTokens` (Task 7), `onPageCheck` (Task 8),
   `pauseFee`/`resumeFee` (Task 9), `addTodo`/`closeTodos` (todo.js), `fireRoutine` (routines.js), `startWorkflow`
   (`_lib/github.js`), stage 9's `systemMailbox(DB, now)` and `sendClientMail(DB, {client_id, place_id, to, business,
-  compose, now})` (`_lib/client-mail.js`), `getSetting`/`setSetting` (settings.js), `now()`/`iso()` (util.js), stage
+  compose, now, noMailboxTodo})` (`_lib/client-mail.js`), `getSetting`/`setSetting` (settings.js), `now()`/`iso()` (util.js), stage
   10's `setSiteFeature(DB, client_id, feature, on, now)` (`_lib/sites/db.js`).
 - Produces:
   - `loadCareState(DB, now) → Promise<state>` (≤ 7 statements, one `DB.batch`; new clients and care rows LEFT JOIN
@@ -1112,9 +1112,10 @@ CREATE TABLE IF NOT EXISTS care_reviews (
   - `stopCare(DB, clientId, ukToday) → Promise<void>`
   - `sendCareEmail(DB, {client_id, subject, body, author}, now) → Promise<{ok: true, id} | {ok: false, error}>` — a
     thin wrapper over stage 9's `sendClientMail` (`compose: () => ({subject, body})`, the body already signed with
-    `business:sender_name`); sets the queued row's `author` to `nik` for approved emails. No mailbox lookup of its
-    own: when `systemMailbox(DB, now)` is null it returns `{ok: false, error: "No mailbox to send from yet: add one on
-    Setup → Mailboxes."}` without calling `sendClientMail` (so stage 9's welcome-email todo isn't added).
+    `business:sender_name`, `noMailboxTodo: null`); sets the queued row's `author` to `nik` for approved emails. No
+    mailbox lookup of its own: when `systemMailbox(DB, now)` is null it returns `{ok: false, error: "No mailbox to send
+    from yet: add one on Setup → Mailboxes."}` without calling `sendClientMail`, and `noMailboxTodo: null` means stage
+    9 never files a welcome or `setup:client-mail:*` todo for a care email (the task stays open instead).
   - `startCareScan(DB, env, care, {day, kind}, start = startWorkflow) → Promise<{scan_id} | {error}>` (inserts
     `scans` row `source 'care'`, grid 7, spacing 800, town = `care.town`, then `care_scans`, then dispatches
     `map-rank.yml` with `{keyword, town, grid: "7", spacing: "800", scan_id, place_id}`)
@@ -1414,7 +1415,7 @@ the guarantee before paying or right after says so.
 - Produces: `CLOCK_START = "Your 90 days start the day you give us access to your Google Business Profile."`
   exported from `care.js` (pure) and used by all three. FAQ 5's answer becomes `On Google's results for your main
   service and town (for example "roofer Leeds"), searched from your area. The map results at the top count. ` +
-  `GUARANTEE.section` + `" "` + `CLOCK_START` (the old "we work for free until you are" sentence is gone: overview §9
+  `GUARANTEE.section` + `" "` + `CLOCK_START` (the old "…until you are" sentence is gone: overview §9
   forbids it); the welcome email's Full Package paragraph gains
   that sentence as its last line; the landing's guarantee paragraph gains it after "The map results at the top
   count." The guarantee wording itself (`GUARANTEE.headline`/`.section`) doesn't change.
@@ -1490,7 +1491,8 @@ the guarantee before paying or right after says so.
   `cancelled_on` set on `customer.subscription.deleted`); `_lib/stripe.js` `stripeApi(key, method, path, params,
   fetchImpl)` and `stripeKey(env, DB)`, API pinned to 2024-06-20 (`subscription.current_period_end` top-level);
   `tests/helpers/fakeStripe.mjs`; `_lib/client-mail.js` `systemMailbox(DB, now)` and `sendClientMail(DB, {client_id,
-  place_id, to, business, compose, now})` (owns `setup:system_mailbox`); `_lib/order-page.js` `renderOrder` (FAQ 5)
+  place_id, to, business, compose, now, noMailboxTodo})` (owns `setup:system_mailbox`; `noMailboxTodo: null` files no
+  todo); `_lib/order-page.js` `renderOrder` (FAQ 5)
   and `welcomeEmail` (Task 19 rewrites FAQ 5 to `… The map results at the top count. ` + `GUARANTEE.section` + `" "` +
   `CLOCK_START`); `fulfilCheckout` deletes the client's `suppression` row.
 - Stage 10 (09-build.md): `onboarding.status = 'live'`, `live_at`, `site_url` as overview §4; onboarding `form` keys

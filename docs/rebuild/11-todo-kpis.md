@@ -676,6 +676,8 @@ JS, `style.css`.
 - [ ] **Step 3: Implement `clientCards(rows, now)` and `guaranteeWords(...)` in `board.js`.**
   - Stopped clients are only counted in `past`.
   - `attention = late || card_failed`.
+  - `monthly` is a lookup keyed by `clientStatus(...).key` (stage 11 adds `working_free`); an unknown key gives
+    `null`, never a throw.
   - Sort keys in order: `late` desc, `card_failed` desc, phase rank (`building` 0, `onboarding` 1, `live` 2),
     `due_live_at`, `name`.
 - [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/board.test.mjs` passes (6 tests).
@@ -1490,11 +1492,13 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
   - `routines/README.md`: the standard preamble, Routine names `aetos-<name>`, the `CONTROL_ROOM_URL` environment
     variable, and Setup → Claude for each Routine's URL and token.
   - `_lib/offer.js`: `PACKAGES` (re-exported by `money.js`), `MONTHLY_PENCE`, `formatPounds`.
-  - `util.now()`/`iso()` (UTC ISO without milliseconds).
+  - `util.now()`/`iso()` (UTC ISO without milliseconds; `iso` lives in `_lib/util.js`, `find.js` only re-exports
+    it).
+  - `tests/shell.test.mjs` asserting stage 0's five `PAGES` routes are present (not an exact list); Task 11 deletes
+    that assertion.
   - `runTick` gives each step `ctx.budget`, an object whose `left()` is the queries it may still use. `health` runs
     on its own `/api/tick?reason=health` invocation with the full 50-query budget and every other reason skips it
     (R2-7), so no queries are reserved for it.
-  - `iso(d = new Date())` in `_lib/util.js` (UTC ISO without milliseconds), next to `now()`.
   - `messages.intent TEXT` in the schema.
 - **Stage 3:**
   - `isHot`, `STAGE_LABELS` (`_lib/shortlist.js`; `isHot` is true only for `emailed`/`viewed`);
@@ -1513,7 +1517,8 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
     the thread of that inbound message (`kind 'reply'`, `author 'nik'`), closes `escalation:<id>`/`call_time:<id>`,
     and returns plain-English errors in `body.error` (422 for an empty body or no mailbox).
   - `escalation` todos carry `draft`, `place_id` and dedupe `escalation:<message_id>`; `call_time` todos dedupe
-    `call_time:<message_id>`; unknown-sender escalations use `escalation:unknown:…`.
+    `call_time:<message_id>`. Stage 0's unknown-sender and client escalations use `escalation:unknown:<id>` and
+    `escalation:client:<id>` (no draft, no thread); Todo never offers Send for them and KPIs don't count them.
   - Test and drill leads have `place_id` starting `drill:` or `test:`.
   - `repliesPage()`, `threadPage(placeId)` from `public/js/replies.js` (routes `#/replies`, `#/replies/<id>`) and
     `callPage(id)` from `public/js/call.js` (route `#/call/<id>`). 11 Task 11 takes these routes into `routeFor`.
@@ -1528,7 +1533,10 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
 - **Stage 11 (10-monthly-care.md):**
   - Its Task 15 modifies `loadBoard`/`clientCards`: a client with a `care` row takes `guarantee` from
     `guaranteeLabel(care, ukToday)` and `rank` from its latest scored `care_scans` row. It adds no second Clients
-    section (`renderClientsSection` and `/api/care/clients` aren't used by Todo).
+    section (`renderClientsSection` and `/api/care/clients` aren't used by Todo). It calls `loadBoard(DB, env, now)`
+    with this exact signature.
+  - Its Task 18 adds the `clientStatus` key `working_free` to `_lib/money.js`, to `public/js/money.js` (label
+    "Working free: fee paused") and to `clientCards`' Monthly line ("Fee paused: working free"), with tests.
   - Otherwise the Clients section reads only `clients`, `onboarding`, `client_links.failed_on`, `lead_map_rank` (by
     the client's `place_id`) and open `care`/`build` todos. Stage 11 adds a `care` todo for each client's next job so
     the card shows it.

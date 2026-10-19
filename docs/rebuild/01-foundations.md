@@ -604,7 +604,9 @@ through the tables they write (heartbeats, routine_fires, jobs, scans) and add t
 4. **The relay is live.** GitHub Actions "Deploy mail relay" is green, and Setup → Receiving shows "Mail relay checked
    in" at most 5 min ago. The `tick` light stays green across 30 minutes.
 5. **The tick guards work.** `curl -s -X POST "https://<control host>/api/tick?reason=manual"` returns
-   `"ran":true`, and running it again within 20 s returns `"ran":false`.
+   `"ran":true` without a `health` step, and running it again within 20 s returns `"ran":false`.
+   `curl -s -X POST "https://<control host>/api/tick?reason=health"` straight after returns `"ran":true` with only
+   `"health":"ok"`.
 6. **SMTP proof.** Setup → Send test email, done 10 times to Nik's Gmail:
    - all 10 say "Sent";
    - all 10 arrive in the inbox (not spam), from "<sender name> <mailbox address>";
@@ -1545,11 +1547,13 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
     `APP_URL = "https://app.x/"`.
   - `forward` isn't called when `FORWARD_COPY_TO` is `""` or `"__FORWARD_COPY_TO__"`, and is called with the
     address when it's set.
-  - `scheduled()` calls `/api/tick?reason=cron` and beats `relay`.
+  - `scheduled()` calls `/api/tick?reason=cron`, then (after that call has settled, even if it failed)
+    `/api/tick?reason=health`: `fetch` gets exactly those two URLs, in that order. It beats `relay`.
   - A `fetch` rejection doesn't throw out of the handler, and the heartbeat detail starts `"tick call failed:"`.
   - A D1 insert failure makes `email()` throw, after forwarding when `FORWARD_COPY_TO` is set.
 - [ ] **Step 2: Run it to verify it fails.** `node --test mail-relay/tests/relay.test.mjs` fails with "Cannot find module".
-- [ ] **Step 3: Implement `mail-relay/src/index.js`.** About 60 lines. Use `ctx.waitUntil` for the tick fetch. The
+- [ ] **Step 3: Implement `mail-relay/src/index.js`.** About 60 lines. Use `ctx.waitUntil` for the tick fetch; in
+  `scheduled()` one `waitUntil` awaits the cron call and then the health call, so they never overlap. The
   heartbeat upsert SQL is the same as `beat`'s, inlined, because the Worker imports nothing from `control-room`.
 - [ ] **Step 4: Run tests to verify they pass.** `node --test mail-relay/tests/relay.test.mjs` passes.
 - [ ] **Step 5: Commit.** `git add mail-relay && git commit -m "Mail relay Worker: cron tick + inbound email to D1"`.
