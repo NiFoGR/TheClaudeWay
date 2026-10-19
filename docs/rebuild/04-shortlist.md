@@ -619,9 +619,10 @@ return title
     no longer `open`.
   - GMT: at `2026-10-26T06:59:00Z` → `"before 07:00"`; at `2026-10-26T07:00:00Z` → the earlier `pick:2026-10-20`
     todo is closed and `pick:2026-10-26` is open with `due_at "2026-10-26T07:00:00Z"` (re-seed today's room).
-  - `STEPS.map(s => s.name)` has `"pick"` directly after `"hot"` and directly before `"daily_find"` (overview §8
-    order: inbound, reply_fire, followups, send, hot, pick, daily_find, stale_jobs, calls, sites, care, health; only
-    the steps already built at this stage are present).
+  - `STEPS.map(s => s.name)` has `"pick"` directly before `"daily_find"`, and every step present from overview §8's
+    earlier slots (inbound, reply_fire, followups, send, hot) comes before it. Full order: inbound, reply_fire,
+    followups, send, hot, pick, daily_find, stale_jobs, calls, sites, care, health; only the steps already built are
+    present, so `hot` appears just before `pick` once stage 4 adds it.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/pick.test.mjs` → fails: `pickStep` is
   not exported.
 - [ ] **Step 3: Implement `pickStep` in `control-room/functions/_lib/shortlist-db.js` and register it in
@@ -761,8 +762,8 @@ return title
   - `scraper.js`: drop the `leadsTable`/`bindTable` import; a finished run shows "See these {found} leads" →
     `#/leads?view=all&job=<id>`.
   - `home.js`: `openDrawer(lead, …)` → `openLeadDrawer(lead.place_id)`.
-  - `style.css`: `.chips`, `.chip.on`, `.chip.off`, `.grade` (A+ gold fill `#C9A13B` on charcoal, A gold outline,
-    B/C/D greys; reuses stage 2's `.grade`/`.grade.aplus` rules rather than redefining them), `.banner.ok|info|warn`,
+  - `style.css`: `.chips`, `.chip.on`, `.chip.off`, grade badges extending stage 2's `.grade`/`.grade.aplus` rules
+    (A+ gold fill `#C9A13B` on charcoal, A gold outline, B/C/D greys; one set of rules, not a second copy), `.banner.ok|info|warn`,
     `.msg`, `.msg-body { white-space: pre-wrap }`, `.pager`; gold only as accent (docs/brand.md).
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/leadview.test.mjs` → PASS; full
   `node --test control-room/tests/*.test.mjs` → PASS; `for f in control-room/public/js/*.js; do node --check "$f"; done`
@@ -776,39 +777,55 @@ return title
 ## Cross-stage interfaces
 
 **Produced here (other stages use them):**
-- `_lib/offer.js`: `offerFor(date)`, `gbp(pence)`, the price constants and `GUARANTEE {headline, section}` (Task 1).
-  Stage 3 is the first in build order to need prices; stages 0 (landing page), 4 (demo/order page), 6, 7, 9 import
-  these and must not hard-code prices.
-- `_lib/followups.js`: `followupsDueToday(DB, now) → Promise<number>` (Task 3). Stage 6 extends this file and keeps
-  the export, its meaning (unsent follow-ups due by the end of UK today) and its test.
-- `_lib/shortlist.js`: `isHot(prospect, now)` (stage 4/6 `hot` step should use it), `STAGE_LABELS` (Todo board,
-  stage 11 file), `capacityBanner(c)`.
-- `_lib/shortlist-db.js`: `capacityNow(DB, now)` (stage 6 composer can show the same room), `READY_SQL`, `leadDetail`
-  (the stage 6 composer receives this `Detail` object).
-- Tick step `pick` (`everyMinutes: 30`) sits immediately before `daily_find` in overview §8's order.
+- `_lib/followups.js`: `followupsDueToday(DB, now) → Promise<number>` (Task 2). Stage 6 modifies this file (it does
+  not re-create it), keeps this export, its meaning (follow-ups still `queued` or not yet queued, due by the end of UK
+  today) and its test, and adds its own `followupsDueByMailbox(DB, now) → {total, byMailbox}` beside it.
+- `_lib/shortlist.js`: `isHot(prospect, now)`: the only hot rule (stage `emailed`/`viewed`, no inbound, views ≥ 2 or
+  a view in 24 h); stage 4's `hotStep` imports it instead of defining its own. Also `STAGE_LABELS` (Todo board,
+  stage 11 file) and `capacityBanner(c)`.
+- `_lib/shortlist-db.js`: `capacityNow(DB, now)` (stage 6 Task 6 caps its `room` with `roomForFirsts(DB, now).total`,
+  so the banner and the composer agree), `READY_SQL`, `leadDetail` (the drawer payload; stage 6's composer loads its
+  own data by place_id).
+- Tick step `pick` (`everyMinutes: 30`) is slot 6 of overview §8's order: after `hot`, before `daily_find`.
 - Routes `#/lead/<place_id>` (opens the Leads page with that panel) and `#/leads?view=ready|all&job=<id>`; all todo
-  links from stages 4–8 use `/#/lead/<place_id>`.
-- `public/js/html.js`: `esc`, `safeUrl`, `icon` (importable in node tests); `lib.js` re-exports them.
-- `research.status = 'skipped'` with notes starting `Not a fit (Nik): ` means Nik rejected it; stage 2's queue must
-  never re-queue a `skipped` lead on its own.
+  links from stages 4–8 use `/#/lead/<place_id>`. File 11 owns routing once it ships and keeps both.
+- Drawer mount points rendered by `drawerHtml`: `#d-demo` (stage 4 mounts its demo card), `#d-email` (stage 6's
+  `mountEmail`), `#d-call` (stage 8's call box).
+- `public/js/html.js` is the source of `esc`, `safeUrl`, `icon` (importable in node tests); `lib.js` re-exports them,
+  so stage 0's test "setup.js imports esc from ./lib.js" still passes.
+- `research.status = 'skipped'` with a notes line `[Nik YYYY-MM-DD] Not a fit: <reason>` means Nik rejected it;
+  stage 2's queue must never re-queue a `skipped` lead on its own.
 
 **Assumed from other stages (exact shapes this file relies on):**
 - Stage 0: `fakeD1()` from `control-room/tests/helpers/fakeD1.mjs` returns a D1-compatible DB (`prepare/bind/first/
-  all/run/batch`) with the full schema (all overview §4 tables) applied; `_lib/tick.js` exports a mutable `STEPS`
-  array; `todo.js`, `settings.js`, `ukTime.js`, `mail/capacity.js`, `mail/outbox.js` exactly as overview §8;
-  `sentToday` counts only messages with `status = 'sent'`; `suppression.value` is always stored lower-case.
-- Stage 2: `research` rows as overview §4; `points` = `{need, means, reach, fit}` integers 0–5, optionally with
-  `why: {need, means, reach, fit}` one-line strings (shown when present); `owner.first` set only from a confident
-  source when `confident: true`.
-- Stage 4: when a lead's demo is ready, it upserts `prospects` to stage `ready` via `nextStage(…, 'demo_ready')` with
-  `email` = the address to write to and `greet_name`; the live demo is the newest `demos` row with `expires_at > now`;
-  `/d/<slug>?preview=1` renders without recording a view, and views from a logged-in Control Room session never count.
-- Stage 6: `control-room/public/js/composer.js` exports `openComposer(detail, {onSent})` where `detail` is the
-  `GET /api/leads/:id` payload; first emails are `messages` rows with `kind = 'first'`, `status 'queued'` until sent.
+  all/run/batch/exec`) with the full schema (all overview §4 tables) applied; `_lib/tick.js` exports a mutable `STEPS`
+  array with a marker for every overview §8 slot; `todo.js`, `settings.js`, `ukTime.js`, `mail/capacity.js`,
+  `mail/outbox.js` exactly as overview §8; `sentToday` counts `first`/`followup` messages `sent` since UK midnight
+  plus any `sending`; `suppression.value` is always stored lower-case. `_lib/offer.js` (01 Task 6) exports
+  `PACKAGES`, `offerFor(date) → {weekend, full, website, banner}`, `formatPounds(pence)` and
+  `GUARANTEE {headline, section}`, with `PACKAGES.weekend.wasBuild = 195000`.
+- Stage 0/4: `_lib/session.js` keeps stage 0's cookie name `cr_session` and its token derivation.
+- Stage 1: `iso(date) → "YYYY-MM-DDTHH:MM:SSZ"` (no milliseconds) for stored times.
+- Stage 2: `research` rows as overview §4, parsed by `parseResearch(row)` from `_lib/research.js`; `points` =
+  `{need, means, reach, fit, total, capped, reasons: {need, means, reach, fit}}`; `owner.first` set only from a
+  confident source when `confident: true`; `researchCard({research, waiting}, {esc, safeUrl})` in
+  `public/js/researchcard.js` renders the whole research section, including **Research is wrong**; its route
+  `POST /api/research/:place_id/wrong {note}` re-queues the lead, fires the research Routine at most once per 30
+  minutes, and returns the toast `message` (the three texts in Part A).
+- Stage 4: when a lead's demo is ready, `ensureDemo` moves the prospect to `ready` through
+  `applyStageEvent(DB, placeId, "demo_ready", now, {email, greet_name})` with `email` = the address to write to; the
+  live demo is the newest `demos` row with `expires_at > now`; `_lib/demo/data.js` exports `templateIdFor(trade)`;
+  `GET /api/demo/preview?template=<id>&place_id=<id>` renders without recording a view and may be framed by the
+  Control Room (`frame-ancestors 'self'`); demo views from the Control Room host never count.
+- Stage 6: `control-room/public/js/compose.js` exports `mountEmail(el, placeId) → Promise<void>` (composer when the
+  stage is `ready` and no first email is queued or sent, else the thread); first emails are `messages` rows with
+  `kind = 'first'`, `status 'queued'` until sent; `roomForFirsts(DB, now) → {day, total, byMailbox}`.
+- Stage 8: mounts its call box into `#d-call`; its `GET /api/calls/:id` passes `offer: offerFor(slot_at)` and
+  `guarantee: GUARANTEE` to `callScript`, like this drawer does.
 
 ## Questions for Nik
 
-1. **When today's room is used up, can you still write first emails for tomorrow?** Default: no. The button says "No
-   room left today", so nothing piles up and every email goes out the morning you write it.
-2. **CSV download on the Leads page:** the old page had one; the new flow doesn't need it. Default: dropped (about 20
-   lines to bring back if you use it).
+1. **Q-T: When today's room is used up, can you still write first emails for tomorrow?** Default: no. The button says
+   "No room left today", so nothing piles up and every email goes out the morning you write it.
+2. **Q-U: CSV download on the Leads page:** the old page had one; the new flow doesn't need it. Default: dropped
+   (about 20 lines to bring back if you use it).

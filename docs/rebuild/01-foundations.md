@@ -327,8 +327,8 @@ address aren't on aetoswebsites.com yet. The law needs them: add them on Setup �
 
 ### Setup page (top to bottom)
 
-1. **Health:** one row per light: a dot (green, amber or red), the message, and the fix under it when it isn't
-   green.
+1. **Health:** one row per light (stage 0's and every registered one): a dot (green, amber, red or grey), the
+   detail, and the fix under it when it's amber or red.
 2. **Connections:** the existing Database, GitHub and Stripe checks and the Stripe card, unchanged.
 3. **Mailboxes:**
    - **Table columns:** address · name shown · role (Cold / System) · started · today ("3 of 5 sent") · status ·
@@ -1320,7 +1320,8 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
     uses it too.
   - `processInbound(DB, now, {limit = 10, maxQueries = 30} = {}) → Promise<{[outcome]: number}>`. It counts its own
     D1 queries with `countingDB` and doesn't start another row once it has made `maxQueries`;
-  - `inboundStep = {name:"inbound", everyMinutes:0, run}`, which returns e.g. `"3 processed: 1 human, 1 auto, 1 bounce"`;
+  - `inboundStep = {name:"inbound", everyMinutes:0, run}`, which returns e.g. `"3 processed: 1 human, 1 auto, 1 bounce"`.
+    `run(ctx)` passes `maxQueries = Math.min(30, ctx.budget.left())` (Task 16's tick budget);
   - `BOUNCE_PAUSE = {count:2, days:7}`.
 
   The mailbox resume time is read from the setting `mailbox:<id>:resumed_at`. When the linked prospect is `won`, or
@@ -1368,12 +1369,19 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
 - Modify: `control-room/functions/_middleware.js`
 
 **Interfaces:**
-- Consumes `db`, `getSetting`, `setSetting`, `inboundStep` and `sendStep`.
+- Consumes `db`, `getSetting`, `setSetting`, `countingDB`, `inboundStep` and `sendStep`.
 - Produces:
-  - `STEPS` (stage 0: `[inboundStep, sendStep]`, and the health step is appended in Task 17). There are comments
-    marking positions 2, 3, 5, 6, 7, 8 and 9 for later stages.
+  - `STEPS` (stage 0: `[inboundStep, sendStep]`, and the health step is appended in Task 17). There is a comment
+    marker for every slot of overview §8, in this order: `inbound` (0), `reply_fire` (0, stage 7), `followups` (5,
+    stage 6), `send` (0), `hot` (5, stage 4/6), `pick` (30, stage 3), `daily_find` (5, stage 1), `stale_jobs` (15,
+    stage 1), `calls` (5, stage 8), `sites` (5, stage 10), `care` (10, stage 11), `purge` (monthly, file 11),
+    `health` (0). Each later stage inserts its step at its marker.
+  - `TICK_BUDGET = {total: 50, healthReserve: 6, minToStart: 10}`.
   - `runTick(env, reason, now = new Date(), {steps = STEPS} = {}) → Promise<{ran, why?, steps}>`. `ctx` is
-    `{DB, env, now, reason, results}`, where `results` holds the steps so far.
+    `{DB, env, now, reason, results, budget}`, where `DB` is the counted wrapper, `results` holds the steps so far
+    and `budget.left()` is the queries this step may still make (50 − used, minus 6 for every step but `health`).
+    A step other than `health` with `budget.left() < 10` isn't started and reports `"deferred"` (its
+    `tick:last:<step>` is not updated, so it runs on the next tick). `health` always runs.
   - `onRequestGet` and `onRequestPost` for `/api/tick`.
   - Middleware: `/api/tick`, `/onboard/*` and `/s/*` are public.
 
@@ -1385,8 +1393,11 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
     runs, because the lease has expired.
   - "everyMinutes": a step with `everyMinutes:60` runs at t0 and is `"skipped"` at t0 + 30 min (with the 20 s rule
     satisfied).
+  - "budget": steps `a` (makes 40 queries through `ctx.DB`), `b` and `health`: `b` is `"deferred"` and `health`
+    runs. A step sees `ctx.budget.left()` that already excludes health's 6.
+  - "markers": `tick.js` source contains a marker comment for each of the 13 slot names, in overview §8 order.
   - "route hides details": `GET /api/tick?reason=<script>` gives a JSON body whose step values are only
-    `ok`, `error` or `skipped`, and the reason passed is `unknown`.
+    `ok`, `error`, `skipped` or `deferred`, and the reason passed is `unknown`.
   - "middleware lets /api/tick through without a cookie": call `onRequest` with `CONTROL_ROOM_PASSWORD` set, a
     request to `https://control.x/api/tick` and `next` returning 200. The result is 200, while `/api/leads` gives
     401.
@@ -1396,6 +1407,7 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
     `INSERT INTO settings (key,value) VALUES ('tick:lock',?1) ON CONFLICT(key) DO UPDATE SET value=?1 WHERE settings.value < ?2`,
     with `?1` = the expiry ISO and `?2` = now ISO, and `changes === 1` means acquired.
   - Set `tick:last` after acquiring. Release with `DELETE … WHERE key='tick:lock' AND value=?1`.
+  - Wrap `DB` with `countingDB` before the lease, so the runner's own queries count towards the 50.
   - Add the paths to the middleware's public checks.
 - [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/tick.test.mjs` passes.
 - [ ] **Step 5: Commit.** `git add control-room/functions/_lib/tick.js control-room/functions/api/tick.js control-room/functions/_middleware.js control-room/tests/tick.test.mjs && git commit -m "Tick runner with D1 lease, /api/tick (public)"`.
@@ -1408,8 +1420,7 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
 - Modify: `control-room/functions/_lib/tick.js` (append `healthStep`)
 
 **Interfaces:**
-- Consumes `ROUTINES`, `secretStatus`, `getSetting`, `mailboxCap`, `sentToday`, `ukDate`, `addTodo`, `closeTodos`
-  and `beat`.
+- Consumes `ROUTINES`, `secretStatus`, `getSetting`, `mailboxCap`, `sentToday`, `ukDate`, `addTodo` and `beat`.
 - Produces in `setupStatus.js`:
   - `loadSetupStatus(DB, env, now) → Promise<status>` with
     - `mailboxes[{…row, has_password, cap_today, sent_today}]`;
@@ -1421,14 +1432,26 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
     - `smtp_proof`.
   - `setupGaps(status) → [{key,title,detail,link:"/#/setup"}]` (pure).
 - Produces in `health.js`:
-  - `computeLights(facts, now) → [{name,state,message,fix}]` (pure, 11 lights in the Part A order);
-  - `healthFromDb(DB, env, now) → Promise<{lights, gaps}>`;
-  - `healthStep = {name:"health", everyMinutes:0, run}`. `run` syncs the `health:<name>` and `setup:<key>` todos
-    and beats `tick` with detail `"<steps summary> · G green, A amber, R red"`.
-- Produces `GET /api/health` → `{lights, gaps}` (login required).
+  - `computeLights(facts, now) → [{name, level, detail, fix}]` (pure, stage 0's 10 lights in the Part A order;
+    `level` is `"green"|"amber"|"red"|"grey"`);
+  - `registerLight(fn)`, where `fn(DB, env, now) → Promise<{name, level, detail, fix}>`; it returns a function
+    that unregisters it (tests use it to clean up). Later stages call it from
+    the module that holds their tick step (so importing `tick.js` registers every light) and never edit
+    `computeLights`;
+  - `healthFromDb(DB, env, now) → Promise<{lights, gaps}>`, where `lights` = `computeLights(...)` followed by each
+    registered light, in registration order;
+  - `healthStep = {name:"health", everyMinutes:0, run}`. `run` syncs the `health:<name>` todos for every light
+    (red adds; any other level, grey included, closes) and stage 0's `setup:<key>` todos, closing each by exact
+    dedupe (`UPDATE todos SET status='done', done_at=?, dedupe=dedupe||'@'||? WHERE status='open' AND dedupe=?`),
+    never with `closeTodos`. It beats `tick` with detail `"<steps summary> · G green, A amber, R red"`.
+- Produces `GET /api/health` → `{lights, gaps}` (login required). It imports `_lib/tick.js` so every stage's
+  `registerLight` call has run.
 
 - [ ] **Step 1: Write the failing test.** Pure `computeLights`, with now = `2026-10-19T12:00:00Z`:
-  - A tick beat 16 min ago is red, with the message `"The heartbeat has stopped: no timed work for 16 min"`. At
+  - It returns exactly 10 lights, named tick, relay, routine:research, routine:reply, routine:weekly-kpis,
+    routine:build, routine:monthly-care, mailboxes, scrape, setup, each with the keys `name`, `level`, `detail`,
+    `fix`.
+  - A tick beat 16 min ago is red, with the detail `"The heartbeat has stopped: no timed work for 16 min"`. At
     15 min it's green.
   - Relay missing: red.
   - Research connected, heartbeat 27 h ago: red, `"Claude's Research Routine hasn't run for 1 day"`.
@@ -1436,22 +1459,30 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
   - Build connected, no beats, no fires: amber `"hasn't checked in yet"`.
   - Not connected: amber `"Claude's Research Routine isn't connected"`.
   - A paused mailbox: red `"nik@aetoswebsites.com is paused: …"`. No mailboxes: amber.
-  - A job running with `updated_at` 46 min ago: scrape amber.
-  - 3 research queued with the last `researched_at` 27 h ago: research_queue red.
+  - A job running with `updated_at` 46 min ago: scrape amber. A `scans` row with `source='care'` running 46 min:
+    scrape stays green.
   - Gaps > 0: setup amber `"N things still to set up"`.
   - No light name is a prefix of another.
 
-  `setupGaps`: an empty status gives the keys `mailbox`, `agent_token`, `routine:research`…`routine:monthly-care`
+  `setupGaps`: an empty status gives the keys `first_mailbox`, `agent_token`, `routine:research`…`routine:monthly-care`
   and `business`. A mailbox without a password gives `mailbox_password:<id>`.
 
   db `healthStep.run`: a red tick light adds the todo `health:tick`. After a fresh beat, the next run closes it.
-  Gap todos appear with the `setup` kind. The `tick` heartbeat row exists afterwards.
+  Gap todos appear with the `setup` kind. The `tick` heartbeat row exists afterwards. Also:
+  - A registered light `{name:"demo_light", level:"red", …}` appears after the 10 in `healthFromDb(...).lights`
+    and adds `health:demo_light`; registered as `grey`, it adds nothing and closes an open `health:demo_light`.
+  - An open `health:find:towns` todo (another stage's) and an open `setup:demo-template` todo stay open after a run
+    with every light green and no gaps.
+  - An open `setup:mailbox_password:m1` stays open across two runs while the gap persists (it's never closed and
+    re-added), and `setup:first_mailbox` closes once a mailbox exists.
 - [ ] **Step 2: Run it to verify it fails.** `node --test control-room/tests/health.test.mjs` fails with "Cannot find module".
 - [ ] **Step 3: Implement the modules.**
-  - The facts query reads: `heartbeats`, the latest `routine_fires` per routine,
-    `mailboxes`, `jobs` and `scans` that are `queued`/`running` with `updated_at`, `COUNT(research WHERE status='queued')`,
-    `MAX(research.researched_at)`, and the setup status.
+  - The facts query reads: `heartbeats`, the latest `routine_fires` per routine, `mailboxes`, `jobs` and `scans`
+    (excluding `source='care'`) that are `queued`/`running` with `updated_at`, and the setup status.
   - "N days" is `Math.floor(hours/24)`; minutes are rounded down.
+  - The step's own setup keys are `first_mailbox`, `mailbox_password:<id>`, `dns:<domain>`, `agent_token`,
+    `routine:<name>` and `business`. It reads the open `setup:` todos, and closes (exact dedupe) only those that
+    match one of these forms and aren't a current gap.
 - [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/health.test.mjs control-room/tests/tick.test.mjs` passes.
 - [ ] **Step 5: Commit.** `git add control-room/functions/_lib/setupStatus.js control-room/functions/_lib/health.js control-room/functions/_lib/tick.js control-room/functions/api/health.js control-room/tests/health.test.mjs && git commit -m "Health lights, setup gaps, health tick step and /api/health"`.
 
@@ -1646,9 +1677,15 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
 - Modify: `control-room/functions/_middleware.js`
 
 **Interfaces:**
-- Consumes `offerFor`, `formatPounds`, `GUARANTEE`, `BUILD_GUARANTEE`, `ukParts`, `getSetting` and `db`.
+- Consumes `offerFor` (its `full.wasBuild` is the struck-through price), `formatPounds`, `GUARANTEE`,
+  `BUILD_GUARANTEE`, `ukParts`, `getSetting` and `db`.
 - Produces:
-  - `renderLanding({business, contactEmail, now}) → string`;
+  - `renderLanding({business, contactEmail, now, extras = {chatbot:false, reviews:false}}) → string`. `extras` are
+    the same flags as 07's `offerFacts(at, {chatbot, reviews})`, read by the middleware from the settings
+    `offer:chatbot_live` and `offer:review_booster_live` (`'1'` = true). With `reviews` false the "Review booster"
+    bullet and the "More reviews, the honest way" item are left out;
+  - `traderLine(business) → string|""`: `"Aetos Websites is a trading name of {legal_name}, {address}."` when both
+    are filled, else `""` (raw text; callers escape it). Stage 9's pages use it;
   - `renderPrivacy({business, contactEmail, updated}) → string`;
   - `renderNotFound() → string`;
   - `siteResponse(html, status = 200) → Response`;
@@ -1660,7 +1697,13 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
 - [ ] **Step 1: Write the failing test.**
   - Weekday landing (`now = 2026-10-21T10:00:00Z`) contains `£1,950`, `£249`, `First 60 days free`,
     `GUARANTEE.headline`, `GUARANTEE.section` and `BUILD_GUARANTEE`, and doesn't contain `£2,000`.
-  - Saturday (`2026-10-24T10:00:00Z`) contains `<s>£2,000</s>`, `£1,750` and `First 90 days free`.
+  - Saturday (`2026-10-24T10:00:00Z`) contains `<s>£1,950</s>`, `£1,750` and `First 90 days free`, and doesn't
+    contain `£2,000`.
+  - Default `extras`: no `Review booster`, no `More reviews, the honest way`, and no match for
+    `/chatbot|chat assistant/i`. With
+    `extras:{reviews:true}` both review lines are there.
+  - `traderLine({legal_name:"N", address:"1 St"}) === "Aetos Websites is a trading name of N, 1 St."`;
+    `traderLine({legal_name:"N", address:""}) === ""`.
   - The landing doesn't match `/\bSEO\b/i` or `/\b0\d{3,4}\s?\d{3}\s?\d{3,4}\b/` (no phone). It contains
     `mailto:hello@aetoswebsites.com` and `data-aetos-landing`.
   - With `business:{legal_name:"N <b>", address:"1 St & Co"}` it contains `N &lt;b&gt;` and `1 St &amp; Co`. With
@@ -1687,8 +1730,8 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
 
 **Files:**
 - Create: `control-room/public/js/setup.js`
-- Modify: `control-room/public/js/app.js`, `control-room/public/style.css` (classes `.light`, `.light.green|amber|red`,
-  `.banner-red`), `CLAUDE.md` (Repo layout rows for `mail-relay/`, `routines/` and `legacy/`, and the nav sentence
+- Modify: `control-room/public/js/app.js`, `control-room/public/style.css` (classes `.light`,
+  `.light.green|amber|red|grey` (one per `level`), `.banner-red`), `CLAUDE.md` (Repo layout rows for `mail-relay/`, `routines/` and `legacy/`, and the nav sentence
   in Conventions)
 - Delete: `control-room/public/js/outreach.js`, `control-room/public/js/roadmap.js` (both kept in `legacy/`)
 
@@ -1696,7 +1739,10 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
 - Consumes `GET /api/setup`, `/api/health`, `/api/setup/*`, `/api/stripe/setup`, and `api`, `esc`, `safeUrl`,
   `pageHead`, `toast`, `modal` from `lib.js`, plus `paymentLinks` and `bindCopy` from `money.js`.
 - Produces in `app.js`: `PAGES = [{route, label, icon, render}]`. Stage 0 has home, leads, scraper, maprank, money;
-  setup is in the bottom nav. Later stages push entries. `setupPage()` is exported from `setup.js`.
+  setup is in the bottom nav. Later stages push entries until file 11 replaces the nav with `public/js/nav.js`
+  (`NAV` + `routeFor`), after which file 11 owns routing and later stages add routes there. `setupPage()` is
+  exported from `setup.js`. The Health section shows each light's dot by `level` and its `detail`, with `fix` under
+  it when the level isn't green or grey.
 
 - [ ] **Step 1: Write the failing test.** Add `control-room/tests/shell.test.mjs`:
   - `app.js` source contains no `"soon"` and no `roadmap`/`outreach` routes. The `PAGES` routes, extracted by a
@@ -1757,16 +1803,25 @@ Everything in overview §8 is built here with exactly those signatures. These ar
 **Time, settings and todos**
 - `ukDayStartUtc(date) → Date` (`_lib/ukTime.js`).
 - `closeTodos` frees the dedupe of rows it closes (`dedupe || '@' || done_at`), so recurring problems can be
-  re-added. A dismissed todo keeps its dedupe.
+  re-added. A dismissed todo keeps its dedupe. It matches by prefix, so it's only safe when no other key starts
+  with that prefix; the health step closes `health:<name>` and its own `setup:<key>` todos by exact dedupe.
+- `fakeD1` (`tests/helpers/fakeD1.mjs`) is `{prepare, batch, exec, raw}`.
 
 **Offer and stages**
-- `PACKAGES`, `offerFor(date)`, `formatPounds(pence)`, `GUARANTEE`, `BUILD_GUARANTEE` (`_lib/offer.js`).
-  `money.js` re-exports `PACKAGES`.
-- `STAGES`, `OPEN_STAGES`, `nextStage(current, event)` (`_lib/stages.js`). Built here because the inbound step
-  needs `bounce` and `opt_out`.
-- `applyStageEvent(DB, placeId, event, now, {lost_reason})`, `suppress(DB, value, kind, reason, now)`,
-  `isSuppressed(DB, email)` (`_lib/prospects.js`). Every stage changes `prospects.stage` only through
-  `applyStageEvent`.
+- `_lib/offer.js` is owned here: `PACKAGES` (each entry has `key`; `PACKAGES.weekend.wasBuild` = 195000),
+  `MONTHLY_PENCE`, `offerFor(date) → {weekend, full, website, banner}`, `termsFor(pkg, weekend)`,
+  `checkoutWeekend(now, seenWeekend)`, `formatPounds(pence)` (pennies and negatives too), `GUARANTEE`
+  `{headline, section}`, `BUILD_GUARANTEE`, `WEEKEND_BANNER`, `NO_CONTRACT`. `money.js` re-exports `PACKAGES`.
+  Later stages only add exports (07 `offerFacts`, 08 `BUILD_GUARANTEE_NOTE`), tested in their own new files; none
+  re-creates the module, `offer.test.mjs` or the `money.js` re-export. There is no `gbp`, `offerNow` or `*_PENCE`
+  besides `MONTHLY_PENCE`.
+- `STAGES`, `OPEN_STAGES`, `LOST_REASONS`, `nextStage(current, event)` (`_lib/stages.js`), with every event of
+  overview §5 (including `reopen`, `nik_handled`, `call_cancelled`). Later stages don't edit `stages.js`.
+- `applyStageEvent(DB, placeId, event, now, {lost_reason, email, greet_name})` → `{from, to}|null`,
+  `suppress(DB, value, kind, reason, now)`, `isSuppressed(DB, email)` (`_lib/prospects.js`). Every stage changes
+  `prospects.stage` only through `applyStageEvent` (never a direct `nextStage` write); `email`/`greet_name` insert
+  a new row (stage 4's `demo_ready`, stage 9's `paid`). `lost_reason` is one of `opt_out`, `bounce`,
+  `sequence_done`, `not_now`, `not_interested`, `call`.
 
 **Routines**
 - `ROUTINES`, `FIRE_URL_RE`, `TOKEN_RE` (`_lib/routines.js`). `fireRoutine` takes an extra

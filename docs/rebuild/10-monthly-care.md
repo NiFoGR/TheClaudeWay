@@ -1086,39 +1086,58 @@ CREATE TABLE IF NOT EXISTS care_reviews (
 - Consumes: `careActions` (Task 10), `buildPlan`/`preTasks`/`monthlyTasks` (Task 6), `rankStatus`/
   `guaranteeAfterScan` (Task 5), `TEMPLATES`/`factsFor`/`renderTokens` (Task 7), `onPageCheck` (Task 8),
   `pauseFee`/`resumeFee` (Task 9), `addTodo`/`closeTodos` (todo.js), `fireRoutine` (routines.js), `startWorkflow`
-  (`_lib/github.js`), `queueMessage` (mail/outbox.js), `getSetting`/`setSetting` (settings.js), stage 10
-  `setSiteFeature(DB, client_id, feature, on)`.
+  (`_lib/github.js`), stage 9's `systemMailbox(DB, now)` and `sendClientMail(DB, {client_id, place_id, to, business,
+  compose, now})` (`_lib/client-mail.js`), `getSetting`/`setSetting` (settings.js), `now()`/`iso()` (util.js), stage
+  10's `setSiteFeature(DB, client_id, feature, on, now)` (`_lib/sites/db.js`).
 - Produces:
-  - `loadCareState(DB, now) → Promise<state>` (≤ 7 statements, one `DB.batch`)
+  - `loadCareState(DB, now) → Promise<state>` (≤ 7 statements, one `DB.batch`). New clients' `service` = first
+    `onboarding.form.services[]` with `on` (its `name`), else `leads.trade`; `town` = `form.areas[0]`, else
+    `leads.town`, else `leads.search_town`; `invite_sent` = `form.gbp.invite_sent === true`.
   - `applyCareAction(ctx, action, deps) → Promise<number>` (D1 statements used); `deps = {fire = fireRoutine, start =
     startWorkflow, pause = pauseFee, resume = resumeFee, fetchImpl = fetch}`
-  - `runCare(ctx, deps = {}) → Promise<string>` (summary line; stops applying at 20 statements)
+  - `runCare(ctx, deps = {}) → Promise<string>` (summary line; stops applying at 20 statements or when `ctx.budget`
+    is used up, whichever comes first)
   - `stopCare(DB, clientId, ukToday) → Promise<void>`
-  - `sendCareEmail(DB, {client_id, subject, body, author}) → Promise<{ok: true, id} | {ok: false, error}>`
+  - `sendCareEmail(DB, {client_id, subject, body, author}, now) → Promise<{ok: true, id} | {ok: false, error}>` — a
+    thin wrapper over stage 9's `sendClientMail` (`compose: () => ({subject, body})`, the body already signed with
+    `business:sender_name`); sets the queued row's `author` to `nik` for approved emails. No mailbox lookup of its
+    own: when `systemMailbox(DB, now)` is null it returns `{ok: false, error: "No mailbox to send from yet: add one on
+    Setup → Mailboxes."}` without calling `sendClientMail` (so stage 9's welcome-email todo isn't added).
   - `startCareScan(DB, env, care, {day, kind}, start = startWorkflow) → Promise<{scan_id} | {error}>` (inserts
     `scans` row `source 'care'`, grid 7, spacing 800, town = `care.town`, then `care_scans`, then dispatches
     `map-rank.yml` with `{keyword, town, grid: "7", spacing: "800", scan_id, place_id}`)
-  - STEPS entry `{name: "care", everyMinutes: 10, run: runCare}` between `calls` and `health`.
+  - `setCareAccess(DB, clientId, ukDay0, now) → Promise<{ok: true} | {ok: false, error}>` — sets `gbp_access_on`,
+    builds the plan, closes `pre.*`; used by Task 13's `access` action and by stage 10's "Invite accepted" checkbox.
+  - STEPS entry `{name: "care", everyMinutes: 10, run: runCare}` in slot 11, between `sites` and `health`.
 
 - [ ] **Step 1: Write the failing test** — `care-db.test.mjs` with `fakeD1()` and stub deps:
-  - seed client (full, monthly 24900) + onboarding live 2026-11-09 → `runCare` at 2026-11-09T09:00Z creates `care`
-    (`waiting_access`, keyword `"landscaper warrington"`) and the `pre.access_email` todo (dedupe
-    `care:c1:pre.access_email`); running again adds nothing.
+  - seed client (full, monthly `MONTHLY_PENCE`) + onboarding live 2026-11-09 with `form = {services: [{name:
+    "Landscaper", on: true}], areas: ["Warrington"], gbp: {has: "yes", invite_sent: false}}` → `runCare` at
+    2026-11-09T09:00Z creates `care` (`waiting_access`, keyword `"landscaper warrington"`) and the `pre.access_email`
+    todo (dedupe `care:c1:pre.access_email`); running again adds nothing. Same with `invite_sent: true` → no
+    `pre.access_email` task or todo.
   - care active, day 0 2026-11-11, at 2026-11-11T09:00Z → `start` called once with `place_id` and `grid: "7"`,
     a `scans` row `source = 'care'`, a `care_scans` row `{day: 0, kind: "scheduled"}`.
   - scoring: mark that scan `done` with `scan_businesses` having no row for the client → `care_scans` scored
     `centre_rank NULL, top3_share 0, top3 0`.
-  - day-90 not Top 3 → `pause` called once with `("sub_1", "2027-02-09")`, `care.paused = 1`, `guarantee =
+  - a care scan still `running` 46 min after it started → `scans.status = 'failed'` with "Google scan didn't finish:
+    open their page and press Retry the day-0 scan." (and stage 1's `stale_jobs` never touches it).
+  - day-90 not Top 3 → `pause` called once with subscription `"sub_1"` and day 90 `"2027-02-09"`, `care.paused = 1`, `guarantee =
     'working_free'`, a `d90.email` task whose draft renders template E; `pause` returning `{ok:false}` → `payment`
     todo containing "Pause payment collection", `paused = 0`.
   - `stopCare`: open `care:c1:` todos → `dismissed`, open tasks → `skipped`, `setSiteFeature` stub called with
     `("c1", "chatbot", false)`, later `runCare` makes no `start`/`fire` calls.
-  - `sendCareEmail` with no `system` mailbox → `{ok:false, error: "Add a client mailbox on Setup → Mailboxes (role: client mail) first."}`.
-  - statement budget: with 30 due todos, one `runCare` opens exactly 10.
+  - `sendCareEmail` with a `system` mailbox → one `messages` row `kind 'system'`, `author 'nik'`, `client_id 'c1'`,
+    `mailbox_id` of the system mailbox; with only a cold mailbox → sent from it and stage 9's `setup:system_mailbox`
+    todo exists; with no mailbox → `{ok:false, error: "No mailbox to send from yet: add one on Setup → Mailboxes."}`,
+    no `messages` row, no `setup:welcome:c1` todo.
+  - statement budget: with 30 due todos, one `runCare` opens exactly 10; with `ctx.budget` at 12, it applies no more
+    than 12 statements.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/care-db.test.mjs` → cannot find module.
 - [ ] **Step 3: Implement the exports in `care-db.js` and register the step in `tick.js`** — writes use
   `INSERT OR IGNORE` on task ids and `addTodo` dedupe; todos carry `kind: "care"`, `client_id`, `due_at:
-  ukToUtc(due_on, "08:00")`, `draft` = rendered text, `detail` = instructions.
+  iso(ukToUtc(due_on, "08:00"))` (no milliseconds), `draft` = rendered text, `detail` = instructions. Health todos use
+  dedupes that are not a light name: `health:day90:<client_id>`, `health:care_scan:<client_id>:<day>`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/care-db.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/care-db.js control-room/functions/_lib/tick.js
   control-room/tests/care-db.test.mjs` + `git commit -m "Care: the tick step runs scans, todos, guarantee and
@@ -1162,22 +1181,19 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
   control-room/functions/_lib/care-db.js control-room/tests/care-api.test.mjs` + `git commit -m "Care: agent API for
   the monthly-care Routine" -m "$TRAILER"`.
 
-### Task 13: Owner API (Clients section, client page actions)
+### Task 13: Owner API (client page actions)
 
-**Files:** Create `control-room/functions/api/care/clients.js`, `control-room/functions/api/care/[id].js`,
-`control-room/functions/api/care/tasks/[id].js`, `control-room/functions/api/care/settings.js`; Modify
-`control-room/functions/_lib/care.js` (add `clientSummary`), `control-room/functions/_lib/care-db.js`; Test
+**Files:** Create `control-room/functions/api/care/[id].js`, `control-room/functions/api/care/tasks/[id].js`,
+`control-room/functions/api/care/settings.js`; Modify `control-room/functions/_lib/care-db.js`; Test
 `control-room/tests/care-owner.test.mjs`.
 
 **Interfaces:**
-- Consumes: `startCareScan`, `sendCareEmail`, `stopCare`, `careContext` (Tasks 11–12), `domainTransferText`,
-  `TEMPLATES`, `renderTokens` (Task 7), `fireRoutine`, `setSetting`.
-- Produces:
-  - `clientSummary(row, ukToday) → {client_id, name, package, status, guarantee: {state, day, label}, last_rank,
-    reviews, next_task, open_todos}` (pure, in `care.js`)
-  - `GET /api/care/clients` → `{clients: [...]}` sorted working_free, waiting_access, then `next_task.due_on`
+- Consumes: `startCareScan`, `sendCareEmail`, `stopCare`, `setCareAccess`, `careContext` (Tasks 11–12),
+  `domainTransferText`, `TEMPLATES`, `renderTokens` (Task 7), `fireRoutine`, `setSetting`.
+- Produces (the care API serves only the client page and Care settings; file 11's board shows clients):
   - `GET /api/care/:id` → `{client, care, scans, reviews, tasks (drafts rendered), emails, domain}`
-  - `POST /api/care/:id {action}`: `access {on}`, `no_gbp`, `place_id {place_id}`, `keyword {service, town}`,
+  - `POST /api/care/:id {action}`: `access {on}` (calls `setCareAccess`; stage 10's "Invite accepted" checkbox posts
+    `{action: "access", on: <UK today>}` here), `no_gbp`, `place_id {place_id}`, `keyword {service, town}`,
     `scan {retry_day?}`, `paused {paused: 0|1}` (Nik's manual Stripe ticks), `domain` (returns `domainTransferText`)
   - `POST /api/care/tasks/:id {action}`: `send {subject, body}`, `done`, `skip`, `approve` (site tasks: fires `build`
     with `site update: client <c> task <t>`), `to_site` (`w3.faq` only: action becomes `site`), `redraft` (fires
@@ -1193,62 +1209,96 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
   - `scan {}` → manual `care_scans` row; `scan {retry_day: 90}` only when the day-90 scheduled scan failed, else 400.
   - task `send` with edited body → a `messages` row `kind 'system'`, `author 'nik'`, `client_id`, status `queued`;
     task and its todo `done`.
-  - `GET /api/care/clients` rows have exactly the keys `client_id, name, package, status, guarantee, last_rank,
-    reviews, next_task, open_todos`; a working-free client sorts first; a Website Only client has
-    `status: "website_only"` and `guarantee: null`.
+  - `GET /api/care/<id>` for a Website Only client → 404 "<name> is Website Only: there's no monthly care."
   - settings: editing the referral body clears its `approved_at`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/care-owner.test.mjs` → 404.
-- [ ] **Step 3: Implement the routes and `clientSummary`** — day-0 set rebuilds tasks with `buildPlan` + the day-0
+- [ ] **Step 3: Implement the routes** — day-0 set (`setCareAccess`) rebuilds tasks with `buildPlan` + the day-0
   `m.posts` row; errors exactly as the spec's sentences.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/care-owner.test.mjs` → PASS.
-- [ ] **Step 5: Commit** — `git add control-room/functions/api/care control-room/functions/_lib/care.js
-  control-room/functions/_lib/care-db.js control-room/tests/care-owner.test.mjs` + `git commit -m "Care: client page
-  and Clients section API" -m "$TRAILER"`.
+- [ ] **Step 5: Commit** — `git add control-room/functions/api/care control-room/functions/_lib/care-db.js
+  control-room/tests/care-owner.test.mjs` + `git commit -m "Care: client page API" -m "$TRAILER"`.
 
 ### Task 14: Health lights for care
 
-**Files:** Modify `control-room/functions/_lib/care.js` (add `careLights`), `control-room/functions/_lib/health.js`
-(call it); Test `control-room/tests/care.test.mjs` (add tests).
+**Files:** Modify `control-room/functions/_lib/care.js` (add `careLights`), `control-room/functions/_lib/care-db.js`
+(add `careLightFacts` and register the lights); Test `control-room/tests/care.test.mjs` (add tests),
+`control-room/tests/care-db.test.mjs` (add a test). `health.js` is not edited.
 
 **Interfaces:**
-- Consumes: stage 0 `healthFromDb` light list shape `{name, ok, level?: "red"|"amber", detail}`.
-- Produces: `careLights({activeClients, scans, latestReviewOn, lastBeat, oldestDraftingAt}, now) → [{name, level:
-  "green"|"amber"|"red", detail}]` for `care_scans`, `care_reviews`, `routine:monthly-care`.
+- Consumes: stage 0's `registerLight(fn)` and (tests only) `healthFromDb(DB, env, now) → {lights, gaps}`; the light
+  shape `{name, level: "green"|"amber"|"red"|"grey", detail, fix}` (grey = not in use, never adds a todo).
+- Produces:
+  - `careLights({activeClients, scans, latestReviewOn, oldestDraftingAt}, now) → Light[]` (pure) for `care_scans`,
+    `care_reviews`, `care_drafts` (no light name is a prefix of another light's name);
+  - `careLightFacts(DB, now) → Promise<facts>` (one batch);
+  - at import of `care-db.js` (which `tick.js` imports): `registerLight(async (DB, env, now) =>
+    careLights(await careLightFacts(DB, now), now))`.
 
-- [ ] **Step 1: Write the failing test** — scheduled scan `running` created 2 h 1 min ago → `care_scans` red, detail
-  "A Google scan for <name> hasn't finished: open their page and press Retry."; review check 10 days old → red;
-  heartbeat 33 days ago with 1 active client → red; 0 active clients → all green; a task drafting 25 h → amber.
+- [ ] **Step 1: Write the failing test** — in `care.test.mjs`: scheduled scan `running` created 46 min ago, or
+  `failed` → `care_scans` red, detail "A Google scan for <name> hasn't finished.", fix "Open their page and press
+  Retry the day-N scan."; review check 10 days old → `care_reviews` red with fix "Check the care-reviews run in
+  GitHub → Actions; if it didn't start, fix the GitHub connection on Setup."; a task drafting 25 h → `care_drafts`
+  amber with fix "Open the client's page and press Ask Claude again. If nothing comes back, check the monthly-care
+  Routine on Setup → Claude."; 0 active clients → all three `grey`; every light has `name`, `level`, `detail`, `fix`.
+  In `care-db.test.mjs`: `(await healthFromDb(DB, env, now)).lights.find(l => l.name === "care_drafts").level` is
+  `"amber"` with a task drafting for 25 h.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/care.test.mjs` → `careLights` is not a function.
-- [ ] **Step 3: Implement `careLights` and add its lights in `health.js`** (one extra query in `healthFromDb`).
+- [ ] **Step 3: Implement `careLights`, `careLightFacts` and the `registerLight` call.**
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS.
-- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/care.js control-room/functions/_lib/health.js
-  control-room/tests/care.test.mjs` + `git commit -m "Care: health lights for scans, reviews and the Routine" -m "$TRAILER"`.
+- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/care.js control-room/functions/_lib/care-db.js
+  control-room/tests/care.test.mjs control-room/tests/care-db.test.mjs` + `git commit -m "Care: health lights for
+  scans, reviews and drafts" -m "$TRAILER"`.
 
-### Task 15: Client page and care settings page
+### Task 15: Client page, care settings page, and care figures on file 11's client cards
 
 **Files:** Create `control-room/public/js/clientview.js` (pure renderers, importable in node),
-`control-room/public/js/client.js` (DOM and buttons); Modify `control-room/public/js/app.js` (routes `client`),
-`control-room/public/style.css`.
+`control-room/public/js/client.js` (DOM and buttons); Modify `control-room/public/js/nav.js` (`routeFor` knows
+`client/<id>` and `client/settings`; no `NAV` item), `control-room/tests/nav.test.mjs`, `control-room/public/js/app.js`
+(page `client` → `clientRoute`), `control-room/public/style.css`, `control-room/functions/_lib/care.js` (add
+`careRankText`), file 11's `control-room/functions/_lib/board.js` (`clientCards`) and
+`control-room/functions/_lib/todo.js` (`loadBoard`), `control-room/tests/board.test.mjs`,
+`control-room/tests/todo-api.test.mjs`; Test `control-room/tests/care-ui.test.mjs`.
 
 **Interfaces:**
-- Consumes: `/api/care/*` (Task 13), `esc`, `safeUrl` from `public/js/html.js`, `api()`/`toast()` from `lib.js`.
-- Produces: `clientRoute(params)` in `client.js` (`#/client/<id>`, `#/client/settings`);
-  `renderClientsSection(clients) → string` and `renderClientPage(data) → string` in `clientview.js` (pure HTML; file
-  11's Todo board imports `renderClientsSection`).
+- Consumes: `/api/care/*` (Task 13), `esc`, `safeUrl` from `public/js/html.js`, `api()`/`toast()` from `lib.js`;
+  file 11's `NAV`/`routeFor` (`nav.js`), `clientCards(rows, now)`, `loadBoard(DB, now)`; `guaranteeLabel`,
+  `rankText` (Task 5).
+- Produces:
+  - `clientRoute(params)` in `client.js` (`#/client/<id>`, `#/client/settings`);
+  - `renderClientPage(data) → string` in `clientview.js` (pure HTML);
+  - `careRankText({centre_rank, top3_share}) → string` in `care.js` (pure), e.g. "#2 at their address, top 3 in 51%
+    of their area"; `centre_rank` null → "Outside the top 20 at their address, top 3 in 0% of their area";
+  - `loadBoard`'s client rows also carry `care_guarantee`, `care_gbp_access_on`, `care_status` (LEFT JOIN `care`)
+    and the latest scored `care_scans` row (`care_scan_id`, `care_centre_rank`, `care_top3_share`, `care_scanned_on`);
+  - `clientCards`: when a row has a `care` row, `guarantee = guaranteeLabel(care, ukDate(now))` and, when a scored
+    care scan exists, `rank = careRankText(scan)` and `rank_link = "#/maprank?scan=<care_scan_id>&biz=<place_id>"`;
+    otherwise file 11's existing values. No new section, no `/api/care/clients`.
 
-- [ ] **Step 1: Write the failing test** — `control-room/tests/care-ui.test.mjs` (imports `clientview.js`):
-  `renderClientsSection([])` contains "No clients yet. When someone pays and their site goes live, they'll show up
-  here."; a client named `<img src=x onerror=1>` renders escaped; the line contains "Day 34 of 90" and "#2 at their
-  address, top 3 in 51%"; `renderClientPage` with a review text `<script>alert(1)</script>` contains `&lt;script&gt;`
-  and a task in `drafting` for 25 h shows an "Ask Claude again" button.
-- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/care-ui.test.mjs` → cannot find module.
-- [ ] **Step 3: Implement `clientview.js` and `client.js`** — sections and buttons exactly as "What Nik sees"; every
-  scraped/inbound/Claude string through `esc()`, links through `safeUrl()`; route registration in `app.js`.
-- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/care-ui.test.mjs` and
+- [ ] **Step 1: Write the failing test** — `care-ui.test.mjs` (imports `clientview.js`): `renderClientPage` with a
+  client named `<img src=x onerror=1>` renders it escaped, a review text `<script>alert(1)</script>` contains
+  `&lt;script&gt;`, a task in `drafting` for 25 h shows an "Ask Claude again" button, and the header links
+  `#/site/<client_id>`. In `care.test.mjs`: `careRankText({centre_rank: 2, top3_share: 51})` → "#2 at their address,
+  top 3 in 51% of their area". In `board.test.mjs`: a row like file 11's c2 plus `care_guarantee: "running",
+  care_gbp_access_on: "2026-09-18"`, `care_centre_rank: 2`, `care_top3_share: 51`, `care_scan_id: "cs1"` → card
+  `guarantee` "Day 34 of 90" (NOW 2026-10-22), `rank` "#2 at their address, top 3 in 51% of their area", `rank_link`
+  `"#/maprank?scan=cs1&biz=lp2"`; file 11's existing card tests stay green. In `todo-api.test.mjs`: after adding a
+  `care` row (`guarantee 'not_started'`) for a seeded live client, `loadBoard` gives its card the guarantee "Clock not
+  started: waiting for Google profile access". In `nav.test.mjs`:
+  `routeFor("#/client/c1")` → `{page: "client", id: "c1"}`, `routeFor("#/client/settings").id === "settings"`, and
+  `NAV` has no client item.
+- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/care-ui.test.mjs
+  control-room/tests/board.test.mjs control-room/tests/nav.test.mjs` → cannot find module / assertion fails.
+- [ ] **Step 3: Implement `clientview.js`, `client.js`, `careRankText`, the `loadBoard`/`clientCards` change and the
+  routes** — sections and buttons exactly as "What Nik sees"; every scraped/inbound/Claude string through `esc()`,
+  links through `safeUrl()`; routes added to `nav.js` `routeFor` (not to `NAV`).
+- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` and
   `for f in control-room/public/js/*.js; do node --check "$f"; done` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/public/js/clientview.js control-room/public/js/client.js
-  control-room/public/js/app.js control-room/public/style.css control-room/tests/care-ui.test.mjs` +
-  `git commit -m "Care: client page and Clients section" -m "$TRAILER"`.
+  control-room/public/js/nav.js control-room/public/js/app.js control-room/public/style.css
+  control-room/functions/_lib/care.js control-room/functions/_lib/board.js control-room/functions/_lib/todo.js
+  control-room/tests/care-ui.test.mjs control-room/tests/care.test.mjs control-room/tests/board.test.mjs
+  control-room/tests/nav.test.mjs control-room/tests/todo-api.test.mjs` + `git commit -m "Care: client page, and care
+  figures on the Todo board's client cards" -m "$TRAILER"`.
 
 ### Task 16: The monthly-care Routine prompt
 

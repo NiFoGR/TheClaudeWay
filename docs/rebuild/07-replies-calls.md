@@ -784,37 +784,43 @@ moved it). Then `stopFollowups(DB, place_id, "replied", now)` and `last_inbound_
   assert.equal((await one(DB, "SELECT needs_reply FROM messages WHERE id='m1'")).needs_reply, 1);
   // a paying client
   await setStage("p1", "won"); assert.equal(await onHumanInbound(DB, m2, NOW), "client");
-  assert.equal((await one(DB, "SELECT needs_reply FROM messages WHERE id='m2'")).needs_reply, 0);
+  assert.equal((await one(DB, "SELECT needs_reply, client_id FROM messages WHERE id='m2'")).needs_reply, 0);
+  assert.equal((await one(DB, "SELECT client_id FROM messages WHERE id='m2'")).client_id, "c1");
   assert.equal((await one(DB, "SELECT title FROM todos WHERE dedupe='client-mail:m2'")).title, "Your client Green Leaf Landscapes emailed: read and reply yourself");
   // opted out
   await setStage("p1", "lost", "opt_out"); assert.equal(await onHumanInbound(DB, m3, NOW), "opted_out");
   assert.equal((await one(DB, "SELECT title FROM todos WHERE dedupe='optout-mail:m3'")).title, "Green Leaf Landscapes wrote back after opting out: read and reply yourself");
-  // said not now earlier: still answered
+  // said not now earlier: answered, and back to replied (reopen)
   await setStage("p1", "lost", "not_now"); assert.equal(await onHumanInbound(DB, m4, NOW), "replied");
-  assert.equal((await one(DB, "SELECT stage FROM prospects")).stage, "lost");
+  assert.equal((await one(DB, "SELECT stage FROM prospects")).stage, "replied");
+  // sequence ended with no reply, then they write: reopen too
+  await setStage("p1", "lost", "sequence_done"); assert.equal(await onHumanInbound(DB, m6, NOW), "replied");
+  assert.equal((await one(DB, "SELECT stage FROM prospects")).stage, "replied");
   // no prospect
   assert.equal(await onHumanInbound(DB, { ...m5, place_id: null }, NOW), "unmatched");
   assert.equal((await one(DB, "SELECT needs_reply FROM messages WHERE id='m5'")).needs_reply, 0);
-  // applyStageEvent sets lost_reason
-  assert.equal(await applyStageEvent(DB, "p1", "said_no", NOW, { lost_reason: "not_interested" }), "lost");
+  // stage 0's applyStageEvent sets lost_reason
+  assert.equal((await applyStageEvent(DB, "p1", "said_no", NOW, { lost_reason: "not_interested" })).to, "lost");
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/replies-db.test.mjs` → FAIL: cannot find module.
-- [ ] **Step 3: Implement `applyStageEvent` and `onHumanInbound` in `_lib/replies-db.js`**; in `tick.js`'s `inbound` step call `onHumanInbound(DB, msg, now)` for each newly stored message with `class = 'human'`. `applyStageEvent` updates `stage`, `stage_at`, `updated_at`, sets `lost_reason` and clears `next_followup_at` when the new stage is `lost`.
-- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS (stage 0's inbound tests still pass).
-- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/replies-db.js control-room/functions/_lib/tick.js control-room/tests/replies-db.test.mjs && git commit -m "Replies: human inbound moves the prospect and stops follow-ups" -m "$TRAILERS"`
+- [ ] **Step 3: Implement `onHumanInbound` in `_lib/replies-db.js`** (importing `applyStageEvent` from `./prospects.js` and `stopFollowups` from stage 5–6; no stage or follow-up writes of its own); in `_lib/mail/inbound-db.js`, `processInbound`'s human branch calls `onHumanInbound(DB, msg, now)` for each newly stored message with `class = 'human'` (stage 0 already routes a paying client's "no thanks" there as human).
+- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS (stage 0's `inbound-db` tests still pass).
+- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/replies-db.js control-room/functions/_lib/mail/inbound-db.js control-room/tests/replies-db.test.mjs && git commit -m "Replies: human inbound moves the prospect and stops follow-ups" -m "$TRAILERS"`
 
 ### Task 7: Tick step `reply_fire` and the Replies light
 
-**Files:** Modify `control-room/functions/_lib/replies-db.js`, `control-room/functions/_lib/tick.js`,
-`control-room/functions/_lib/health.js`. Test `control-room/tests/reply-fire.test.mjs`.
+**Files:** Modify `control-room/functions/_lib/replies-db.js`, `control-room/functions/_lib/tick.js`. Test
+`control-room/tests/reply-fire.test.mjs`. (`health.js` is not edited: the light is registered.)
 
 **Interfaces:** Consumes `shouldFireReply`, `replyLight`, `fireRoutine(DB, name, text, {fetchImpl})`,
-`getSetting(DB, "replies:paused")`. Produces:
+`getSetting(DB, "replies:paused")`, `registerLight(fn)` and `healthFromDb(DB, env, now) → {lights, gaps}` (stage 0's
+`health.js`). Produces:
 ```js
 waitingStats(DB) → Promise<{waiting: number, oldestAt: Date|null, newestAt: Date|null}>
 runReplyFire(ctx: {DB, env, now, fetchImpl?}) → Promise<string>   // "fired (2 waiting)" | "skipped: <why>"
-STEPS entry {name: "reply_fire", everyMinutes: 0, run: runReplyFire} at position 2
-health.js light from replyLight({...await waitingStats(DB), now, paused})
+STEPS entry {name: "reply_fire", everyMinutes: 0, run: runReplyFire} at the position-2 marker (overview §8)
+registerLight(async (DB, env, now) => replyLight({...await waitingStats(DB), now,
+  paused: (await getSetting(DB, "replies:paused")) === "1"}))                                  // at module load
 ```
 
 - [ ] **Step 1: Write the failing test** — stub `fetchImpl` returning 200 and counting calls; seed one waiting message received `2026-10-20T08:00:00Z`.
@@ -831,19 +837,21 @@ health.js light from replyLight({...await waitingStats(DB), now, paused})
   // a third waiting row with place_id NULL is seeded: it never counts
   assert.equal((await waitingStats(DB)).waiting, 2);
   // health light
-  const lights = await healthFromDb(DB, D("2026-10-20T08:21:00Z"));
-  assert.equal(lights.find((l) => l.key === "replies").color, "grey");   // paused
+  const light = (await healthFromDb(DB, env, D("2026-10-20T08:21:00Z"))).lights.find((l) => l.name === "replies");
+  assert.equal(light.level, "grey");   // paused
+  assert.deepEqual(Object.keys(light).sort(), ["detail", "fix", "level", "name"]);
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/reply-fire.test.mjs` → FAIL: `runReplyFire` is not exported.
-- [ ] **Step 3: Implement `waitingStats`, `runReplyFire`** (last fire = newest `routine_fires` row with `routine = 'reply'`); insert the STEPS entry at position 2; add the light to `healthFromDb`.
+- [ ] **Step 3: Implement `waitingStats`, `runReplyFire`** (last fire = newest `routine_fires` row with `routine = 'reply'`); insert the STEPS entry at the `reply_fire` marker (position 2); call `registerLight` in `replies-db.js` (imported by `tick.js`, so the light exists wherever health is computed).
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS.
-- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/replies-db.js control-room/functions/_lib/tick.js control-room/functions/_lib/health.js control-room/tests/reply-fire.test.mjs && git commit -m "Replies: wake the reply Routine, Replies health light" -m "$TRAILERS"`
+- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/replies-db.js control-room/functions/_lib/tick.js control-room/tests/reply-fire.test.mjs && git commit -m "Replies: wake the reply Routine, Replies health light" -m "$TRAILERS"`
 
 ### Task 8: Calls in the database
 
 **Files:** Create `control-room/functions/_lib/calls-db.js`. Test `control-room/tests/calls-db.test.mjs`.
 
-**Interfaces:** Consumes Task 3, `applyStageEvent`, `addTodo`, `closeTodos`, `queueMessage`, `buildReply`. Produces:
+**Interfaces:** Consumes Task 3, `applyStageEvent` (stage 0's `_lib/prospects.js`), `addTodo`, `closeTodos`,
+`queueMessage`, `buildReply`, `getSetting(DB, "business:sender_name")`. Produces:
 ```js
 callsFor(DB, place_id) → Promise<Row[]>                         // newest first
 liveCalls(DB, now) → Promise<Row[]>                             // offered (not expired) + confirmed, future
@@ -853,9 +861,10 @@ updateCall(DB, id, action: "cancel"|"done"|"no_show"|"ordering"|"lost", {note = 
 ```
 `confirmCall` writes `call` Todo (`call:<id>`, due the slot, link `/#/call/<id>`, title `callTodoTitle`) and fires
 `call_confirmed`. Nik's (`byNik`) calls skip `isSlot` and return `warning: "You already have a call that day."` instead
-of refusing a taken day. `updateCall`: `cancel` → `cancelled` + `call_cancelled`; `no_show` → `call_cancelled`;
-`lost` → `done` + `said_no` (`lost_reason 'call'`); `ordering` → `done` + queues `message` as a Nik reply in the thread;
-every action closes `call:<id>` and `call-outcome:<id>` and stores `note`.
+of refusing a taken day. `updateCall`: `cancel` → `cancelled` + `call_cancelled`; `no_show` → `no_show` +
+`call_cancelled`; `lost` → `done` + `said_no` (`lost_reason 'call'`); `ordering` → `done` + queues `message` as a Nik
+reply in the thread (signature from `business:sender_name`); every action closes `call:<id>` and `call-outcome:<id>`
+and stores `note`. Every stage change is stage 0's `applyStageEvent` (`_lib/prospects.js`).
 
 - [ ] **Step 1: Write the failing test**
   ```js
@@ -877,7 +886,7 @@ every action closes `call:<id>` and `call-outcome:<id>` and stores `note`.
   assert.equal((await one(DB, "SELECT stage FROM prospects WHERE place_id='a'")).stage, "replied");
   assert.equal((await one(DB, `SELECT status FROM todos WHERE dedupe='call:${c.call.id}'`)).status, "done");
   const c2 = await confirmCall(DB, { place_id: "a", slot_at: D("2026-10-25T11:00:00Z"), phone: "07700 900123", now: NOW }); // Sun, GMT
-  await updateCall(DB, c2.call.id, "ordering", { note: "wants it", message: "Great speaking to you. Here's the link to get started:\n\nhttps://control.aetoswebsites.com/d/green-leaf-ab12/order", now: D("2026-10-25T11:40:00Z") });
+  await updateCall(DB, c2.call.id, "ordering", { note: "wants it", message: "Great speaking to you. Here's the link to get started:\n\nhttps://aetoswebsites.com/d/green-leaf-ab12/order", now: D("2026-10-25T11:40:00Z") });
   const m = await one(DB, "SELECT * FROM messages WHERE author='nik' AND kind='reply'");
   assert.match(m.body, /\/d\/green-leaf-ab12\/order/);
   assert.equal((await one(DB, `SELECT note FROM calls WHERE id='${c2.call.id}'`)).note, "wants it");
@@ -893,19 +902,22 @@ every action closes `call:<id>` and `call-outcome:<id>` and stores `note`.
 `control-room/tests/agent-inbox.test.mjs`.
 
 **Interfaces:** Consumes `requireAgent(request, env, DB)`, `offerFacts`, `sendTime`, `stripQuoted`, `nextFreeSlots`,
-`takenFrom`, `slotLabel`, `callTimeDue`, `getSetting(DB, "app_url")`, `demos` (slug by `place_id`). Produces
-`buildInbox(DB, now: Date, {limit = 10} = {}) → Promise<Inbox>` with exactly the Part A fields, and
+`takenFrom`, `slotLabel`, `callTimeDue`, `getSetting` (`offer:chatbot_live`, `offer:review_booster_live`),
+`demoLink(slug)` and `DEMO_BASE` (stage 4's `_lib/demo-db.js`), `demos` (slug by `place_id`). Produces
+`buildInbox(DB, now: Date, {limit = 10} = {}) → Promise<Inbox>` with exactly the Part A fields (`offer =
+offerFacts(send_at, {chatbot, reviews})` with each flag `getSetting(…) === "1"`), and
 `seedVoice(DB, now) → Promise<void>` (the two seeds, once, setting `voice:seeded`).
-Links: `demo = <app_url>/d/<slug>`, `order = <app_url>/d/<slug>/order`; `drill:`/`test:` leads use fixtures from Task 17
-and `https://aetoswebsites.com` when they have no demo.
+Links: `demo = demoLink(slug)`, `order = ${DEMO_BASE}/d/<slug>/order` (no `app_url` setting); `drill:`/`test:` leads
+use fixtures from Task 17 and `https://aetoswebsites.com` when they have no demo.
 
-- [ ] **Step 1: Write the failing test** — seed (now = Wed 21 Oct 2026 09:30 UK = `2026-10-21T08:30:00Z`) prospect `p1` with Nik's first email, a follow-up, two waiting inbound (`m1` at 08:05Z, `m2` at 08:07Z, `m2` text `"How much?\n\nOn Tue, Nik wrote:\n> Hi"`), research grade A, demo slug `green-leaf-ab12`, `app_url` `https://control.aetoswebsites.com`; prospect `p2` stage `won` with a handled message.
+- [ ] **Step 1: Write the failing test** — seed (now = Wed 21 Oct 2026 09:30 UK = `2026-10-21T08:30:00Z`) prospect `p1` with Nik's first email, a follow-up, two waiting inbound (`m1` at 08:05Z, `m2` at 08:07Z, `m2` text `"How much?\n\nOn Tue, Nik wrote:\n> Hi"`), research grade A, demo slug `green-leaf-ab12`; prospect `p2` stage `won` with a handled message.
   ```js
   const res = await onRequestGet({ request: req("/api/agent/inbox", TOKEN), env });
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.paused, false); assert.equal(body.inside_hours, true);
   assert.equal(body.offer.full.build, 1950);
+  assert.ok(!body.offer.included.includes("A chat assistant on your website."));   // offer:chatbot_live not set
   assert.equal(body.voice.examples.length, 2);
   assert.equal(body.voice.sent[0].body.startsWith("Hi Sam"), true);
   assert.equal(body.conversations.length, 1);
@@ -913,7 +925,7 @@ and `https://aetoswebsites.com` when they have no demo.
   assert.equal(c.reply_to, "m2"); assert.deepEqual(c.waiting, ["m1", "m2"]);
   assert.deepEqual(c.thread.map((m) => m.who), ["nik", "system", "them", "them"]);
   assert.equal(c.thread.at(-1).text, "How much?");
-  assert.deepEqual(c.links, { demo: "https://control.aetoswebsites.com/d/green-leaf-ab12", order: "https://control.aetoswebsites.com/d/green-leaf-ab12/order", landing: "https://aetoswebsites.com" });
+  assert.deepEqual(c.links, { demo: "https://aetoswebsites.com/d/green-leaf-ab12", order: "https://aetoswebsites.com/d/green-leaf-ab12/order", landing: "https://aetoswebsites.com" });
   assert.equal(c.calls.free_slots.length, 3);
   assert.deepEqual(c.calls.free_slots[0], { slot_at: "2026-10-23T10:00:00Z", label: "Friday 23 October at 11am" });
   assert.equal(c.calls.call_time_promise, "by the end of the day");
@@ -929,8 +941,10 @@ and `https://aetoswebsites.com` when they have no demo.
 **Files:** Modify `control-room/functions/_lib/replies-db.js`. Create `control-room/functions/api/agent/reply.js`. Test
 `control-room/tests/agent-reply.test.mjs`.
 
-**Interfaces:** Consumes Tasks 3–9, `queueMessage`, `dispatchDue(DB, env, now, {limit: 1, kinds: ["reply"]})`,
-`addTodo`. Produces
+**Interfaces:** Consumes Tasks 3–9, `REPLY_HOSTS`, `queueMessage`, stage 0's
+`dispatchDue(DB, env, now, {limit: 1, kinds: ["reply"]}) → {sent, failed, held}`, `applyStageEvent`
+(`_lib/prospects.js`), `suppress`, `addTodo`, `getSetting(DB, "business:sender_name")` (signature and guard
+`signName`). Produces
 `recordReply(DB, {message_id, intent, body, call, asked_time, now}) → Promise<{status: 200|404|409|422, body: object}>`
 and the route (`context.waitUntil(dispatchDue(...))` when the reply's `due_at` ≤ now). Order of checks: auth 401 →
 unknown message 404 → already handled 409 `Already answered.` → newer waiting message 409 `A newer message is waiting
@@ -943,7 +957,7 @@ messages up to `message_id` handled with `intent`, apply `intentEffects`, then c
 
 - [ ] **Step 1: Write the failing test** — seed as Task 9; `NOW = D("2026-10-21T08:30:00Z")` (Wed 09:30 UK).
   ```js
-  const ok = await recordReply(DB, { message_id: "m2", intent: "price", body: "Hi Sam,\n\nIt's £1,950 for the website, then £249 a month, with the first 60 days free.\n\nhttps://control.aetoswebsites.com/d/green-leaf-ab12/order", now: NOW });
+  const ok = await recordReply(DB, { message_id: "m2", intent: "price", body: "Hi Sam,\n\nIt's £1,950 for the website, then £249 a month, with the first 60 days free.\n\nhttps://aetoswebsites.com/d/green-leaf-ab12/order", now: NOW });
   assert.equal(ok.status, 200);
   const r = await one(DB, "SELECT * FROM messages WHERE kind='reply'");
   assert.equal(r.author, "claude"); assert.equal(r.in_reply_to, "<m2@them.co.uk>"); assert.match(r.body, /\n\nNik\nAetos Websites$/);
@@ -993,12 +1007,14 @@ messages up to `message_id` handled with `intent`, apply `intentEffects`, then c
 `control-room/tests/escalate.test.mjs`.
 
 **Interfaces:** Consumes `escalationTitle`, `buildReply`, `queueMessage`, `dispatchDue`, `addTodo`, `closeTodos`,
-`applyStageEvent`. Produces:
+`applyStageEvent` (`_lib/prospects.js`). Produces:
 ```js
 escalateMessage(DB, {message_id, intent, reason, draft, now}) → Promise<{status, body}>   // 404/409/422/200
 sendAsNik(DB, {message_id, body, now}) → Promise<{status, body}>                           // any inbound message
 dismissTodo(DB, {todo_id, now}) → Promise<{status, body}>
 ```
+`sendAsNik` is also what file 11's `POST /api/todo/:id/send` calls (message id taken from the Todo's
+`escalation:<id>` / `call_time:<id>` dedupe).
 Routes: `POST /api/agent/escalate` (agent token), `POST /api/replies/send` `{message_id, body}` and
 `POST /api/replies/dismiss` `{todo_id}` (Nik's login). `sendAsNik` and `dismissTodo` close `escalation:<message_id>` and
 `call_time:<message_id>` and fire `nik_handled` when the place has no other open `escalation`/`call_time` Todo.
@@ -1037,7 +1053,7 @@ Add one on Setup → Mailboxes, then try again.`
 
 **Interfaces:** Consumes `offerExpired`, `ukParts`, `ukDate`, `addTodo`, `closeTodos`, `callTodoTitle`. Produces
 `runCallsStep(ctx: {DB, now}) → Promise<string>` (`"released 1, today 1, outcome 0"`) and STEPS entry
-`{name: "calls", everyMinutes: 5, run: runCallsStep}` at position 8.
+`{name: "calls", everyMinutes: 5, run: runCallsStep}` at the `calls` marker (position 9, overview §8).
 
 - [ ] **Step 1: Write the failing test**
   ```js
@@ -1062,11 +1078,14 @@ Add one on Setup → Mailboxes, then try again.`
 **Files:** Create `control-room/functions/api/calls.js`, `control-room/functions/api/calls/[id].js`. Test
 `control-room/tests/calls-api.test.mjs`.
 
-**Interfaces:** Consumes Task 8, `nextFreeSlots`, `takenFrom`, `slotLabel`, `offerFacts`, `sendAsNik`. Produces:
+**Interfaces:** Consumes Task 8, `nextFreeSlots`, `takenFrom`, `slotLabel`, `offerFor`, `GUARANTEE` (stage 0's
+`offer.js`), `demoLink`, `DEMO_BASE`, `sendAsNik`. Produces:
 - `GET /api/calls?place_id=` → `{calls: [...], free_slots: [{slot_at, label}]}`
 - `POST /api/calls` `{place_id, at, phone?, message?, message_id?}` → `confirmCall(byNik: true)`; with `message` +
   `message_id`, `sendAsNik` and close `call_time:<message_id>`. Past `at` → 422 `Pick a time in the future.`
-- `GET /api/calls/:id` → `{call, label, lead, research, links, offer: offerFacts(slot_at), thread_link, after_slot}`
+- `GET /api/calls/:id` → `{call, label, lead, research, links, offer: {...offerFor(slot_at), guarantee: GUARANTEE},
+  thread_link, after_slot}` — `offer` is stage 3's `callScript` contract (pence, the same object `GET /api/leads/:id`
+  sends); `lead` is in the shape `callScript` takes (`owner_first`, `demo_url`, …); `links` use `demoLink`.
 - `POST /api/calls/:id` `{action, note?, message?}` → `updateCall`. Unknown action → 422 `Unknown action.`
 
 - [ ] **Step 1: Write the failing test**
@@ -1080,7 +1099,8 @@ Add one on Setup → Mailboxes, then try again.`
   assert.equal((await calls.onRequestPost(ctx("/api/calls", { place_id: "a", at: "2026-10-01T10:00:00Z" }))).status, 422);
   const id = (await b.json()).call.id;
   const page = await (await callId.onRequestGet(ctx(`/api/calls/${id}`, null, { id }))).json();
-  assert.equal(page.label, "Thursday 22 October at 3pm"); assert.equal(page.offer.full.build, 1950);
+  assert.equal(page.label, "Thursday 22 October at 3pm"); assert.equal(page.offer.full.build, 195000);
+  assert.equal(page.offer.guarantee.headline, "Top 3 in Google search results in 90 days. GUARANTEED.");
   assert.equal((await callId.onRequestPost(ctx(`/api/calls/${id}`, { action: "explode" }, { id }))).status, 422);
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/calls-api.test.mjs` → FAIL: cannot find `api/calls.js`.
