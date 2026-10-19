@@ -760,8 +760,8 @@ test("bounded work: 40 due leads, ≤ 18 D1 round trips, 3 queued", async () => 
   assert.equal((await DB.prepare("SELECT COUNT(*) n FROM messages WHERE kind='followup'").first()).n, 3);
 });
 ```
-(`demoReady` is injected for tests: `followupsStep(ctx, {demoReady})` defaulting to stage 4's import; batch the demo
-lookups for the 5 leads into one query if stage 4 offers a bulk form, else 5 calls fit the budget.)
+(`demoReady` is injected for tests: `followupsStep(ctx, {demoReady})` defaulting to stage 4's import; one `demoReady`
+call per lead queued, at most 3 per run, inside the 18-round-trip budget.)
 - [ ] **Step 2: Run it to verify it fails** — → `followupsStep is not a function`.
 - [ ] **Step 3: Implement `retryFailed`, `closeFinished`, `queueDue`, `followupsStep`; add the STEPS entry in `tick.js`.**
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/followups-db.test.mjs control-room/tests/tick.test.mjs` → PASS.
