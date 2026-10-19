@@ -96,3 +96,71 @@ code.claude.com/docs/en/cloud-environments.
     point `www` at the site.
 - Workers' custom domains also need the zone to be in our account.
 - Cloudflare for SaaS includes 100 custom hostnames, but it's overkill for us.
+
+## Deliverability and UK law
+
+**Warm-up (manual ramp, no paid tool needed at this volume)**
+- Spamhaus lists any domain registered in the last 24 hours, so never send from or link to one that new.
+- **Weeks 0–2:** domain, website and DNS live; send 2–5 genuine emails a day.
+- **Ramp per mailbox:**
+  - Week 3: 3 cold emails a day.
+  - Week 4: 5 a day.
+  - Week 5: 8 a day.
+  - Week 6 on: 10 a day. The most a mailbox should ever send is about 20–30 a day.
+
+**Before the first send**
+- SPF and DKIM (2048-bit). DMARC `p=none` with a `rua=` reporting address.
+- mail-tester score of 9/10 or more (3 free tests a day).
+- Check Spamhaus DBL and MXToolbox. Google Postmaster shows nothing below about 100 emails a day to Gmail.
+
+**Email content**
+- Plain text, one link on our own domain, no images, no link shorteners, no click redirects.
+- **No tracking pixels:** the ICO's April 2026 guidance puts email pixels under PECR regulation 6, so they need
+  consent.
+- Counting views on the demo page itself is first-party analytics. Tell visitors on the page.
+
+**Timing and follow-ups**
+- Mid-week mornings, 7–11am, do best. Fridays and weekends are weakest. A guess for tradespeople: 7am or 6–7pm.
+- **Threading:** the follow-up's `In-Reply-To` and `References` headers carry the original Message-ID, and the
+  subject is "Re: " plus the original subject.
+- One independent study of 1,857 cold-email replies:
+
+  | Email | Share of replies |
+  | --- | --- |
+  | First email | 61.7% |
+  | Follow-up 1 | 20.9% |
+  | Follow-up 2 | 12.5% |
+  | Follow-up 3 or later | 4.9% |
+
+**When to pause a mailbox**
+- Gmail and Yahoo: spam complaint rate under 0.3% (aim for under 0.1%). DMARC and one-click unsubscribe are only
+  required above 5,000 emails a day.
+- No mailbox provider publishes a bounce limit. At 10 a day, use absolute triggers: pause on 2 hard bounces in
+  7 days, any complaint, or any blocklist hit.
+
+**UK law: PECR**
+- **Regulation 22:** sole traders and some partnerships count as individuals, and emailing them needs prior
+  consent. Limited companies, LLPs and Scottish partnerships can be emailed. Nik accepts the risk on sole traders.
+- **Regulation 23 (every marketing email):** the sender can't be disguised, and there must be a valid address for
+  opting out.
+- **E-Commerce Regulations 2002, regs 7–8:** the email must be identifiable as commercial, along with who it's
+  from.
+- **Fines:** the Data (Use and Access) Act, in force from 5 Feb 2026, raised the PECR maximum to £17.5m or 4% of
+  turnover.
+
+**UK law: other**
+- **Business names:** a sole trader trading under a name other than their own surname must show their own name
+  and an address for service on business letters, invoices and the website. A home address isn't required; a
+  service address works.
+- **ICO fee:** tier 1 is £52 (£47 by direct debit). The exemption almost certainly doesn't apply, because we
+  process third parties' data.
+- **UK GDPR Article 14:** privacy information must be given at the first contact at the latest. Public data gets
+  no exemption. Publish a privacy notice.
+
+**Namecheap Private Email**
+- Plans from 2 June 2026 are Launch, Expand and Scale. Launch is $14.88 a year; extra mailboxes are $8.88 a year.
+- 500 emails an hour per mailbox; the trial allows 20 an hour, so don't cold-email during the trial.
+- Forwarding and filters are on all plans. Mail it files as spam isn't forwarded.
+- DKIM selector: `privateemail._domainkey`. Add it by hand in Cloudflare DNS.
+- Namecheap's hosting help says it is "zero tolerant" on spam; whether that covers one-to-one cold email is
+  unverified.
