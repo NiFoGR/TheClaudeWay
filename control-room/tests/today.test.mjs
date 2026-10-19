@@ -24,8 +24,8 @@ test("a stalled Claude is flagged near the top", () => {
 });
 
 test("setup ticks itself where it can, the rest by hand", () => {
-  const t = steps({ ...base, liveFirstEmails: 2, stripeLive: true }, { mailboxes: true }, NOW);
+  const t = steps({ ...base, liveFirstEmails: 2, stripeLive: true, lastResearchAt: "2026-10-14T08:00:00Z" }, { mailboxes: true }, NOW);
   const done = Object.fromEntries(t.setup.map((s) => [s.key, s.done]));
-  assert.deepEqual(done, { routine: false, autopilot: true, emails: true, domain: false, mailboxes: true, stripe: true, funnel: false });
-  assert.equal(t.setupLeft, 3);
+  assert.deepEqual(done, { routine: true, autopilot: true, emails: true, domain: false, mailboxes: true, stripe: true, funnel: false });
+  assert.equal(t.setupLeft, 2);
 });

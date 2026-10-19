@@ -37,8 +37,8 @@ const ROADMAP = [
     ["built", "Write it your way", "Your own wording for any email; Claude turns it into a proper version."],
     ["built", "Claude's questions for you", "Claude asks how you'd handle things; your answers become rules for every email and reply."],
     ["you", "Mailboxes", "Buy the mailboxes on aetoswebsites.com (Namecheap Private Email), then about 2 weeks of warm-up. Sending will go through them from Cloudflare (free)."],
-    ["later", "Sending", "Gmail API + a scheduled worker, spread across the 3 mailboxes, daily limits, follow-ups on day 3, 7 and 14."],
-    ["later", "Replies answered by Claude", "Free rules handle bounces, out-of-office and opt-outs. Real replies fire a Routine: Haiku for simple ones (send the link, basic questions), Sonnet for judgement. Haggling, anger, legal: drafted for you and flagged in the SITREP. Unsure → Claude offers a call."],
+    ["next", "Sending", "Through your mailboxes from Cloudflare (free), checked every few minutes: warm-up from 5 to 14 a day per inbox, sending hours only, follow-ups on day 3, 7 and 14."],
+    ["next", "Replies answered by Claude", "Free rules handle bounces, out-of-office and opt-outs. Real replies fire a Routine: Haiku for simple ones (send the link, basic questions), Sonnet for judgement. Haggling, anger, legal: drafted for you and flagged in the SITREP. Unsure → Claude offers a call."],
     ["later", "Automatic chasing of hot leads", "3+ demo views or the order page opened but not paid → Claude emails them (no phone pings: hot leads are listed in the SITREP)."],
     ["later", "Weekly outreach review Routine", "Claude's weekly look at the test, on your subscription; switched on once emails are going out."],
   ]],
@@ -49,8 +49,8 @@ const ROADMAP = [
     ["later", "Founding-client deal", "What the first 3–5 clients get for a testimonial and case study."],
   ]],
   ["Delivery", [
-    ["later", "Onboarding form + reminders", "Logo, photos, services, areas, style, Google profile access, web address; 24h/48h reminders. The 7-day clock starts when it's complete."],
-    ["later", "Demo → final site", "Claude applies their content and changes; you review; one change round; live by day 7."],
+    ["next", "Onboarding form + reminders", "Logo, photos, services, areas, style, Google profile access, web address; 24h/48h reminders. The 7-day clock starts when it's complete."],
+    ["next", "Demo → final site", "Claude applies their content and changes; you review; one change round; live by day 7."],
     ["later", "Domain, hosting, chatbot", "Their .co.uk in their name, security certificate, AI receptionist switched on."],
     ["later", "Review poster + 6-month Google post calendar", "QR poster PDF with their logo; a year's posting plan they never think about."],
   ]],
@@ -68,10 +68,13 @@ const ROADMAP = [
   ]],
 ];
 
+const PLAN = "https://github.com/NiFoGR/TheClaudeWay/blob/claude/confident-hawking-vi0lgk/docs/plan.md";
+
 export function roadmapPage() {
   const count = (st) => ROADMAP.flatMap(([, items]) => items).filter(([s]) => s === st).length;
   view.innerHTML = `
-    ${pageHead("Roadmap", `Everything the Control Room will do, and where each part is. ${count("built")} built, ${count("next")} next, ${count("later")} later, ${count("you")} waiting on you.`)}
+    ${pageHead("Roadmap", `Everything the Control Room will do, and where each part is. ${count("built")} built, ${count("next")} next, ${count("later")} later, ${count("you")} waiting on you.`,
+      `<a class="btn secondary" href="${PLAN}" target="_blank" rel="noopener">The money plan</a>`)}
     ${ROADMAP.map(([group, items]) => `
       <div class="section-title"><h2>${esc(group)}</h2></div>
       <div class="card"><div class="cost-rows">${items.map(([st, name, what]) => {

@@ -33,13 +33,13 @@ export function steps(n, manual = {}, now = Date.now()) {
   ];
   if (claudeStale) {
     daily.splice(1, 0, { key: "claude", title: "Claude hasn't researched leads lately",
-      why: `${plural(n.waitingClaude, "lead")} waiting. Check the GitHub secrets CLAUDE_ROUTINE_URL / CLAUDE_ROUTINE_TOKEN (Setup page explains).`,
-      href: "#/setup", cta: "Fix", status: "warn" });
+      why: `${plural(n.waitingClaude, "lead")} waiting. Check the Routine "Aetos lead research (daily)" still exists at claude.ai/code/routines; if not, tell Claude to recreate it.`,
+      href: "https://claude.ai/code/routines", external: true, cta: "Check", status: "warn" });
   }
   const setup = [
-    { key: "routine", title: "Let Claude start by itself after each search",
-      how: "claude.ai/code/routines → Aetos lead research → Edit → Add trigger → API → Generate token. Put the URL and token in GitHub → Settings → Secrets → Actions as CLAUDE_ROUTINE_URL and CLAUDE_ROUTINE_TOKEN.",
-      done: !!manual.routine || (!!n.lastResearchAt && now - Date.parse(n.lastResearchAt) < 2 * DAY && !claudeStale) },
+    { key: "routine", title: "Claude researching leads daily",
+      how: "Runs by itself every afternoon (Routine \"Aetos lead research (daily)\" at claude.ai/code/routines). If this stays unticked, tell Claude: it recreates it.",
+      done: !!n.lastResearchAt && now - Date.parse(n.lastResearchAt) < 2 * DAY, auto: true },
     { key: "autopilot", title: "Autopilot on", how: "Lead Scraper page → Autopilot → Edit.", done: !!n.autopilotOn, auto: true, href: "#/scraper" },
     { key: "emails", title: "Approve the starting emails", how: "Outreach page: approve two first-email versions and the follow-ups.",
       done: n.liveFirstEmails >= 2, auto: true, href: "#/outreach" },

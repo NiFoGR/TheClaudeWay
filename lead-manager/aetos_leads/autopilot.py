@@ -21,6 +21,9 @@ DEFAULT_TERRITORY = {
     "max": 60,
 }
 RECENT_DAYS = 30
+# Don't search more than we can email: with ~12 new leads a day, 100 ready leads is 2 weeks of sending.
+# Searching beyond that only burns Google allowance on leads that go stale before anyone emails them.
+READY_CAP = 100
 
 
 def _rows(data: dict) -> list[dict]:
@@ -59,7 +62,7 @@ def choose_town(t: dict, recent: set[str]) -> tuple[str, int] | None:
 def next_run(d1) -> dict | None:
     """Record today's run (a jobs row, so it shows on the Lead Scraper page) and return it, or None to skip today."""
     t = territory(d1)
-    if not t.get("on"):
+    if not t.get("on") or ready_count(d1) >= READY_CAP:
         return None
     since = _iso(_now() - timedelta(days=RECENT_DAYS))
     recent = {str(r["town"]).strip().lower() for r in _rows(d1.query(
@@ -78,6 +81,10 @@ def next_run(d1) -> dict | None:
 
 # ---------------------------------------------------------------- SITREP
 
+def ready_count(d1) -> int:
+    return _one(d1, PICK_SQL) or 0
+
+
 PICK_SQL = """SELECT COUNT(*) AS n FROM leads WHERE excluded = 0 AND status = 'new' AND email IS NOT NULL AND email != ''
   AND COALESCE(json_extract(audit, '$.email_source'), '') != 'guessed' AND quality_score >= 35"""
 
@@ -90,7 +97,7 @@ def _one(d1, sql: str, params: list | None = None, key: str = "n"):
 def sitrep(d1, now: datetime | None = None) -> str:
     """The daily situation report: what happened in the last 24 hours, what's waiting on the owner, what's next."""
     now = now or _now()
-    day = _iso(now - timedelta(days=1))
+    day = _iso(now - timedelta(hours=30))  # GitHub's schedule drifts by hours: never miss yesterday's search
     week = _iso(now - timedelta(days=7))
     n = lambda sql, p=None: _one(d1, sql, p) or 0  # noqa: E731
     t = territory(d1)
@@ -128,7 +135,8 @@ def sitrep(d1, now: datetime | None = None) -> str:
                   else f"{r.get('found') or 0} found, {r.get('pitchable') or 0} worth pitching")
               for r in runs) or "no search ran"),
           f"- **New leads:** {stats['new_leads']} (total worth pitching: {stats['leads']})",
-          f"- **Claude researched:** {stats['researched']} leads" + (f"; {stats['waiting_claude']} still waiting" if stats["waiting_claude"] else ""),
+          f"- **Claude researched:** {stats['researched']} leads (the best ones first, ~15 a day)"
+          + (f"; {stats['waiting_claude']} lower-priority still waiting" if stats["waiting_claude"] else ""),
           f"- **Emails sent:** {stats['sent']} · **replies:** {stats['replies']}",
           f"- **Demo views:** {stats['views']} · **order page opened:** {stats['order_pages']} · **orders this week:** {stats['orders']}",
           f"- **Clients paying:** {stats['clients']}", ""]
@@ -139,6 +147,20 @@ def sitrep(d1, now: datetime | None = None) -> str:
             L.append(f"- {r['name']} · {r['views']} visits{phone}")
         L += [""]
     needs = []
+    done = {}
+    rows = _rows(d1.query("SELECT value FROM settings WHERE key = 'setup_done'"))
+    if rows:
+        try:
+            done = json.loads(rows[0]["value"]) or {}
+        except (ValueError, TypeError):
+            done = {}
+    if not done.get("mailboxes"):
+        needs.append("**#1 priority: buy the mailboxes** (Namecheap Private Email on aetoswebsites.com). Nothing can be "
+                     "emailed until they exist, so no money comes in. Tick it on Home when done; Claude then connects them.")
+    last_ai = _one(d1, "SELECT MAX(json_extract(audit, '$.ai_research.done_at')) AS at FROM leads", key="at")
+    if stats["waiting_claude"] and (not last_ai or last_ai < _iso(now - timedelta(days=2))):
+        needs.append("**Claude isn't researching leads** (last run: " + (str(last_ai)[:10] if last_ai else "never")
+                     + "). See 'What to do' on the Control Room's Home page.")
     if stats["picks"]:
         needs.append(f"**{stats['picks']} lead{'s' if stats['picks'] != 1 else ''} ready for outreach**: Outreach page → Today's picks → approve.")
     if stats["proposals"]:
@@ -148,7 +170,10 @@ def sitrep(d1, now: datetime | None = None) -> str:
     if not needs:
         needs.append("Nothing urgent.")
     L += ["## Needs you", "", *[f"- {x}" for x in needs], ""]
+    paused = stats["picks"] >= READY_CAP
     L += ["## Next", "",
-          f"- **Tomorrow's search:** {t['trade']} in {upcoming}" + ("" if t.get("on") else " (autopilot is OFF: Lead Scraper page)"),
+          f"- **Tomorrow's search:** " + (f"paused: {stats['picks']} leads are ready, enough for about {stats['picks'] // 12} days of emails"
+                                          if paused and t.get("on") else f"{t['trade']} in {upcoming}")
+          + ("" if t.get("on") else " (autopilot is OFF: Lead Scraper page)"),
           "- Full to-do list: the Roadmap page in the Control Room.", ""]
     return "\n".join(L)

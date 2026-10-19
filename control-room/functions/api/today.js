@@ -3,7 +3,7 @@ import { getSetting, putSetting } from "../_lib/stripe.js";
 import { steps } from "../_lib/today.js";
 import { bad, db, json } from "../_lib/util.js";
 
-const MANUAL = ["routine", "domain", "mailboxes", "funnel"];
+const MANUAL = ["domain", "mailboxes", "funnel"];
 const READY = `excluded = 0 AND status = 'new' AND email IS NOT NULL AND email != ''
   AND COALESCE(json_extract(audit, '$.email_source'), '') != 'guessed' AND quality_score >= 35`;
 

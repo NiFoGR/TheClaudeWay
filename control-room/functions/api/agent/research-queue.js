@@ -1,5 +1,6 @@
 // GET /api/agent/research-queue?job=ID&limit=15 → the leads the scraper flagged for Claude (audit.ai_needs, set by
-// lead-manager/aetos_leads/research.py), this run's first, best score first. Each comes with exactly what to do
+// lead-manager/aetos_leads/research.py), in the order they'll be emailed: leads with a real email (tomorrow's picks)
+// first, then the best scores. ~15 a day matches what we can send, so tokens go where the money is. Each comes with exactly what to do
 // and everything already found, so Claude never redoes free work. For the lead-research Routine (bearer token).
 import { agentDenied } from "../../_lib/agent.js";
 import { db, json, leadRow } from "../../_lib/util.js";
@@ -15,7 +16,8 @@ export async function onRequestGet({ request, env }) {
   const job = url.searchParams.get("job") || "";
   const DB = await db(env);
   const { results } = await DB.prepare(
-    `SELECT * FROM leads WHERE ${WAITING} ORDER BY (last_job_id = ?) DESC, quality_score DESC LIMIT ?`
+    `SELECT * FROM leads WHERE ${WAITING} ORDER BY (email IS NOT NULL AND email != '' AND COALESCE(json_extract(audit, '$.email_source'), '') != 'guessed') DESC,
+       quality_score DESC, (last_job_id = ?) DESC LIMIT ?`
   ).bind(job, limit).all();
   const leads = results.map(leadRow).map((l) => ({
     place_id: l.place_id, name: l.name, trade: l.trade, town: l.town || l.search_town, address: l.address, phone: l.phone,

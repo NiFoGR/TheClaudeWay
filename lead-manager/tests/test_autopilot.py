@@ -65,3 +65,21 @@ def test_sitrep_says_a_search_is_still_running():
              "VALUES ('j', 'landscaper', 'Widnes', 60, 'queued', '2026-10-14T06:00:00Z', 'x')")
     md = autopilot.sitrep(d1, datetime(2026, 10, 14, 7, 0, tzinfo=timezone.utc))
     assert "landscaper in Widnes: still running" in md
+
+
+def test_autopilot_pauses_when_enough_leads_are_ready():
+    d1 = FakeD1()
+    for i in range(autopilot.READY_CAP):
+        d1.query("INSERT INTO leads (place_id, name, trade, search_town, email, status, quality_score, audit, first_seen_at, updated_at) "
+                 "VALUES (?, 'B', 'landscaper', 'X', 'a@b.co.uk', 'new', 60, '{}', 'x', 'x')", [f"p{i}"])
+    assert autopilot.next_run(d1) is None
+    md = autopilot.sitrep(d1, datetime(2026, 10, 19, 7, 0, tzinfo=timezone.utc))
+    assert "paused: 100 leads are ready" in md
+
+
+def test_sitrep_puts_the_mailboxes_first_until_ticked():
+    d1 = FakeD1()
+    md = autopilot.sitrep(d1, datetime(2026, 10, 19, 7, 0, tzinfo=timezone.utc))
+    assert "#1 priority: buy the mailboxes" in md
+    d1.query("INSERT INTO settings (key, value) VALUES ('setup_done', ?)", [json.dumps({"mailboxes": True})])
+    assert "buy the mailboxes" not in autopilot.sitrep(d1, datetime(2026, 10, 19, 7, 0, tzinfo=timezone.utc))
