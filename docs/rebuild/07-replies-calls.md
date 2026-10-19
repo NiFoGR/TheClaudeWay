@@ -1150,7 +1150,7 @@ into its `nav.js` `routeFor` and `NAV`, which keep them). Test `control-room/tes
 `{paused, waiting, median_minutes, needs_you: [todo rows], conversations: [{place_id, business, stage, last_who,
 snippet, at}], last_drill}`; `GET /api/replies/:place_id` → `{business, stage, messages: [{id, who, label, at, intent,
 text}]}`; pure exports in `replies.js`: `threadHtml(messages) → string`, `needsYouHtml(todos) → string`,
-`conversationsHtml(rows) → string` (all text through `esc()`).
+`conversationsHtml(rows) → string` (all text through `esc()`); page entry points `repliesPage() → Promise<void>` (route `#/replies`) and `threadPage(placeId) → Promise<void>` (route `#/replies/<id>`), which file 11's `routeFor` calls.
 
 - [ ] **Step 1: Write the failing test**
   ```js
@@ -1178,9 +1178,9 @@ changed: stage 3 already made `callScript` read prices and the guarantee from `o
 offer" test stays).
 
 **Interfaces:** Consumes `GET/POST /api/calls`, `GET/POST /api/calls/:id`, stage 3's
-`callScript(lead, {sender = "Nik", offer, today})` with `offer = {...offerFor(date), guarantee: GUARANTEE}` (pence) and
+`callScript(lead, {sender = "Nik", offer, guarantee, today})` (stage 3's signature; this page's data carries `offer = {...offerFor(date), guarantee: GUARANTEE}` in pence and passes `guarantee: offer.guarantee`) and
 `lead.owner_first`, stage 3's `drawerHtml` mount point `<div id="d-call"></div>`. Produces `callPageHtml(data) →
-string` (pure), `renderCallBox(el, place_id) → Promise<void>` (exported from `call.js`, used by the lead drawer and the
+string` (pure), `callPage(id) → Promise<void>` (route `#/call/<id>`, called by file 11's `routeFor`) and `renderCallBox(el, place_id) → Promise<void>` (exported from `call.js`, used by the lead drawer and the
 thread view).
 
 - [ ] **Step 1: Write the failing test** — `call-page.test.mjs`:
@@ -1199,7 +1199,7 @@ thread view).
   assert.doesNotMatch(callPageHtml({ ...data, lead: { ...data.lead, name: "<img src=x onerror=alert(1)>" } }), /<img src=x/);
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/call-page.test.mjs` → FAIL: `call.js` missing.
-- [ ] **Step 3: Implement** — `call.js` renders the page and box with copy exactly as Part A, the script via stage 3's `callScript(data.lead, {offer: data.offer, today: new Date(data.call.slot_at)})`, every data value through `esc()`/`safeUrl()`; in `leads.js`, after the drawer renders, `import("./call.js").then(m => m.renderCallBox(document.getElementById("d-call"), id))`.
+- [ ] **Step 3: Implement** — `call.js` renders the page and box with copy exactly as Part A, the script via stage 3's `callScript(data.lead, {offer: data.offer, guarantee: data.offer.guarantee, today: new Date(data.call.slot_at)})`, every data value through `esc()`/`safeUrl()`; in `leads.js`, after the drawer renders, `import("./call.js").then(m => m.renderCallBox(document.getElementById("d-call"), id))`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs && for f in control-room/public/js/*.js; do node --check "$f"; done` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/public/js/call.js control-room/public/js/leads.js control-room/public/js/app.js control-room/tests/call-page.test.mjs && git commit -m "Calls: call page and lead drawer call box" -m "$TRAILERS"`
 
@@ -1289,7 +1289,7 @@ Then run the Part A "Perfect when" live checks 2–8 with Nik.
 - **Stage 0 `_lib/mail/outbox.js`:** `dispatchDue(DB, env, now, {limit = 2, send, kinds = null}) → {sent, failed, held}`; a paused mailbox holds only `first`/`followup`, so `reply` still goes; suppression is checked for `first`/`followup`/`reply`.
 - **Stage 0 `_lib/health.js`:** `registerLight(fn)`; `healthFromDb(DB, env, now) → {lights, gaps}`; light shape `{name, level, detail, fix}`.
 - **Stage 0, other:** setting `business:sender_name` (sign-offs), `/api/agent/heartbeat`, `routines/README.md` with the standard preamble and per-Routine sections (`aetos-<name>`, Setup → Claude), environment variable `CONTROL_ROOM_URL` in the shared "Aetos" environment, `tests/helpers/fakeD1.mjs` exporting `fakeD1()`, tick step markers for `reply_fire` (2) and `calls` (9).
-- **Stage 3:** `callScript(lead, {sender, offer, today})` with `offer = {...offerFor(date), guarantee: GUARANTEE}` and `lead.owner_first`; `drawerHtml` renders `<div id="d-call"></div>`, and `leads.js` binds the drawer (Task 16 mounts the call box there).
+- **Stage 3:** `callScript(lead, {sender, offer, guarantee, today})`; this stage passes `offer = {...offerFor(date), guarantee: GUARANTEE}` and `guarantee: offer.guarantee` and `lead.owner_first`; `drawerHtml` renders `<div id="d-call"></div>`, and `leads.js` binds the drawer (Task 16 mounts the call box there).
 - **Stage 4:** one `demos` row per `place_id` with `slug`; `demoLink(slug)` and `DEMO_BASE` (`https://aetoswebsites.com`) from `_lib/demo-db.js`; order page at `${DEMO_BASE}/d/<slug>/order`.
 - **Stage 5–6:** `stopFollowups(DB, placeId, "replied", now)` (called by `onHumanInbound`); `businessName` from `_lib/mail/rules.js`; the Voice page and `GET /api/voice` (`api/voice/index.js`) with `has_price_reply`, `POST /api/voice/examples`, `DELETE /api/voice/examples/:id`.
 - **Stage 9:** settings `offer:chatbot_live` / `offer:review_booster_live` (`'1'` = on) for `offerFacts`'s `included` lines.
