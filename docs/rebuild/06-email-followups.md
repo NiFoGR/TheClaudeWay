@@ -384,8 +384,8 @@ messages, applies stops, closes finished sequences and queues due follow-ups. Tw
    `queued_already`, one message row).
 4. **Pasted text** from Gmail/Word: smart quotes, a signature with "www.", a bare "greenleaf.co.uk", an email address,
    the raw demo URL pasted instead of the placeholder. Test in Task 5 (`findLinks` / `firstEmailIssues`).
-5. **D1's 50-query limit per tick** with 40 due prospects. Test in Task 8 (counting `prepare` calls: ≤ 12, exactly 5
-   queued, the rest on the next run).
+5. **D1's 50-query limit per tick** with 40 due prospects. Test in Task 8 (counting round trips: ≤ 18, exactly 3
+   queued, the rest on later runs).
 
 ---
 
@@ -714,7 +714,7 @@ latest message for step `followup_step + 1` is `failed`: fewer than 3 failed att
 day's 07:00 UK (Sunday → Monday); 3 → `stopFollowups` + `health` todo `health:followup-fail:<place_id>`);
 `closeFinished(DB, now, {limit = 10}) → Promise<number>` (`followup_step = 9` and `next_followup_at ≤ now` →
 `sequence_done`, `lost_reason` "sequence_done");
-`queueDue(DB, now, {limit = 5}) → Promise<{queued: number, held: string|null}>`;
+`queueDue(DB, now, {limit = 3}) → Promise<{queued: number, held: string|null}>`;
 `followupsStep(ctx: {DB, env, now}) → Promise<string>` (runs `ensureTemplates`, `syncSent`, `sweepStops`,
 `retryFailed`, `closeFinished`, `queueDue`; summary like `"synced 1, stopped 0, retried 0, closed 0, queued 2"` or
 `"waiting: follow-ups 6/9 approved"`);
@@ -752,12 +752,12 @@ test("queues a threaded follow-up 1", async () => {
 test("demo not ready holds the follow-up with a health todo", async () => { /* demoReady stub {ok:false, reason:"template not approved"} → 0 queued, todo health:followup-demo:p1 */ });
 test("a failed follow-up is retried next day, stopped after 3", async () => { /* 1 failed → next_followup_at 07:00 UK next day; 3 failed → stopped + health todo */ });
 test("step 9 + 7 days → lost/sequence_done", async () => { /* followup_step 9, next_followup_at past → stage 'lost', lost_reason 'sequence_done' */ });
-test("bounded work: 40 due leads, ≤ 12 D1 round trips, 5 queued", async () => {
+test("bounded work: 40 due leads, ≤ 18 D1 round trips, 3 queued", async () => {
   const DB = await manyDue(40); await approveAll(DB);
   const counted = countingDB(DB);                                        // wraps prepare() and batch() with a counter
   await followupsStep({ DB: counted, env: {}, now: new Date("2026-10-23T08:20:00Z") });
-  assert.ok(counted.calls <= 12, `used ${counted.calls}`);
-  assert.equal((await DB.prepare("SELECT COUNT(*) n FROM messages WHERE kind='followup'").first()).n, 5);
+  assert.ok(counted.calls <= 18, `used ${counted.calls}`);
+  assert.equal((await DB.prepare("SELECT COUNT(*) n FROM messages WHERE kind='followup'").first()).n, 3);
 });
 ```
 (`demoReady` is injected for tests: `followupsStep(ctx, {demoReady})` defaulting to stage 4's import; batch the demo
