@@ -1463,20 +1463,20 @@ host → `next()` with no cookie needed", stage 0's rule for new public prefixes
   files}), {mode: "live", page})`; `/c/` passes `previewBar` and an empty form action, `/w/` passes neither.
 - [ ] **Step 4: Run tests to verify they pass** — same command → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/c control-room/functions/w control-room/functions/_middleware.js
-  control-room/tests/sites-preview.test.mjs && git commit -m "Site previews for Nik and a temporary public link"`
+  control-room/tests/sites-preview.test.mjs control-room/tests/site.test.mjs && git commit -m "Site previews for Nik and a temporary public link"`
 
 ### Task 24: Control Room API for sites
 
 **Files:** Create `control-room/functions/api/sites.js` (GET list), `control-room/functions/api/sites/[client_id].js`
 (GET detail), `.../[client_id]/approve.js`, `.../changes.js`, `.../rebuild.js`, `.../status.js` (off/on), `.../feature.js`
 (`{feature, on}` → `setSiteFeature`),
-`.../domain.js` (host, step ticks, nameservers, review link, GBP tick), `.../send-domain-email.js`, `.../check.js` (DNS
+`.../domain.js` (host, step ticks, nameservers, review link, "Profile created" tick), `.../send-domain-email.js`, `.../check.js` (DNS
 now), `control-room/functions/api/sites/test-client.js` (POST create / DELETE). Test
 `control-room/tests/sites-api.test.mjs`.
 
 **Interfaces:** Consumes Tasks 6 (`checkHost`, `checkNs`), 7–10, 13, `fireRoutine`, stage 9's `sendClientMail`, `addTodo`,
 `closeTodos`.
-Produces JSON: list `[{client_id, name, status_label, countdown: {label, colour}, host, live: boolean, enquiries_30d}]`;
+Produces JSON: list `[{client_id, name, status_label, countdown: {label, level}, host, live: boolean, enquiries_30d}]`;
 detail `{…site, label, countdown, pages: [{path, title, words}], steps: [{id, title, detail, done_at, auto}], chat: {on,
 reason, today, month, fallbacks_today}, leads: [...20], files: [...], form, review: {url, qr_svg, card_url, messages},
 last_errors}`.
@@ -1502,27 +1502,36 @@ last_errors}`.
 
 **Files:** Create `control-room/public/js/sitesview.js` (pure HTML builders, no DOM, like `callscript.js`),
 `control-room/public/js/sites.js` (page wiring). Modify `control-room/public/style.css`,
-`control-room/public/js/app.js` (`PAGES` entries for routes `sites` and `site/<id>` with no nav item, like stage 4's
-`#/demo`). Test `control-room/tests/sites-page.test.mjs`.
+`control-room/public/js/nav.js` (file 11's `routeFor`, the routing owner: add routes `sites` and `site/<id>`, no
+`NAV` item, like stage 4's `#/demo`), `control-room/public/js/app.js` (dispatch only, no `PAGES` entries) and
+`control-room/tests/nav.test.mjs`. Test
+`control-room/tests/sites-page.test.mjs`.
 
 **Interfaces:** Consumes Task 24's JSON, `esc`/`safeUrl` (`public/js/html.js`, stage 3; `sitesview.js` imports them
-and stays Produces in `sitesview.js`: `sitesRows(list) → html`, `siteView(detail) → html`; in
-`sites.js`: `sitesRoute(hash)` and `shrinkImage(file, maxWidth = 1600, quality = 0.8) → Promise<Blob>` (browser
-only).
+and stays pure), `routeFor(hash) → {page, id, tab, params}` (file 11). Produces in `sitesview.js`: `sitesRows(list) →
+html`, `siteView(detail) → html`; in `sites.js`: `sitesPage()`, `sitePage(id)` and `shrinkImage(file, maxWidth = 1600,
+quality = 0.8) → Promise<Blob>` (browser only); the GBP "Invite accepted" tick posts to stage 11's
+`POST /api/care/<client_id> {action: "access", on}` (section 13).
 
 - [ ] **Step 1: Write the failing test** — import `sitesRows`/`siteView` from `../public/js/sitesview.js`: empty list
   renders "No
   client sites yet. When a client sends their onboarding form, their site appears here."; a red countdown gets class
   `due-red`; a lead name `"<img src=x>"` is escaped; the Approve button exists only for `review`; "Open
   www.smithroofing.co.uk" shows only when `host_check.ok && !seen_at`; Website Only detail has no Review booster or
-  Chatbot "On".
-- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/sites-page.test.mjs` → module not found.
+  Chatbot "On"; the "Invite accepted" checkbox is disabled with "Tick this once the site is live: the day you tick it
+  starts the 90 days." when the site isn't live. In `nav.test.mjs`: `routeFor("#/sites").page === "sites"`,
+  `[routeFor("#/site/c1").page, routeFor("#/site/c1").id]` deep-equals `["site", "c1"]`, and `NAV` is unchanged
+  (no "Sites" item).
+- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/sites-page.test.mjs
+  control-room/tests/nav.test.mjs` → module not found / `sites` routes to `todo`.
 - [ ] **Step 3: Implement** section 13: `sitesview.js` builds the HTML; `sites.js` fetches, renders, binds buttons;
   uploads post the shrunk Blob (canvas → `toBlob("image/webp", 0.8)`) to `/api/sites/<id>/photos`.
-- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/sites-page.test.mjs && for f in
-  control-room/public/js/*.js; do node --check "$f"; done` → PASS.
-- [ ] **Step 5: Commit** — `git add control-room/public/js/sites.js control-room/public/js/sitesview.js control-room/public/js/app.js
-  control-room/public/style.css control-room/tests/sites-page.test.mjs && git commit -m
+  `app.js` routes the two new `routeFor` pages to `sitesPage()` / `sitePage(id)` the same way it routes file 11's pages.
+- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/sites-page.test.mjs
+  control-room/tests/nav.test.mjs && for f in control-room/public/js/*.js; do node --check "$f"; done` → PASS.
+- [ ] **Step 5: Commit** — `git add control-room/public/js/sites.js control-room/public/js/sitesview.js
+  control-room/public/js/nav.js control-room/public/js/app.js control-room/public/style.css
+  control-room/tests/sites-page.test.mjs control-room/tests/nav.test.mjs && git commit -m
   "Sites page: approve, domain steps, review kit, chat, enquiries"`
 
 ### Task 26: Tick step `sites`
@@ -1579,23 +1588,33 @@ due 1, leads 0"`).
 
 ### Task 28: Health lights for sites and chat
 
-**Files:** Create `control-room/functions/_lib/sites/health.js`. Modify `control-room/functions/_lib/health.js`
-(`healthFromDb` adds the two lights). Test `control-room/tests/sites-health.test.mjs`.
+**Files:** Create `control-room/functions/_lib/sites/health.js`. Modify `control-room/functions/_lib/sites/tick.js`
+(imports `sites/health.js` so the lights are registered whenever the tick or `/api/health` loads; `api/health.js`
+imports `_lib/sites/health.js` for the side effect if it doesn't already). Stage 0's `computeLights` is not edited.
+Test `control-room/tests/sites-health.test.mjs`.
 
-**Interfaces:** Produces `siteLights({sites, chatToday, liveDomains}, now) → [{name: "sites"|"chat", colour, detail}]`
-(pure) and `siteLightsFromDb(DB, now)`.
+**Interfaces:** Consumes stage 0's `registerLight(fn)` (`_lib/health.js`; `fn = async (DB, env, now) → light`).
+Produces `siteLights({sites, chatToday, liveDomains}, now) → [{name: "sites", level, detail, fix}, {name: "chat",
+level, detail, fix}]` (pure, `level` ∈ `green|amber|red|grey`) and `siteLightsFromDb(DB, now)`; at module load it
+calls `registerLight` twice (one function per light, each returning one light from `siteLightsFromDb`).
 
 - [ ] **Step 1: Write the failing test** — a site past due without `live_at` → `sites` red "Smith Roofing's site is
-  {n} days late."; a live site with `host_check.fails = 2` → red "www.smithroofing.co.uk no longer points at us. Check
-  the domain's DNS."; due in 40 h → amber; 40 live domains → amber "You're at 80 of ~100 client domains on this Pages
-  project: time to plan the next one." (counts www + apex); `ai_errors` 11 today → `chat` amber; no chat-on site →
-  `chat` grey; otherwise green.
+  {n} days late.", fix "Open Smith Roofing's Site page and do what its 'due' todo says; send the temporary link if the
+  domain is the hold-up."; a live site with `host_check.fails = 2` → red "www.smithroofing.co.uk no longer points at us.
+  Check the domain's DNS.", fix "Open the Site page and press Check now; follow the domain steps again."; due in 40 h →
+  amber; a build fire 3 h 1 min ago with no content → amber "Claude hasn't built Smith Roofing's site", fix "Press
+  Build again on the Site page; if it fails, check the build Routine on Setup → Claude."; 40 live domains → amber
+  "You're at 80 of ~100 client domains on this Pages project: time to plan the next one." (counts www + apex); no
+  client sites → `sites` grey; `ai_errors` 11 today → `chat` amber with a fix naming Setup → "Client sites" → Test; no
+  chat-on site → `chat` grey; otherwise green; every light has exactly the keys `name, level, detail, fix`; after
+  importing the module, `(await healthFromDb(DB, env, now)).lights` contains one `sites` and one `chat` light.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/sites-health.test.mjs` → module not found.
 - [ ] **Step 3: Implement** the rules of section 14.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/sites-health.test.mjs
   control-room/tests/health*.test.mjs` → PASS.
-- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/sites/health.js control-room/functions/_lib/health.js
-  control-room/tests/sites-health.test.mjs && git commit -m "Health lights for client sites and chat"`
+- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/sites/health.js control-room/functions/_lib/sites/tick.js
+  control-room/functions/api/health.js control-room/tests/sites-health.test.mjs && git commit -m "Health lights for
+  client sites and chat"`
 
 ### Task 29: Build Routine prompt
 

@@ -409,27 +409,39 @@ Claude never edits templates, grades or anything else. Nik decides.
 - Removed from the UI: Home, What to do, Roadmap, Outreach. `home.js`, `roadmap.js`, `outreach.js`, `_lib/today.js`,
   `api/today.js`, `api/overview.js` and `tests/today.test.mjs` are deleted (copies stay in `legacy/`).
 
+## Data clean-up (12-month purge)
+
+The privacy notice (stage 0) promises: "If we contacted you and you didn't become a customer, we delete your details
+12 months after our last contact." The tick step `purge` keeps that promise.
+
+- **When:** once a month. The step runs in the tick right before `health`; it does nothing until the first tick of a
+  new UK month, then works through everything due over the following ticks and marks the month done (setting
+  `purge:month = YYYY-MM`) when nothing is left.
+- **Who is deleted:** a `place_id` that has no `clients` row, whose last contact is more than 12 months ago. Last
+  contact = the newest of its `messages.created_at`, `prospects.updated_at` and `research.researched_at`
+  (`queued_at` when not researched). A lead with no dated row at all is never touched.
+- **What is deleted:** its `prospects`, `messages` and `research` rows.
+- **What is kept:** `suppression` (so a "no thanks" or bounce is never emailed again), every client's rows, and the
+  scraped `leads` row (public business listing, owned by the scraper).
+- **Limits:** at most 90 leads per round, and only as many rounds as the tick's query budget allows (stage 0's
+  `ctx.budget`); the rest waits for the next tick.
+- **Result line:** "purged <n> leads" / "purged <n> leads, more next tick" / "nothing to purge" / "done this month".
+
 ## Todos it adds
 
 `kpi` (new kind, see Cross-stage interfaces). It reads every other kind from overview §6.
 
 ## Health lights it feeds
 
-`weekly-kpis`:
-
-| Level | When | Text |
-| --- | --- | --- |
-| green | last OK heartbeat ≤ 8 days ago | "Claude's weekly email review ran <when>." |
-| amber | never beaten | "Claude's weekly email review isn't set up yet." Fix: "Create it from routines/README.md (weekly-kpis)." |
-| amber | last beat had `ok = 0` | "Claude's weekly email review failed last time: <detail>." Fix: "Open the Routine at claude.ai/code/routines and press Run now." |
-| red | last OK heartbeat > 15 days ago | "Claude's weekly email review hasn't run for <n> days." Fix: "Check the Routine still exists at claude.ai/code/routines; if not, recreate it from routines/README.md." |
+None of its own. Stage 0's `routine:weekly-kpis` light (192 h cadence) watches the weekly review Routine, and a
+failing `purge` step shows in the tick result and the `tick` heartbeat detail like any other step.
 
 ## Perfect when
 
 1. **All tests pass:** `node --test control-room/tests/*.test.mjs mail-relay/tests/*.test.mjs`, `cd lead-manager &&
    python -m pytest -q`, and `for f in control-room/public/js/*.js; do node --check "$f"; done`. This covers
    `board.test`, `todo-api.test`, `kpis.test`, `kpis-api.test`, `todoview.test`, `kpisview.test`, `nav.test`,
-   `money.test` and `routine-prompts.test`.
+   `money.test`, `routine-prompts.test` and `purge.test`.
 2. **Board columns on seeded data:** `board.test` "every stage lands in its column" passes. It checks 9 prospects
    covering all 8 stages plus one hot lead: counts `[1,1,2,1,1,1,1]`, Lost 1, hot card first, and the exact event
    strings in Task 1.
@@ -444,12 +456,16 @@ Claude never edits templates, grades or anything else. Nik decides.
    dialler on a real phone.
 6. **Escaping:** `todoview.test` renders a business called `<img src=x onerror=alert(1)>` and a draft containing
    `<script>`. The output contains `&lt;img` and no `<img` or `<script`.
-7. **Routine live:** create the weekly-kpis Routine and press Run now.
+7. **Routine live:** create the `aetos-weekly-kpis` Routine, paste its URL and token on Setup → Claude, press Test
+   fire, then press Run now in claude.ai.
    - Within 10 minutes, the KPIs page shows "Claude's review" for the current week.
    - Todo shows the `kpi` item.
-   - The `weekly-kpis` light is green.
-8. **Nav:** the 8 items appear in the exact order. `#/roadmap` and `#/outreach` open Todo. No request goes to
-   `/api/today` or `/api/overview` (DevTools Network tab).
+   - Stage 0's `routine:weekly-kpis` light is green.
+8. **Nav:** the 9 items appear in the exact order. `#/roadmap` and `#/outreach` open Todo; `#/lead/<id>/thread` opens
+   that lead's Replies thread. No request goes to `/api/today` or `/api/overview` (DevTools Network tab).
+9. **Purge:** `purge.test` passes: a non-client last contacted 12 months and a day ago loses its `prospects`,
+   `messages` and `research` rows and keeps its `suppression` row; a client and a lead contacted 11 months ago keep
+   everything.
 
 ---
 
@@ -458,7 +474,7 @@ Claude never edits templates, grades or anything else. Nik decides.
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** One Todo home page (lights, today's items, pipeline, clients), a weekly KPIs page with Claude's Sunday
-review, Money on `offer.js`, and the final nav.
+review, Money on `offer.js`, the final nav, and the monthly 12-month data purge.
 
 **Architecture:** The pure modules `_lib/board.js` (pipeline and client cards, words) and `_lib/kpis.js` (weeks,
 crediting, `computeWeek`) do all the logic. `_lib/todo.js` and `_lib/kpis-db.js` load rows from D1. Thin routes
@@ -476,11 +492,15 @@ JS, `style.css`.
   `ukTime.js`, plain-English errors, test commands.
 - `MIN_SAMPLE = 30`; `VIEW_WINDOW_DAYS = 7`; `FORWARD_WINDOW_DAYS = 7`.
 - `POSITIVE_INTENTS = ["interested","question","price","more_info","call_request","proposes_time","confirms_slot"]`.
-- `KIND_ORDER = ["escalation","call_time","call","hot","payment","build","care","kpi","pick","setup"]`; kind
-  `health` never appears in the Today list.
+- `KIND_ORDER = ["escalation","health","call_time","call","hot","payment","build","care","kpi","pick","setup"]`; a
+  `health` todo is hidden from Today only when its dedupe is `health:<name>` of a current light.
 - `COLUMN_STAGES = ["ready","emailed","viewed","replied","needs_nik","call_booked","won"]`, plus `lost` apart.
 - `CARD_CAP = 50` per column. The Todo page polls every 60 s, and only while the hash is `#/` or `#/todo`.
-- Routine `weekly-kpis`: Sonnet, Sunday 18:47 Europe/London. Analysis 1–6000 chars, ≤ 3 suggestions.
+- Routine `aetos-weekly-kpis` (heartbeat name `weekly-kpis`): Sonnet, Sunday 18:47 Europe/London. Analysis 1–6000
+  chars, ≤ 3 suggestions. Its prompt starts with stage 0's standard preamble and uses `$CONTROL_ROOM_URL`.
+- In-app links use the `/#/…` form. Stored times have no milliseconds (`util.now()`/`iso()`).
+- `loadBoard` and `loadKpiRows` skip `place_id LIKE 'drill:%' OR place_id LIKE 'test:%'`.
+- Purge: `PURGE_BATCH = 90` leads per round; 12 months = the same UK calendar date a year earlier.
 - Phone: 375 px, 16 px gutter, no page-level sideways scroll, tap targets ≥ 40 px. Gold only for primary buttons,
   the Hot tag, the Todo badge and the active nav item.
 - Commits: `TRAILER=$'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_017h4iwgwaGCvQ5f9mmF4rDY'`,
@@ -498,6 +518,8 @@ JS, `style.css`.
    respectively, each with plain words. Covered by Task 3's `"patch is safe to repeat"`.
 5. **An empty week.** No rows at all must give zeros and `pct: null`, never NaN or a throw. Covered by Task 5's
    `"empty week is all zeros"`.
+6. **The purge deletes only what it promised.** Never a client, never `suppression`, never a lead contacted in the
+   last 12 months, and it stops at the tick's query budget. Covered by Task 12's tests.
 
 ---
 
@@ -512,7 +534,7 @@ JS, `style.css`.
   - `ukDate`, `ukParts`, `addUkDays` from `_lib/ukTime.js`;
   - `isHot(prospect, now)`, `STAGE_LABELS` from `_lib/shortlist.js` (stage 3).
 - Produces:
-  - `COLUMN_STAGES`, `CARD_CAP = 50`, `LOST_WORDS = {opt_out:"Said no thanks", bounce:"Email bounced", said_no:"Said no", sequence_done:"No reply to any email"}`
+  - `COLUMN_STAGES`, `CARD_CAP = 50`, `LOST_WORDS = {opt_out:"Said no thanks", bounce:"Email bounced", sequence_done:"No reply to any email", not_now:"Not right now", not_interested:"Not interested", call:"Said no on the call"}` (any other or missing `lost_reason` reads "Lost")
   - `pastWhen(iso, now) → string` · `futureWhen(iso, now) → string` · `ukShortDate(ukDateStr) → "15 Oct"` ·
     `ukDayDate(ukDateStr) → "Sat 24 Oct"`
   - `lastEvent(row, now) → string`, where `row` is a pipeline row: `{place_id, stage, stage_at, views, last_view_at,
@@ -521,7 +543,7 @@ JS, `style.css`.
   - `nextLine(row, now) → string|null`
   - `pipelineColumns(rows, now) → {columns: [{stage, label, count, cards, more}], lost: {count, cards}}`, where a card
     is `{place_id, business, grade, hot, event, next, lead_link, thread_link}`
-  - `leadLink(id) → "#/lead/<id>"` · `threadLink(id) → "#/lead/<id>/thread"`
+  - `leadLink(id) → "/#/lead/<id>"` · `threadLink(id) → "/#/replies/<id>"`
 
 - [ ] **Step 1: Write the failing test.** In `board.test.mjs`, with `NOW = new Date("2026-10-22T12:00:00Z")`, build
   9 rows:
@@ -550,12 +572,15 @@ JS, `style.css`.
     assert.deepEqual(ev, { pr: "Demo ready · today", pe: "You emailed · 2 days ago", pv: "Viewed site once · 2 days ago",
       ph: "Viewed site 3× · yesterday", prp: "Replied · today", pn: "Replied · yesterday", pc: "Call tomorrow 11:00",
       pw: "Paid · 15 Oct", pl: "Said no thanks · yesterday" });
+    const lost = (r) => lastEvent({ place_id: "x", stage: "lost", lost_reason: r, stage_at: "2026-10-21T10:00:00Z" }, NOW);
+    assert.deepEqual(["not_now", "not_interested", "call", null].map(lost),
+      ["Not right now · yesterday", "Not interested · yesterday", "Said no on the call · yesterday", "Lost · yesterday"]);
   });
   test("next email line only while follow-ups run", () => {
     const b = pipelineColumns(rows, NOW); const card = (id) => b.columns.flatMap((c) => c.cards).find((c) => c.place_id === id);
     assert.equal(card("pe").next, "Next email tomorrow"); assert.equal(card("pv").next, "Next email Sat 24 Oct");
     assert.equal(card("prp").next, null);
-    assert.deepEqual([card("pe").lead_link, card("pe").thread_link], ["#/lead/pe", "#/lead/pe/thread"]);
+    assert.deepEqual([card("pe").lead_link, card("pe").thread_link], ["/#/lead/pe", "/#/replies/pe"]);
   });
   test("columns cap at 50 cards and report the rest", () => {
     const many = Array.from({ length: 53 }, (_, i) => ({ place_id: `x${i}`, stage: "emailed", stage_at: "2026-10-20T08:00:00Z", views: 0 }));
@@ -582,7 +607,7 @@ JS, `style.css`.
 **Interfaces:**
 - Consumes:
   - `clientStatus(c, today)`, `addDays` from `_lib/money.js`;
-  - `gbp(pence)` from `_lib/offer.js`;
+  - `formatPounds(pence)` from `_lib/offer.js` (stage 0);
   - Task 1's `pastWhen`, `futureWhen`, `ukShortDate`, `ukDayDate`.
 - Produces:
   - `guaranteeWords(liveAtIso, ukToday) → string`
@@ -591,6 +616,10 @@ JS, `style.css`.
   - Each input row is a `clients` row joined with `onboarding` (`ob_status, ob_created_at, due_live_at, live_at`),
     `client_links.failed_on`, `lead_map_rank` (`scan_id, top3_pct, avg_rank, rank_updated_at`) and the next care
     todo (`care_title, care_due_at`).
+  - Stage 11 (10-monthly-care.md, Task 15) later modifies `clientCards`/`loadBoard` so a client with a `care` row
+    takes `guarantee` from `guaranteeLabel(care, ukToday)` and `rank` from its latest scored `care_scans` row. Keep
+    `guarantee` and `rank` computed in one place each (`guaranteeWords`, a `rankWords` helper) so that change is a
+    swap, not a rewrite.
 
 - [ ] **Step 1: Write the failing test.** `NOW = 2026-10-22T12:00:00Z`. Rows:
 
@@ -615,7 +644,7 @@ JS, `style.css`.
       ["building", "Live by Sat 24 Oct · 2 days left", null, "No Map Rank scan yet", "Free until 14 Dec", null]);
     assert.deepEqual([c.c2.guarantee, c.c2.rank, c.c2.rank_link, c.c2.monthly, c.c2.care],
       ["Guarantee day 52 of 90", "Top 3 in 64% of their area · average position 2.8 · checked 2 days ago",
-       "#/maprank?scan=s1&biz=lp2", "£249 a month", "Approve Diamond Kickboxing's monthly report · Sun 1 Nov"]);
+       "/#/maprank?scan=s1&biz=lp2", "£249 a month", "Approve Diamond Kickboxing's monthly report · Sun 1 Nov"]);
     assert.deepEqual([c.c3.build, c.c3.late, c.c3.monthly], ["2 days late", true, "Free until 8 Jan"]);
     assert.deepEqual([c.c5.monthly, c.c5.card_failed, c.c5.guarantee], ["Card failed 21 Oct", true, "Guarantee day 26 of 90"]);
     assert.deepEqual([c.c6.monthly, c.c6.guarantee], ["Website only", null]);

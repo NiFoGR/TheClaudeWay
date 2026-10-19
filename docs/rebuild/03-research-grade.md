@@ -819,27 +819,40 @@ section from Part A); Delete `docs/lead-research-routine.md`; Modify `CLAUDE.md`
 - `parseResearch(row)` in `_lib/research.js`: stages 3 (shortlist, grade filter), 4 (demo reads `copy`, `site_review`),
   5 (first email reads `opener`, `best_email`, `owner.first` only when `owner.confident`) use it instead of parsing JSON.
 - `getResearch(DB, placeId)` in `_lib/research-db.js` and `researchCard(...)` in `public/js/researchcard.js`: stage 3's
-  drawer places the card.
+  `drawerHtml` embeds the card for the grade, points, angle, opener, owner/emails and site review sections (no grade
+  card or `POINT_LABELS` of its own; point reasons are read from `points.reasons`).
+- `POST /api/research/:place_id/wrong` → `{ok, fired, message}` with the 30-minute guarded fire
+  (`research queued: 1 lead (Nik asked)`) and stage 3's three toast texts. It replaces stage 3's deleted
+  `research-again` route and button; the card's "Research is wrong" is the only re-research action.
 - A lead is "ready to shortlist" only when `research.status = 'done'`: a re-check (`queued` with old data) must drop
   out of stage 3's lists until re-posted.
-- `researchLight(facts, now)` and `researchFacts(DB)`: stage 0's `healthFromDb` includes the light (Task 7 edits
-  `health.js`); the light object shape `{name, level, detail, fix}` must match stage 0's.
+- `researchLight(facts, now)` and `researchFacts(DB)`: registered with stage 0's `registerLight` (Task 7), so
+  `healthFromDb(DB, env, now).lights` contains `{name: "research", level, detail, fix}`. It replaces stage 0's
+  deleted `research_queue` light; todo dedupe `health:research`.
+- `POST /api/agent/research/:place_id` (Task 5): stage 4 (05 Task 8) adds an `ensureDemo(DB, placeId, now)` call after
+  `saveResearch` in this route, with its own test.
 
 **Needed from other stages:**
 - Stage 0: `requireAgent(request, env, DB)`, `POST /api/agent/heartbeat {routine, ok?, summary?}`, `fireRoutine`,
-  `ukDate`, `healthFromDb` + the rule that a red light adds a `health` todo with dedupe `health:<name>`,
+  `ukDate`, `iso` (util.js, no milliseconds), `registerLight(fn)` + `healthFromDb(DB, env, now) → {lights, gaps}` + the
+  rule that a red light adds a `health` todo with dedupe `health:<name>` (closed by exact match),
   `tests/helpers/fakeD1.mjs` exporting `fakeD1()` (returns a D1-compatible DB with `SCHEMA` loaded; rename in tests if
-  stage 0 names it differently), `routines/README.md` and a Setup → Routines entry for `research` (URL + token), and
-  `CONTROL_ROOM_URL` + the network secret in the Claude environment.
+  stage 0 names it differently), `routines/README.md` with the standard preamble (copied verbatim into
+  `routines/research.md`) and a Setup → Claude entry for `research` (URL + token, Test fire), and the shared "Aetos"
+  Claude environment with the `AETOS_AGENT` network secret and the `CONTROL_ROOM_URL` variable.
 - Stage 1: queues leads with exactly `INSERT OR IGNORE INTO research (place_id, status, queued_at) VALUES (?, 'queued', ?)`
-  for every lead that passes filter 1, and fires `fireRoutine(DB, "research", "new leads queued: <n> from job <id>")`
-  when n > 0. Stage 1 also retires `lead-manager/aetos_leads/research.py`'s `ai_needs`/`carry_over` (no longer read).
-- Stage 3: the lead drawer renders `researchCard` and wires its button (Task 8 does the wiring in today's `leads.js`;
-  stage 3 keeps it when it rebuilds the drawer).
+  for every lead that passes filter 1, and fires `fireRoutine(DB, "research", "research queued: {n} leads")`
+  when n > 0. `leadSuppressed({email, website, company_number}, suppressionRows)` in `_lib/find.js`.
+  `audit.map_rank.home` and `audit.map_rank.scan_town` on each lead. `lead-manager/aetos_leads/research.py`'s
+  `ai_needs` stays a hint list only and `carry_over` stays for maps carry-over only; this stage reads neither.
+- Stage 3: the lead drawer embeds `researchCard` and wires its button (Task 8 does the wiring in today's `leads.js`;
+  stage 3 keeps it when it rebuilds the drawer, showing the route's `message` as a toast). Its "Not a fit" writes
+  `research.status = 'skipped'` and the note line `[Nik YYYY-MM-DD] Not a fit: {reason}`, which `mergeNotes` keeps on
+  top and the queue never re-queues.
 
 ## Questions for Nik
 
-1. **Too-big leads:** when Claude says a business is too big, should it also disappear from All Leads, or just show
-   grade D? Default: it stays visible with grade D and a "Too big for us" tag (nothing is hidden from you).
-2. **Re-checks jump the queue:** when you press "Research is wrong", that lead goes first in the next run, ahead of new
-   leads. Default: yes.
+| # | Question | Default the build uses |
+| --- | --- | --- |
+| Q-R | **Hide too-big leads?** When Claude says a business is too big, should it also disappear from All Leads, or just show grade D? | Visible as D with a "Too big" tag (nothing is hidden from you) |
+| Q-S | **Re-checks jump the queue?** When you press "Research is wrong", that lead goes first in the next run, ahead of new leads. | Yes |

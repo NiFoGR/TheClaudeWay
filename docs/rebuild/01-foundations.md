@@ -61,12 +61,12 @@ Setup, the relay Worker and the landing page.
 
   The struck-through price is £1,950, never £2,000: striking through a price we never charge would be a false
   price comparison (truth rule; Q-A). "Around £2,000" is only ever spoken.
-- `offer.js` is owned by this stage. Later stages only add exports (07 `offerFacts`), each in its own new test file;
-  none re-creates the module or `offer.test.mjs`.
+- `offer.js` is owned by this stage. Later stages only add exports (07 `offerFacts`, 08 `BUILD_GUARANTEE_NOTE`), each
+  tested in its own new test file; none re-creates the module or `offer.test.mjs`.
 - Guarantee strings, exact: `Top 3 in Google search results in 90 days. GUARANTEED.` and `The guarantee: we will
   work for FREE if you aren't in the top 3 of Google results within 90 days.`
-- Build guarantee: `Website live in 7 days, GUARANTEED.` Build guarantee note (stage 9's order page puts it after
-  the line): `(clock starts when your onboarding form is complete)`.
+- Build guarantee: `Website live in 7 days, GUARANTEED.` (unchanged by later stages; stage 9 adds a separate
+  `BUILD_GUARANTEE_NOTE`, `(clock starts when your onboarding form is complete)`, for its order page).
 - Weekend banner (weekend only): `Weekend price — ends Sunday midnight`.
 - No-contract line: `No contract. No cancellation fees. If we're not making you money, we don't want your money.`
 - **Checkout grace:** the weekend price still applies to a checkout started up to 30 minutes after Sunday midnight UK
@@ -752,10 +752,12 @@ calls `/api/tick`. SMTP goes through vendored worker-mailer over `cloudflare:soc
     is 0.
   - "schema applied": `SELECT name FROM sqlite_master WHERE name='settings'` exists.
   - "schema:false gives an empty db".
+  - "exec runs several statements": `DB.exec("CREATE TABLE t (a); INSERT INTO t VALUES (1); INSERT INTO t VALUES (2);")`,
+    then `SELECT COUNT(*) AS n FROM t` gives `n === 2`.
 - [ ] **Step 2: Run it to verify it fails.** `node --test control-room/tests/fakeD1.test.mjs` fails with "Cannot find module helpers/fakeD1.mjs".
 - [ ] **Step 3: Implement `fakeD1` in `control-room/tests/helpers/fakeD1.mjs`.** Same pattern as
-  `outreach-db.test.mjs`, plus: spread rows into plain objects, map booleans, and wrap `batch` in
-  `BEGIN`/`COMMIT`/`ROLLBACK`.
+  `outreach-db.test.mjs`, plus: spread rows into plain objects, map booleans, wrap `batch` in
+  `BEGIN`/`COMMIT`/`ROLLBACK`, and `exec(sql)` → `raw.exec(sql)`.
 - [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/fakeD1.test.mjs` passes.
 - [ ] **Step 5: Commit.** `git add control-room/tests/helpers control-room/tests/fakeD1.test.mjs && git commit -m "Shared fake D1 test helper (node:sqlite)"`.
 
@@ -775,7 +777,8 @@ calls `/api/tick`. SMTP goes through vendored worker-mailer over `cloudflare:soc
   then writes it.
 
 - [ ] **Step 1: Write the failing tests.**
-  - `test_leads.py`: change to `assert len(stmts) == 52 and all("--" not in s for s in stmts)`.
+  - `test_leads.py`: change to `assert len(stmts) >= 52 and all("--" not in s for s in stmts)` (later stages add
+    tables, so never an exact count).
   - `test_schema_sync.py`, add:
     ```python
     def test_rebuild_tables_present():
@@ -785,12 +788,14 @@ calls `/api/tick`. SMTP goes through vendored worker-mailer over `cloudflare:soc
             assert f"CREATE TABLE IF NOT EXISTS {t} (" in js
         assert re.search(r'export const SCHEMA_VERSION = "[0-9a-f]{12}";', js)
     ```
+    Stages 9, 10 and 11 (files 08, 09, 10) add their own tables to this list.
   - `schema.test.mjs`:
     - "db() applies the schema once per version": use a `fakeD1({schema:false})` env. After `db(env)`, `todos`
       exists and `schema:version` equals `SCHEMA_VERSION`.
     - "every overview §4 column exists": `PRAGMA table_info(messages)` includes `needs_reply`, `class`, `refs`,
-      `handled_at`. `PRAGMA table_info(mailboxes)` includes `cap_override`, `paused_reason`.
-- [ ] **Step 2: Run them to verify they fail.** `cd lead-manager && python -m pytest -q tests/test_schema_sync.py tests/test_leads.py -k "schema"` fails (count 29, tables missing). `node --test control-room/tests/schema.test.mjs` fails (no `SCHEMA_VERSION`).
+      `handled_at`, `intent`. `PRAGMA table_info(mailboxes)` includes `cap_override`, `paused_reason`.
+      `PRAGMA table_info(calls)` includes `note`.
+- [ ] **Step 2: Run them to verify they fail.** `cd lead-manager && python -m pytest -q tests/test_schema_sync.py tests/test_leads.py -k "schema"` fails (count 29 is under 52, tables missing). `node --test control-room/tests/schema.test.mjs` fails (no `SCHEMA_VERSION`).
 - [ ] **Step 3: Implement.**
   - Append overview §4's SQL verbatim to `schema.sql`, with a `-- Rebuild (stage 0)` heading comment.
   - In `sync_schema.render()`, also emit
@@ -865,7 +870,8 @@ that UK day.
   - `closeTodos(DB,"health:tick") === 1`; a new `addTodo` with the same dedupe then returns an id (re-added).
   - A dismissed todo isn't re-added.
   - `closeTodos(DB,"health:tick")` also closes an open `health:tickle` (prefix semantics, matched with `substr`, so
-    a `%` or `_` in a dedupe is literal). Task 17 asserts that no light name is a prefix of another.
+    a `%` or `_` in a dedupe is literal). That's why Task 17's health step never uses `closeTodos`: it closes its
+    own keys by exact dedupe, and also asserts that no light name is a prefix of another.
   - `groupBoard`, with now = `2026-10-24T12:00:00Z`: a row due `2026-10-23T22:00:00Z` (Fri 23:00 UK) is overdue, a
     row due `2026-10-23T23:30:00Z` (Sat 00:30 UK) is today, a null due is today, and Sunday is later.
 - [ ] **Step 2: Run it to verify it fails.** `node --test control-room/tests/settings-todo.test.mjs` fails with "Cannot find module".
@@ -883,19 +889,35 @@ that UK day.
 
 **Interfaces:**
 - Consumes `isWeekendUK`.
-- Produces:
-  - `PACKAGES = {full:{label:"Full Package", build:195000, monthly:24900, freeDays:60}, weekend:{label:"Weekend deal", build:175000, wasBuild:200000, monthly:24900, freeDays:90}, website:{label:"Website Only", build:175000, monthly:0, freeDays:0}}`
-  - `offerFor(date) → {weekend:boolean, full: PACKAGES.full|PACKAGES.weekend, website: PACKAGES.website}`
-  - `formatPounds(pence) → "£1,950"`
+- Produces (this stage owns the module; later stages only add exports, each with its own new test file, and never
+  re-create `offer.js` or `offer.test.mjs`):
+  - `PACKAGES = {full:{key:"full", label:"Full Package", build:195000, monthly:24900, freeDays:60}, weekend:{key:"weekend", label:"Weekend deal", build:175000, wasBuild:195000, monthly:24900, freeDays:90}, website:{key:"website", label:"Website Only", build:175000, monthly:0, freeDays:0}}`
+  - `MONTHLY_PENCE = PACKAGES.full.monthly`
+  - `offerFor(date) → {weekend:boolean, full: PACKAGES.full|PACKAGES.weekend, website: PACKAGES.website, banner: WEEKEND_BANNER|null}`
+  - `termsFor(pkg: "full"|"website", weekend: boolean) → PACKAGES.full|PACKAGES.weekend|PACKAGES.website`
+    (`"full"` with `weekend` true gives `PACKAGES.weekend`)
+  - `checkoutWeekend(now, seenWeekend) → boolean`, exactly
+    `isWeekendUK(now) || (seenWeekend && isWeekendUK(new Date(now.getTime() - 30 * 60000)))`
+  - `formatPounds(pence) → string`: whole pounds without pennies (`"£1,950"`), otherwise two decimals
+    (`"£249.50"`); negatives get a leading minus (`"-£249"`)
   - `GUARANTEE = {headline, section}` (exact strings from overview §9)
   - `BUILD_GUARANTEE = "Website live in 7 days, GUARANTEED."`
+  - `WEEKEND_BANNER = "Weekend price — ends Sunday midnight"`
+  - `NO_CONTRACT = "No contract. No cancellation fees. If we're not making you money, we don't want your money."`
 
 - [ ] **Step 1: Write the failing test.**
-  - `offerFor(new Date("2026-10-23T23:30:00Z")).full.freeDays === 90` (Sat 00:30 UK);
-    `offerFor(new Date("2026-10-23T22:30:00Z")).full.build === 195000`.
-  - `formatPounds(195000) === "£1,950"`; `formatPounds(24900) === "£249"`.
+  - `offerFor(new Date("2026-10-23T23:30:00Z")).full.freeDays === 90` (Sat 00:30 UK), with `.full.wasBuild === 195000`
+    and `.banner === WEEKEND_BANNER`; `offerFor(new Date("2026-10-23T22:30:00Z")).full.build === 195000` and its
+    `banner === null`.
+  - `MONTHLY_PENCE === 24900`; `termsFor("full", true).key === "weekend"`; `termsFor("full", false).build === 195000`;
+    `termsFor("website", true).build === 175000`.
+  - `checkoutWeekend`: `(2026-10-26T00:25Z, true)` true; `(2026-10-26T00:31Z, true)` false;
+    `(2026-10-26T00:25Z, false)` false; `(2026-10-24T12:00Z, false)` true.
+  - `formatPounds(195000) === "£1,950"`; `formatPounds(24900) === "£249"`; `formatPounds(24950) === "£249.50"`;
+    `formatPounds(-24900) === "-£249"`.
   - `GUARANTEE.headline === "Top 3 in Google search results in 90 days. GUARANTEED."`
   - `GUARANTEE.section === "The guarantee: we will work for FREE if you aren't in the top 3 of Google results within 90 days."`
+  - `WEEKEND_BANNER` and `NO_CONTRACT` equal the Part A strings.
   - `(await import("../functions/_lib/money.js")).PACKAGES === PACKAGES`.
   - "no other module hard-codes a price": no file in `functions/_lib` except `offer.js` matches
     `/\b(195000|175000|24900)\b/`.

@@ -315,7 +315,8 @@ Health light **Follow-ups** (`followupHealth`, shape `{name: "followups", level,
 0's `registerLight`): **red** if any follow-up is more than 24 h overdue (queued `due_at`, or `next_followup_at` with
 templates approved) · **amber** if templates aren't all approved while leads are waiting · **green** otherwise.
 Detail in plain English, e.g. "3 follow-ups are a day late: mailbox nik@aetoswebsites.com is paused."; `fix` says what
-to do ("Open Setup → Mailboxes and fix the paused mailbox." / "Approve them on the Voice page."; empty when green).
+to do ("Open Setup → Mailboxes and fix the paused mailbox." / "Check the mailbox on Setup and the tick light." /
+"Approve them on the Voice page."; empty when green).
 
 ## A11. Perfect when
 
@@ -1087,8 +1088,9 @@ test("the light is registered", async () => {
 **Files:** Create `control-room/tests/email-e2e.test.mjs`.
 
 **Interfaces:**
-Consumes: `sendFirst`, `followupsStep`, `stopFollowups`, `roomForFirsts`; `dispatchDue(DB, env, now, {limit, send})`;
-`nextStage`; `fakeD1`.
+Consumes: `sendFirst`, `followupsStep`, `stopFollowups`, `roomForFirsts`; stage 0's `dispatchDue(DB, env, now,
+{limit = 2, send = sendViaSmtp, kinds = null}) → Promise<{sent, failed, held}>` (sends `followup` before `first`, then
+by `due_at`; uses the row's `message_id`/`in_reply_to`/`refs`); `applyStageEvent`; `fakeD1`.
 
 - [ ] **Step 1: Write the failing test** — a loop `for (t = start; t < start + 75 days; t += 15 min) { await
   followupsStep({DB, env, now: t}, {demoReady: okDemo}); await dispatchDue(DB, env, t, {limit: 2, send: fakeSend}); }`
@@ -1117,8 +1119,8 @@ test("cap respected; follow-ups before first emails; none skipped", async () => 
      and on each of those days no first email went while a follow-up was waiting */
 });
 ```
-- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/email-e2e.test.mjs` → fails until stage 0's
-  `dispatchDue` orders follow-ups first (see Cross-stage interfaces) and Tasks 1–9 are in.
+- [ ] **Step 2: Run it** — `node --test control-room/tests/email-e2e.test.mjs`. With Tasks 1–15 and stage 0's
+  `dispatchDue` in place it should pass; any failure is a bug in the owning task (Step 3).
 - [ ] **Step 3: Fix whatever the run exposes** in the owning task's module (and add that case to its unit test).
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/tests/email-e2e.test.mjs` + `git commit -m "End-to-end test: first email and 9 follow-ups over 75 simulated days"`.
@@ -1131,35 +1133,50 @@ test("cap respected; follow-ups before first emails; none skipped", async () => 
 - `_lib/followups.js`: `COLD_WINDOW = {start: "07:00", end: "19:00", days: [1,2,3,4,5,6]}`, `FOLLOWUP_DAYS`,
   `schedule(firstSentAt, step) → Date`, `nextDue(firstSentAt, step, lastSentAt) → Date`. Stage 0's `send` step must
   use this same `COLD_WINDOW` for kinds `first` and `followup`.
-- `followupsDueToday(DB, now) → Promise<{total, byMailbox: {[mailbox_id]: number}}>` — stage 3's capacity banner.
-- `roomForFirsts(DB, now) → Promise<{day, total, byMailbox: {[id]: {room, fullDay}}}>` — stage 3 should use `total`
-  for "you can send N first emails today" (it already accounts for future follow-up days).
-- `stopFollowups(DB, placeId, reason, now) → Promise<number>` — stage 7's `inbound` step calls it on `human`,
-  `opt_out`, `bounce`; stages 8/9 may call it on `call_confirmed` / `paid` (the sweep covers them anyway).
+- `followupsDueByMailbox(DB, now) → Promise<{total, byMailbox: {[mailbox_id]: number}}>` (Task 6). Stage 3's
+  `followupsDueToday(DB, now) → Promise<number>` and its test stay as stage 3 wrote them.
+- `roomForFirsts(DB, now) → Promise<{day, total, byMailbox: {[id]: {room, fullDay}}}>` — Task 6 changes stage 3's
+  `capacityNow` to `room = min(<stage 3's formula>, roomForFirsts(...).total)`, so the Leads banner and Send agree.
+- `stopFollowups(DB, placeId, reason, now) → Promise<number>` — stage 7's `onHumanInbound` calls
+  `stopFollowups(DB, placeId, "replied", now)` instead of its own cancel; stage 0/7 inbound calls it on `opt_out`,
+  `bounce`; stages 8/9 may call it on `call_confirmed` / `paid` (the sweep covers them anyway).
 - `followupsApproved(DB) → Promise<{approved, all}>` — Setup checklist (stage 0) and the Todo board.
-- `followupHealthFromDb(DB, now) → Promise<{name: "followups", light, detail}>` — stage 0's `health` step.
+- `followupHealthFromDb(DB, now) → Promise<{name: "followups", level, detail, fix}>` — registered with stage 0's
+  `registerLight`, so it appears in `healthFromDb(DB, env, now).lights`.
 - `_lib/mail/rules.js`: `wordCount`, `findLinks`, `businessName`, `greetingFor`, `firstEmailIssues`,
-  `renderFirstEmail`, `stripFooter` — stage 7 may reuse `findLinks`/`greetingFor` for Claude's replies.
+  `renderFirstEmail`, `stripFooter` — stage 7 imports `businessName` from here (no copy of its own) and may reuse
+  `findLinks`/`greetingFor` for Claude's replies.
 - `_lib/thread.js` `loadThread(DB, placeId, now)` and `GET /api/thread/:place_id` — stage 7/8 todos link to the
   drawer thread.
-- `public/js/compose.js` `mountEmail(el, placeId)` — whoever owns the lead drawer (stage 3) keeps a `#d-email` mount
-  point and calls it.
+- `public/js/compose.js` `mountEmail(el, placeId)` — stage 3's `drawerHtml` renders the empty `#d-email` mount and its
+  **Write first email** button does `import("./compose.js").then(m => m.mountEmail(document.getElementById("d-email"), id))`.
+- The Voice page: `GET /api/voice` (`api/voice/index.js`), `api/voice/followups/*`, `api/voice/examples/*`,
+  `public/js/voice.js` and `voice.test.mjs` are this stage's and the only ones. Stage 7 adds `seedVoice` into this
+  `GET /api/voice`, widens `has_price_reply` to `/price|how much|cost/i` over `situation`/`body` of `example` rows,
+  and puts its tests in a new `voice-seed.test.mjs`.
 - Data: `style_examples` rows `source "nik_sent"`, `situation "first email"`, `id "sent:<message id>"`; rows `source
   "nik_written"` from the Voice page (situation "they ask the price" = decision D-3) — read by stage 7's reply Routine.
-- Tick step `followups` at position 3; todo dedupes `setup:followups`, `health:followup-fail:<place_id>`,
-  `health:followup-demo:<place_id>`.
+- Tick step `followups` at position 3 (after `reply_fire`, before `send`, every 5 minutes); todo dedupes
+  `setup:followups`, `health:followup-fail:<place_id>`, `health:followup-demo:<place_id>`. No light is named after a
+  todo prefix: the light is `followups`, the todos start `health:followup-`, so the Todo board shows them in Today.
 
 **Needed from other stages (not in the overview):**
 - Stage 4: `demoReady(DB, placeId) → Promise<{ok: boolean, url: string|null, reason: string}>` (reason in plain
-  English, e.g. "the landscaper template isn't approved yet"), and the stage-4 event `demo_ready` creating the
-  `prospects` row (stage `ready`, `email` = `research.best_email`). The demo must stay live for every prospect in
-  `emailed`/`viewed`/`replied` and for at least 30 days after the sequence closes (step 9 says "here whenever you want
-  it").
-- Stage 0 `dispatchDue`: (a) when a mailbox's cap is the limit, sends due `followup` messages before `first` ones,
-  oldest `due_at` first; (b) leaves over-cap or paused-mailbox messages `queued` (never fails them for that); (c)
-  passes `message_id`, `in_reply_to` and `refs` from the row to `composeEmail`; (d) sets `sent_at` on success and
-  `status 'failed'` + a plain-English `error` on failure. `pickMailbox` returns `null` when no mailbox in the list has
-  room.
+  English, e.g. "the landscaper template isn't approved yet"), and the stage-4 `demo_ready` event creating the
+  `prospects` row through `applyStageEvent` with the `{email, greet_name}` insert option (stage `ready`, `email` =
+  `research.best_email`). The demo must stay live for every prospect in `emailed`/`viewed`/`replied` and after the
+  sequence closes (step 9 says "here whenever you want it"); stage 4's 180-day rule covers this.
+- Stage 0 `applyStageEvent(DB, placeId, event, now, {lost_reason} = {}) → Promise<{from, to}|null>` in
+  `_lib/prospects.js` (sets `lost_reason` to the event name for `opt_out`/`bounce`; clears `next_followup_at` and
+  cancels queued `first`/`followup` rows when the stage becomes `lost`).
+- Stage 0 `dispatchDue(DB, env, now, {limit = 2, send = sendViaSmtp, kinds = null}) → Promise<{sent, failed, held}>`
+  (01 Task 13): orders `followup` before `first`, then `due_at`; uses the row's `message_id`/`in_reply_to`/`refs`;
+  a paused mailbox holds `first`/`followup` rows `queued`; a row stuck in `sending` becomes `failed` with "The send
+  was interrupted…" and is never retried (Task 8 honours this). `pickMailbox` returns `null` when no mailbox in the
+  list has room.
+- Stage 0 `registerLight(fn)` and `healthFromDb(DB, env, now) → {lights, gaps}` in `_lib/health.js`.
+- Stage 0 setting `business:sender_name` (set on Setup) for every sign-off and cold footer.
+- Stage 0 `runTick` passes `ctx.budget` (D1 queries left) to each step.
 - Stage 0 test helper: `fakeD1()` exported from `tests/helpers/fakeD1.mjs`, returning a D1-compatible object with
   the full schema applied.
 - Stage 0 inbound (and stage 7): inbound rows carry `place_id` and `class` (`human | auto | opt_out | bounce`); the
@@ -1168,9 +1185,8 @@ test("cap respected; follow-ups before first emails; none skipped", async () => 
 
 ## Questions for Nik
 
-1. **Send first emails before the 9 follow-ups are approved?** Default: yes, with the yellow warning; those leads get
-   their follow-ups once you approve (one step at a time, nothing skipped).
-2. **How long should a demo stay up after the last follow-up?** Default: 30 days after the lead is closed (step 9
-   says "here whenever you want it"). This is set in stage 4.
-3. **Bank holidays:** default is to send as normal (Mon–Sat), since most tradespeople work them. Say if you want them
-   skipped.
+| # | Question | Default the build uses |
+| --- | --- | --- |
+| Q-K | Follow-up days 1, 2, 4, 7, 10, 17, 24, 30, 60 | As listed |
+| Q-L | Send first emails before the 9 follow-ups are approved? | Yes, with a warning; those leads get their follow-ups once you approve (one step at a time, nothing skipped) |
+| Q-M | Skip bank holidays? | No: send as normal (Mon–Sat), since most tradespeople work them |

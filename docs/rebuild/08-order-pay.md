@@ -748,7 +748,8 @@ fulfilCheckout(DB, session, {now}) → Promise<{status: "ok"|"ignored", reason?,
 ### Task 8: Webhook route, idempotency and invoice.paid
 
 **Files:** Modify `lead-manager/schema.sql` (add `stripe_events`), run `python scripts/sync_schema.py`
-(regenerates `control-room/functions/_lib/schema.js`); modify `control-room/functions/_lib/stripe-events.js`,
+(regenerates `control-room/functions/_lib/schema.js`), `lead-manager/tests/test_schema_sync.py`; modify
+`control-room/functions/_lib/stripe-events.js`,
 `control-room/functions/api/stripe/webhook.js`. Test `control-room/tests/stripe-events.test.mjs` (replaces the old
 webhook tests in `stripe.test.mjs`).
 **Interfaces:**
@@ -789,9 +790,12 @@ handleWebhook(DB, env, {body, signature, now, fetchImpl}) → Promise<{status: 2
   (duplicate → 200) → `handleEvent` → `INSERT OR IGNORE INTO stripe_events` + `beat(DB, "stripe", true, type)` → 200;
   catch → `beat(DB, "stripe", false, message)` → 500. `invoice.paid` writes `build:<customer>` / `<invoice>:monthly`
   with `ON CONFLICT(id) DO UPDATE SET fee_pence = excluded.fee_pence`. `webhook.js` returns `json(res.json, res.status)`.
+  `lead-manager/tests/test_schema_sync.py`: add `"stripe_events"` to the table list in stage 0's
+  `test_rebuild_tables_present` (stage 0's `test_leads.py` asserts `len(stmts) >= 52`, so the extra statement needs
+  no count change).
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS;
   `cd lead-manager && python -m pytest -q` → PASS (schema sync test).
-- [ ] **Step 5: Commit** — `git add lead-manager/schema.sql control-room/functions/_lib/schema.js control-room/functions/_lib/stripe-events.js control-room/functions/api/stripe/webhook.js control-room/tests/stripe-events.test.mjs control-room/tests/stripe.test.mjs`
+- [ ] **Step 5: Commit** — `git add lead-manager/schema.sql lead-manager/tests/test_schema_sync.py control-room/functions/_lib/schema.js control-room/functions/_lib/stripe-events.js control-room/functions/api/stripe/webhook.js control-room/tests/stripe-events.test.mjs control-room/tests/stripe.test.mjs`
   `git commit -m "Order and pay: webhook is idempotent on event id and records build fees and retainers once"`
 
 ### Task 9: Failed cards, cancellations, refunds, abandoned checkouts
@@ -816,7 +820,7 @@ Produces nothing new (cases inside `handleEvent`).
   - `refund`: `charge.refunded` `{id: "ch_9", customer: "cus_1", amount_refunded: 10000}` then `amount_refunded: 24900`
     → one row `refund:ch_9`, `category 'Refunds'`, `amount_pence -24900`; `summarise` this-month `in` drops by 24900.
   - `abandoned`: `checkout.session.expired` `{metadata: {place_id: "p2"}}` for lead `p2` "Green Leaf" with no client
-    → todo `hot:checkout:p2` titled `Call Green Leaf: they opened the payment page but didn't pay`; for `p1`
+    → todo kind `hot`, dedupe `checkout:p2`, titled `Call Green Leaf: they opened the payment page but didn't pay`; for `p1`
     (already a client) → no todo.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/stripe-events.test.mjs` → the new cases fail (`ignored`).
 - [ ] **Step 3: Implement the four cases in `handleEvent`** — email only when `addTodo` returned an id; refund paid_on
@@ -855,12 +859,14 @@ Produces `thanksPage(DB, env, {slug, sessionId, origin, now, fetchImpl}) → Pro
 
 **Files:** Modify `control-room/functions/_lib/stripe.js` (add `connectStripe`), `control-room/functions/api/stripe/setup.js`
 (rewrite), the Setup page file from stage 0 (`control-room/public/js/setup.js`; remove the old `stripeCard` from
-`public/js/app.js` if still there), stage 0's `control-room/functions/_lib/health.js` (register `stripeLight`),
+`public/js/app.js` if still there), stage 0's `control-room/functions/_lib/health.js` (one `registerLight(...)` call
+for `stripeLight`; `computeLights` is not edited),
 `docs/setup-domain-email-stripe.md` Part 4 (Connect Stripe instead of payment links; the account-settings checklist).
 Test `control-room/tests/stripe-setup.test.mjs`.
 **Interfaces:**
 Consumes `getSecret`, `setSecret`, `getSetting`, `setSetting`, `closeTodos`, `stripeApi`, `keyId`, `stripeMode`,
-`WEBHOOK_EVENTS`, `STRIPE_VERSION`, `stripeLight`.
+`WEBHOOK_EVENTS`, `STRIPE_VERSION`, `stripeLight`, stage 0's `registerLight(fn)` and
+`healthFromDb(DB, env, now) → {lights, gaps}`.
 Produces:
 ```js
 connectStripe(DB, env, {key?: string, origin}, {fetchImpl}) → Promise<{mode, webhook_url}>   // throws Error with Part A text
@@ -883,12 +889,15 @@ stripeStatus(DB, env) → Promise<{key: boolean, key_source: "setup"|"cloudflare
   - `status never leaks`: `JSON.stringify(await stripeStatus(DB, {}))` contains neither `rk_test_abc` nor `whsec_new`;
     `webhook_current false` when the saved `events` differ from `WEBHOOK_EVENTS`.
   - `last event`: a `stripe_events` row → `last_event.type` equals it.
+  - `light is registered`: with a saved key and current webhook, `(await healthFromDb(DB, env, now)).lights.find(l => l.name === "payments").level === "green"`;
+    with no key it is `"grey"` and no `health:payments` todo is open.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/stripe-setup.test.mjs` → `connectStripe is not a function`.
 - [ ] **Step 3: Implement `connectStripe(...)` in `_lib/stripe.js`** — validate prefix
   (`/^(sk|rk)_(test|live)_[A-Za-z0-9]{10,}$/`) → delete the old endpoint when `key_id` matches → create →
   save secrets/settings (key only when it came from the form) → `closeTodos(DB, "setup:stripe")`. Setup page card
   renders the rows, field, button, checklist and help text from Part A ("What Nik sees") with `esc()`.
-  `health.js` adds `stripeLight` using `stripeStatus` + the `stripe` heartbeat.
+  In `health.js`: `registerLight(async (DB, env, now) => stripeLight({hasKey, webhookCurrent, beat}, now))` with
+  `hasKey` / `webhookCurrent` from `stripeStatus` and `beat` = the `stripe` heartbeat row.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS;
   `for f in control-room/public/js/*.js; do node --check "$f"; done` → clean.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/stripe.js control-room/functions/api/stripe/setup.js control-room/public/js/setup.js control-room/public/js/app.js control-room/functions/_lib/health.js docs/setup-domain-email-stripe.md control-room/tests/stripe-setup.test.mjs`
@@ -899,11 +908,15 @@ Then run the live checks 3–12 of "Perfect when" in Stripe test mode before sta
 ## Cross-stage interfaces
 
 **Produced here, used elsewhere**
-- `_lib/offer.js`: `PACKAGES`, `termsFor`, `offerFor`, `checkoutWeekend`, `pounds`, `WEEKEND_BANNER`,
-  `GUARANTEE_HEADLINE`, `GUARANTEE_SECTION`, `BUILD_GUARANTEE`, `NO_CONTRACT`. The overview names the module but not
-  its functions; stage 7 (D-3 price answers), stage 4 (demo page) and the landing page should use these names. If
-  07-replies-calls.md defines different names first, reconcile before building (Task 1 only adds what's missing).
-- `_lib/client-mail.js`: `sendClientMail(DB, {...})`, `systemMailbox(DB, now)` for any client email in stages 10–11.
+- `_lib/offer.js`: only `BUILD_GUARANTEE_NOTE` (the order page's build-guarantee note). Everything else in the
+  module is stage 0's.
+- `_lib/client-mail.js`: `sendClientMail(DB, {...})`, `systemMailbox(DB, now)`, `senderName(DB)` for any client
+  email in stages 10–11 (stage 10's `sendCareEmail` wraps `sendClientMail`). This stage owns the
+  `setup:system_mailbox` todo.
+- `_lib/stripe.js`: `stripeApi(key, method, path, params, fetchImpl)`, `stripeKey(env, DB)` (the old
+  `stripe(env, …)` is gone; stage 10's `pauseFee` uses these) and `tests/helpers/fakeStripe.mjs`.
+- Order page FAQ 5 and the welcome email's Full Package paragraph: stage 10 appends
+  `Your 90 days start the day you give us access to your Google Business Profile.` (Q-B default).
 - `todo.js`: `closeLeadTodos(DB, place_id, {exceptKinds})`.
 - `onboarding` row with `status 'sent'` and `token`; link format `{origin}/onboard/{token}`, origin = the host the
   prospect ordered on (`metadata.origin`). Stage 10 owns `/onboard/:token` and must
@@ -911,10 +924,12 @@ Then run the live checks 3–12 of "Perfect when" in Stripe test mode before sta
 - Settings `offer:chatbot_live` and `offer:review_booster_live` (`'1'` = shown on the order page). Stage 10 sets them.
 - `clients.cancelled_on` set on Stripe cancellation: stages 10–11 switch off the chatbot, review booster and monthly
   care for those clients; the site stays up.
-- `stripe_events` table (new, not in overview §4) and settings key `stripe:webhook`; secrets
-  `secret:stripe_key`, `secret:stripe_webhook`.
-- `heartbeats` row `stripe` and `stripeLight(...)` for stage 0's health page; `order_click` / `ordered` events and
-  `hot:checkout:<place_id>` todos for the hot-lead logic and KPIs (file 11).
+- `stripe_events` table (listed in overview §4 under "Tables added by later stages") and settings key
+  `stripe:webhook`; secrets `secret:stripe_key`, `secret:stripe_webhook`.
+- `heartbeats` row `stripe` and the `payments` light (`{name: "payments", level, detail, fix}`, registered with
+  `registerLight`); `order_click` / `ordered` events and kind `hot` todos with dedupe `checkout:<place_id>` for the
+  hot-lead logic and KPIs (file 11). Stage 4's hot step closes only dedupes starting `hot:<place_id>:`, so it never
+  closes these.
 - `payments` ids: `build:<stripe_customer>`, `<invoice>:monthly`, `refund:<charge>`; category `Refunds` (negative).
 
 **Needed from other stages (not fully defined in the overview)**

@@ -387,21 +387,23 @@ Prices, `GUARANTEE` and `offerFor` are stage 0's `_lib/offer.js` (01 Task 6). Th
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/shortlist.js control-room/tests/shortlist.test.mjs` +
   `git commit -m "Shortlist: filter parsing, first-email room, banner and pick wording" -m "$TRAILER"`.
 
-### Task 3: Follow-ups due today (`followupsDueToday`)
+### Task 2: Follow-ups due today (`followupsDueToday`)
 
-**Files:** Create `control-room/functions/_lib/followups.js` (stage 6 extends this file); Test
-`control-room/tests/followups-due.test.mjs`.
+**Files:** Create `control-room/functions/_lib/followups.js` (stage 6 modifies this file and keeps this export and
+its test); Test `control-room/tests/followups-due.test.mjs`.
 
 **Interfaces:**
 - Consumes: `ukDate`, `addUkDays`, `ukToUtc` from `_lib/ukTime.js`; `fakeD1()` from `tests/helpers/fakeD1.mjs`.
-- Produces: `followupsDueToday(DB, now) → Promise<number>` = follow-up messages with status `queued`/`sending`
-  + prospects whose `next_followup_at` is before the end of today (UK) — i.e. `< ukToUtc(addUkDays(ukDate(now), 1), "00:00")`.
-  (Prospects with `next_followup_at` NULL are stopped/finished and never count.)
+- Produces: `followupsDueToday(DB, now) → Promise<number>` = follow-up messages with status `queued` (a `sending` one
+  is already counted by stage 0's `sentToday`) + prospects whose `next_followup_at` is before the end of today (UK) —
+  i.e. `< ukToUtc(addUkDays(ukDate(now), 1), "00:00")`. (Prospects with `next_followup_at` NULL are stopped/finished
+  and never count.)
 
 - [ ] **Step 1: Write the failing test** — `followups-due.test.mjs`: seed (now = `2026-10-21T08:00:00Z`) prospects
   with `next_followup_at` `2026-10-21T06:00:00Z`, `2026-10-21T22:30:00Z` (23:30 BST, still today),
   `2026-10-21T23:30:00Z` (00:30 BST tomorrow), NULL; one `messages` row kind `followup` status `queued`, one kind
-  `followup` status `sent`, one kind `first` status `queued`. `assert.equal(await followupsDueToday(DB, now), 3)`.
+  `followup` status `sending` (counted in `sentToday`, not here), one kind `followup` status `sent`, one kind `first`
+  status `queued`. `assert.equal(await followupsDueToday(DB, now), 3)`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/followups-due.test.mjs` → fails: cannot
   find module `../functions/_lib/followups.js`.
 - [ ] **Step 3: Implement `followupsDueToday(DB, now)` in `control-room/functions/_lib/followups.js`** — two COUNT
@@ -411,16 +413,17 @@ Prices, `GUARANTEE` and `offerFor` are stage 0's `_lib/offer.js` (01 Task 6). Th
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/followups.js control-room/tests/followups-due.test.mjs`
   + `git commit -m "Shortlist: count follow-ups due today" -m "$TRAILER"`.
 
-### Task 4: List query, capacity and ready counts (`shortlist-db.js`)
+### Task 3: List query, capacity and ready counts (`shortlist-db.js`)
 
 **Files:** Create `control-room/functions/_lib/shortlist-db.js`, `control-room/tests/helpers/shortlistSeed.mjs`;
 Test `control-room/tests/shortlist-db.test.mjs`.
 
 **Interfaces:**
-- Consumes: Task 2 exports; `followupsDueToday` (Task 3); `sentToday(DB, now)` from `_lib/mail/outbox.js`;
-  `mailboxCap`; `ukDate`; `fakeD1()`.
+- Consumes: Task 1 exports; `followupsDueToday` (Task 2); `sentToday(DB, now)` from `_lib/mail/outbox.js` (counts
+  `sent` today plus any `sending`); `mailboxCap`; `ukDate`; `fakeD1()`.
 - Produces:
   - `capacityNow(DB, now) → Promise<{mailboxes, paused, cap, sent, followupsDue, firstQueued, room, warmupFrom, banner}>`
+    (stage 6 Task 6 later caps `room` with `roomForFirsts(DB, now).total` inside this function)
   - `readyCounts(DB, now, room) → Promise<{top, b, b_included, grades, waiting_demo}>`
   - `listLeads(DB, filters, now) → Promise<{rows, total, page, pages, grade_counts: {"A+","A","B","C","D","none"} | null, view_counts: {ready, all} | null, facets: {trades: [{value, n}], towns: [{value, n}]} | null, capacity, ready}>`
   - Row shape: `{place_id, name, trade, town, phone, website, rating, review_count, quality_score, excluded, grade, grade_reason, research_status, email, suppressed, stage, stage_label, views, last_view_at, hot, demo_slug, top_issue, owner_first}` (`owner_first` only when `research.owner.confident`; `top_issue` = `json_extract(leads.issues,'$[0]')`)
@@ -465,7 +468,7 @@ OFFSET (page−1)×50`.
     is the live one.
   - `test("grade counts")`: page 1 `grade_counts` sums to the total with excluded on; page 2 returns
     `grade_counts === null`.
-  - `test("capacity")`: cap 10, 7 queued follow-ups → `room 3`, banner text as Task 2; after seeding 2 `sent` first
+  - `test("capacity")`: cap 10, 7 queued follow-ups → `room 3`, banner text as Task 1; after seeding 2 `sent` first
     messages today and 1 `queued` first → `room` 0 (10 − 2 − 7 − 1); no mailboxes → `banner.link.href === "#/setup"`.
   - `test("statement budget")`: wrap `DB.prepare` to count; 60 seeded leads; `listLeads(DB, parseLeadFilters(new
     URLSearchParams("view=all")), now)` → count ≤ 12 and `rows.length === 50`, `pages === 2`.
@@ -484,62 +487,73 @@ OFFSET (page−1)×50`.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/shortlist-db.js control-room/tests/helpers/shortlistSeed.mjs control-room/tests/shortlist-db.test.mjs`
   + `git commit -m "Shortlist: lead list, ready rule and today's sending room" -m "$TRAILER"`.
 
-### Task 5: Drawer payload (`leadDetail`)
+### Task 4: Drawer payload (`leadDetail`)
 
 **Files:** Modify `control-room/functions/_lib/shortlist-db.js`; Test `control-room/tests/shortlist-db.test.mjs`
 (add tests).
 
 **Interfaces:**
-- Consumes: `offerFor(now)` (Task 1), `isHot`, `STAGE_LABELS` (Task 2), `parseJson` from `_lib/util.js`.
+- Consumes: `offerFor(now)` and `GUARANTEE` from stage 0's `_lib/offer.js`; `isHot`, `STAGE_LABELS` (Task 1);
+  `parseResearch(row)` from stage 2's `_lib/research.js`; `parseJson` from `_lib/util.js`.
 - Produces: `leadDetail(DB, placeId, now) → Promise<Detail|null>`:
   ```
   { lead: {place_id, name, trade, town, search_town, address, postcode, phone, website, maps_url, rating, review_count,
            quality_score, company_number, excluded, exclude_reason, issues[], findings[], socials{}, reviews[≤3 {author, rating, text}],
            notes, first_seen_at},
-    research: null | {status, grade, points, grade_reason, angle[], opener, owner, best_email, best_email_why, emails[],
-                      site_review, too_big, notes, researched_at},
+    research: null | parseResearch(row)   // stage 2's parsed shape: {status, grade, points: {need, means, reach, fit,
+                                          //   total, capped, reasons}, grade_reason, angle[], opener, owner, best_email,
+                                          //   best_email_why, emails[], site_review, too_big, notes, researched_at, …}
+    research_waiting: number,             // research rows with status 'queued' (the card's "N leads waiting")
     prospect: null | {stage, stage_label, stage_at, email, greet_name, first_sent_at, followup_step, next_followup_at,
                       views, last_view_at, last_inbound_at, lost_reason, hot},
-    demo: null | {slug, url: "/d/<slug>", expires_at},
+    demo: null | {slug, url: "/d/<slug>", expires_at, template: string|null},
     map_rank: null | {scan_id, keyword, avg_rank, top3_pct, found_pct, updated_at},
     messages: [{id, direction, kind, step, author, from_addr, to_addr, subject, body, status, sent_at, received_at, created_at, class}],
     calls: [{slot_at, status}],
     suppressed: boolean,
-    offer: offerFor(now) }
+    offer: offerFor(now),                 // {weekend, full: {label, build, monthly, freeDays, wasBuild?}, website, banner}
+    guarantee: GUARANTEE }                // {headline, section}
   ```
-  JSON columns parsed with `parseJson` (bad JSON → `null`/`[]`, never a throw). `findings` and `reviews` come from
-  `json_extract(l.audit, '$.findings')` / `'$.reviews'`; `audit` itself is never selected.
+  The research row goes through `parseResearch` (bad JSON → `null`/`[]`, never a throw); other JSON columns through
+  `parseJson`. `findings` and `reviews` come from `json_extract(l.audit, '$.findings')` / `'$.reviews'`; `audit`
+  itself is never selected. `demo.url` is relative (`/d/<slug>`), so Nik's own visits from the Control Room host
+  never count. `demo.template` is stage 4's `templateIdFor(lead.trade)`, loaded only when a live demo exists with
+  `await import("./demo/data.js").then(m => m.templateIdFor(trade)).catch(() => null)` (null before stage 4 ships,
+  which hides the Preview toggle).
 
 - [ ] **Step 1: Write the failing test** — add to `shortlist-db.test.mjs`:
-  - `test("lead detail")`: seed lead + research (`points: {"need":4,"means":3,"reach":5,"fit":4}`, owner
-    `{"first":"Mark","full":"Mark Dean","source_url":"https://x.co.uk/about","confident":true}`) + prospect `ready` +
-    live demo `green-leaf` + map rank + 5 reviews in audit + 40 messages. Assert `d.research.points.reach === 5`,
-    `d.demo.url === "/d/green-leaf"`, `d.lead.reviews.length === 3`, `d.messages.length === 40` and oldest first,
-    `d.offer.monthly_pence === 24900`, `"audit" in d.lead === false`.
-  - `test("detail budget")`: counting wrapper → ≤ 4 statements for that lead (lead row + one batch of demo, messages,
-    calls counted as 3 statements → total ≤ 4).
+  - `test("lead detail")`: seed lead + research (`points: {"need":4,"means":3,"reach":5,"fit":4,"total":16,
+    "capped":null,"reasons":{"need":"No website","means":"61 reviews","reach":"Owner's own email","fit":"Landscaper"}}`,
+    owner `{"first":"Mark","full":"Mark Dean","source_url":"https://x.co.uk/about","confident":true}`) + 2 more
+    `queued` research rows + prospect `ready` + live demo `green-leaf` + map rank + 5 reviews in audit + 40 messages.
+    Assert `d.research.points.reach === 5`, `d.research.points.reasons.reach === "Owner's own email"`,
+    `d.research_waiting === 2`, `d.demo.url === "/d/green-leaf"`, `d.lead.reviews.length === 3`,
+    `d.messages.length === 40` and oldest first, `d.offer.full.monthly === 24900`,
+    `d.guarantee.headline === "Top 3 in Google search results in 90 days. GUARANTEED."`, `"audit" in d.lead === false`.
+  - `test("detail budget")`: counting wrapper → ≤ 4 statements for that lead (lead row, with `research_waiting` as a
+    scalar subquery, + one batch of demo, messages, calls counted as 3 statements → total ≤ 4).
   - `test("bad json and missing lead")`: research `angle = "not json"` → `d.research.angle` deep-equals `[]`;
     `leadDetail(DB, "nope", now)` → `null`.
   - `test("long bodies are cut")`: a 9,000-character body → returned length ≤ 5,000 + `"…"`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/shortlist-db.test.mjs` → fails:
   `leadDetail` is not exported.
 - [ ] **Step 3: Implement `leadDetail(DB, placeId, now)` in `control-room/functions/_lib/shortlist-db.js`** — first
-  statement joins leads/research/prospects/lead_map_rank with the suppression EXISTS; if found, one `DB.batch` of
-  live demo, messages (`ORDER BY created_at LIMIT 100`), calls (`ORDER BY slot_at DESC LIMIT 5`).
+  statement joins leads/research/prospects/lead_map_rank with the suppression EXISTS and
+  `(SELECT COUNT(*) FROM research WHERE status = 'queued') AS research_waiting`; if found, one `DB.batch` of live
+  demo, messages (`ORDER BY created_at LIMIT 100`), calls (`ORDER BY slot_at DESC LIMIT 5`).
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/shortlist-db.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/shortlist-db.js control-room/tests/shortlist-db.test.mjs`
   + `git commit -m "Shortlist: one-request lead panel data" -m "$TRAILER"`.
 
-### Task 6: Routes and lead actions
+### Task 5: Routes and Not a fit
 
 **Files:** Modify `control-room/functions/api/leads.js`; Move `control-room/functions/api/leads/[id].js` →
-`control-room/functions/api/leads/[id]/index.js`; Create `control-room/functions/api/leads/[id]/not-a-fit.js`,
-`control-room/functions/api/leads/[id]/research-again.js`; Modify `control-room/functions/_lib/shortlist-db.js`;
-Test `control-room/tests/leads-api.test.mjs`.
+`control-room/functions/api/leads/[id]/index.js`; Create `control-room/functions/api/leads/[id]/not-a-fit.js`;
+Modify `control-room/functions/_lib/shortlist-db.js`; Test `control-room/tests/leads-api.test.mjs`.
 
 **Interfaces:**
-- Consumes: `listLeads`, `leadDetail`, `parseLeadFilters`; `db`, `json`, `bad`, `now` from `_lib/util.js`;
-  `fireRoutine(DB, name, text, {fetchImpl})` from `_lib/routines.js`.
+- Consumes: `listLeads`, `leadDetail`, `parseLeadFilters`; `db`, `json`, `bad`, `now` from `_lib/util.js`; `ukDate`
+  from `_lib/ukTime.js`.
 - Produces:
   - `GET /api/leads?<filters>` → `listLeads` result; `GET /api/leads/:id` → `{detail}` or 404
     `{error: "That lead isn't in the database any more. Close this panel and refresh."}`.
