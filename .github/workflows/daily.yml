@@ -3,8 +3,9 @@ name: Daily autopilot
 # Every morning (no AI, free): search the next town on the territory list (Lead Scraper page → Autopilot), which then
 # hands the hard cases to Claude as usual, and write SITREP.md: what happened, what needs Nik, what's next.
 on:
-  schedule:
-    - cron: "17 5 * * *"   # 06:17 UK summer time / 05:17 winter (off the hour: GitHub delays :00 jobs)
+  # Paused 19 Oct while the system is rebuilt (docs/rebuild/decisions.md). To resume, restore:
+  # schedule:
+  #   - cron: "17 5 * * *"   # 06:17 UK summer time / 05:17 winter (off the hour: GitHub delays :00 jobs)
   workflow_dispatch:
 
 permissions:

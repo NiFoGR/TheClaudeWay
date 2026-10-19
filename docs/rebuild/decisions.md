@@ -22,8 +22,9 @@ and copies in old parts only where they're proven.
 - **Replies:** Claude replies on its own, copying Nik's style (learned from the emails he sends and the guidance he
   gives). Super angry or legal replies go to Nik through Todo.
 - **Fast replies:** Namecheap forwards a copy of every incoming email to a Cloudflare Email Worker on a subdomain,
-  which wakes Claude's reply Routine. Nik said no to the hourly backup check (see open question 3).
-- **Calls:** Nik's call slots are Tue, Wed, Fri, Sat and Sun, one a day (time to confirm: 11pm or 11am?). If a day is
+  which wakes Claude's reply Routine. No hourly backup check (Nik: replies to his own
+  emails are unlikely to be filed as spam).
+- **Calls:** Nik's call slots are 11am on Tue, Wed, Fri, Sat and Sun, one a day. If a day is
   already booked, Claude offers the next free day. Each booking appears on Todo with the email link.
 - **Chatbot on client sites:** a standard third-party website chatbot, not Claude, paid for out of the retainer.
   Claude picks the tool in the spec.
@@ -33,11 +34,11 @@ and copies in old parts only where they're proven.
   script). Delete the email version-testing engine, Today's picks, autopilot, SITREP, the "What to do" checklist,
   Roadmap, plan.md and funnel.md, but only in the new build. The old code isn't deleted.
 
-## Waiting on Nik
-
-1. Calls at 11pm or 11am?
-2. SEO guarantee wording: "We will get you in the top 3 of Google search results, or we work for free until we do."
-   Which results count (the Google Maps 3 or the normal results), and is there a time limit (90 days)?
-3. Hourly backup check: confirm there's none, so a reply Namecheap files as spam never reaches Claude.
-4. Should the old system's timers (daily search, research Routine) be turned off while the new one is built?
-5. "Review booster" on the order page: what is it, or does it come off?
+- **SEO guarantee:** "We'll get you into the top 3 on Google in your area, or we work for free until we do." It's
+  measured as the Google Maps top 3, using Map Rank's grid around their business. Still to settle: is there a
+  time limit (90 days)?
+- **Review booster:** part of the plan. It gets their customers to leave Google reviews. The spec defines exactly
+  what we deliver.
+- **Old system paused (19 Oct):** the `daily.yml` schedule is commented out and the "Aetos lead research (daily)"
+  Routine is disabled. Its last run researched 15 leads but found only 1 email: a shallow pass. Stage 2 has to fix
+  the research quality, not just the scheduling.
