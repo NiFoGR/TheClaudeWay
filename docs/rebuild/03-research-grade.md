@@ -643,9 +643,11 @@ suppressionRows) → boolean` (stage 1, `_lib/find.js`). Produces
     `scraper.owner.confident` mirrors `audit.owner_confident`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/research-queue.test.mjs` → `Cannot find module …/_lib/research-db.js`.
 - [ ] **Step 3: Implement `claimQueue` in `control-room/functions/_lib/research-db.js` and the route** — skip-update
-  first, then one SELECT joining `research`, `leads`, `lead_map_rank` and the claim setting (`LEFT JOIN settings c ON
+  first (excluded, missing, and suppressed via `leadSuppressed` against the `suppression` rows), then one SELECT joining `research`, `leads`, `lead_map_rank` and the claim setting (`LEFT JOIN settings c ON
   c.key = 'research:claim:' || r.place_id`, excluded when `c.value >= now − 3 h`) with the Part A ORDER BY, then one
-  `INSERT OR REPLACE` batch of claims; the route clamps `limit` to 1–8 and passes `new URL(request.url).origin`.
+  `INSERT OR REPLACE` batch of claims (claim value `iso(now)`); when building each item, drop Maps findings and set
+  `map_rank: null` unless `audit.map_rank.home !== false` and `audit.map_rank.scan_town` matches the lead's town
+  (case-insensitive); the route clamps `limit` to 1–8 and passes `new URL(request.url).origin`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/research-queue.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/research-db.js control-room/functions/api/agent/research-queue.js control-room/tests/research-queue.test.mjs` +
   `git commit -m "Research queue: 8 at a time, claimed for 3 hours, re-checks first" (+ trailers)`.
@@ -682,10 +684,13 @@ route `POST /api/agent/research/:place_id` → `{ok, place_id, grade, total, cap
 
 **Files:** Modify `control-room/functions/_lib/research-db.js`; Create `control-room/functions/api/research/[id].js`,
 `control-room/functions/api/research/[id]/wrong.js`; Test `control-room/tests/research-owner.test.mjs`.
-**Interfaces:** Consumes `parseResearch` (Task 3), `ukDate` (overview §8). Produces
+**Interfaces:** Consumes `parseResearch` (Task 3), `ukDate` (overview §8), `iso` (util.js), `fireRoutine(DB, name,
+text) → Promise<{ok, status, error?}>` (stage 0, `_lib/routines.js`). Produces
 `getResearch(DB, placeId) → Promise<{research: object|null, waiting: number}>`,
-`requeueResearch(DB, placeId, note, now) → Promise<"ok"|"not_found">`,
-routes `GET /api/research/:place_id`, `POST /api/research/:place_id/wrong`.
+`requeueResearch(DB, placeId, note, now, {fire = fireRoutine} = {}) → Promise<{fired: boolean, message: string}|null>`
+(`null` = no research row; the 30-minute guarded fire that stage 3's old "Research again" button had lives here),
+`RECHECK_FIRE_MINUTES = 30`,
+routes `GET /api/research/:place_id`, `POST /api/research/:place_id/wrong` → `{ok: true, fired, message}`.
 
 - [ ] **Step 1: Write the failing test** — `research-owner.test.mjs`:
   - `"GET returns parsed research and waiting count"`: a done row + 3 queued → `research.points.need` is a number,

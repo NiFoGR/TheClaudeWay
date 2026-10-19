@@ -550,7 +550,8 @@ Produces `checkoutParams({pkg: "full"|"website", weekend: boolean, lead: {place_
   - `product name`: `line_items[1][price_data][product_data][name]=Website build: Smith Roofing`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/checkout.test.mjs` → module not found.
 - [ ] **Step 3: Implement `checkoutParams(...)` in `_lib/checkout.js`** — builds the Part A object from
-  `termsFor(pkg, weekend)`; omits `customer_email` when falsy.
+  `termsFor(pkg, weekend)` (`unit_amount` = `terms.monthly` / `terms.build`; no price literals in `_lib`, which
+  stage 0's "no other module hard-codes a price" test enforces); omits `customer_email` when falsy.
 - [ ] **Step 4: Run tests to verify they pass** — same command → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/checkout.js control-room/tests/checkout.test.mjs`
   `git commit -m "Order and pay: Checkout Session parameters for both packages and the weekend price"`
@@ -559,11 +560,14 @@ Produces `checkoutParams({pkg: "full"|"website", weekend: boolean, lead: {place_
 
 **Files:** Create `control-room/functions/_lib/order-page.js`. Test `control-room/tests/order-page.test.mjs`.
 **Interfaces:**
-Consumes `offerFor` output, `pounds`, wording constants (Task 1); `h()` from stage 4's template engine.
+Consumes `offerFor` output (`{weekend, full, website, banner}`; crossed-out price = `offer.full.wasBuild`),
+`formatPounds`, `GUARANTEE`, `BUILD_GUARANTEE`, `BUILD_GUARANTEE_NOTE`, `WEEKEND_BANNER`, `NO_CONTRACT` (Task 1);
+`h()` from stage 4's template engine. The trader line arrives as a string (Task 5 gets it from stage 0's `traderLine`).
 Produces:
 ```js
 ORDER_NOTICES = {back, busy, failed, not_connected, already_client}   // exact Part A text; {Business} filled in
-renderOrder({lead, slug, offer, extras: {chatbot: boolean, reviews: boolean}, notice: keyof ORDER_NOTICES|null}) → string
+renderOrder({lead, slug, offer, extras: {chatbot: boolean, reviews: boolean}, notice: keyof ORDER_NOTICES|null,
+             trader: string}) → string
 renderThanks({lead, slug, state: "done"|"pending"|"not_found", onboardUrl?, terms?, amountPaid?, firstChargeOn?}) → string
 ukLongDate("YYYY-MM-DD") → "Friday 18 December 2026"
 ```

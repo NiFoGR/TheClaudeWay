@@ -212,7 +212,7 @@ e.g. `"service /services/roof-repairs: body has 412 words; it needs at least 600
 | Page set | exactly one each of `home`, `services`, `areas`, `about`, `reviews`, `contact`; 1–12 `service`; 0–8 `area` (one per form area 2–9); no other keys |
 | Paths | home `/`; `/services`, `/areas`, `/about`, `/reviews`, `/contact`; `/services/<slug>`, `/areas/<slug>`, slug `^[a-z0-9]+(-[a-z0-9]+)*$` ≤ 60; unique |
 | Services/areas match the form | every `service.name` is a ticked form service; every `area.name` is one of the form's areas 2–9, and each of those areas has a page; service pages follow form order |
-| Title | 30–120 characters (`TITLE_MAX = 120`, question Q1); unique per page; home title contains the town and the primary category (case-insensitive) |
+| Title | 30–120 characters (`TITLE_MAX = 120`, question Q-AF); unique per page; home title contains the town and the primary category (case-insensitive) |
 | Meta description | 70–155 characters; unique per page |
 | H1 | 10–70 characters; home H1 contains the primary category and the town; service H1 contains the service name; area H1 contains the area name |
 | Words (intro + sections + FAQ) | home ≥ 400, service ≥ 600, area ≥ 400, about ≥ 200, services ≥ 150, areas ≥ 150, contact ≥ 60, reviews ≥ 0 |
@@ -677,7 +677,13 @@ When a client sends their onboarding form, their site appears here."
 - **Domain:** website address field ("Type it like smithroofing.co.uk"), the plan's steps as checkboxes with their
   instructions, the nameserver fields (case B), the Send buttons for the client emails, **Check now** (runs the DNS
   check and shows the plain-English detail), **Open {host}** when DNS is ready but `seen_at` is empty.
-- **Google Business Profile:** the client's answer, checkbox "Invite accepted" / "Profile created".
+- **Google Business Profile:** the client's answer, checkbox "Invite accepted" / "Profile created". "Invite
+  accepted" calls stage 11's `access` action (`POST /api/care/<client_id> {action: "access", on: <UK today>}`, which
+  sets `care.gbp_access_on`: day 0 of the 90-day guarantee) and, on success, closes `build:<client_id>:gbp`; an error
+  shows the API's own text. The care row only exists once the site is live, so before that the checkbox is disabled
+  with "Tick this once the site is live: the day you tick it starts the 90 days." Stage 11 is built after this stage;
+  until it ships, the tick only closes the todo. "Profile created" closes the todo only (stage 11's client page takes
+  the Place ID and the Manager tick once Google has verified it).
 - **Review booster:** review link (editable, same host check, error "That isn't a Google review link."), QR preview,
   "Open the printable card", the three templates with Copy buttons.
 - **Chatbot:** "On" or "Off: {reason}"; messages today / this month; fallbacks today; switch "Chatbot for this
@@ -704,10 +710,12 @@ Business Profile with {name}" when No; "Check whether {name} has a Google Busine
 `build:new:<client_id>`. `setup` todos: `setup:gbp-email`, `setup:chatbot` ("Connect the chatbot (Cloudflare Workers
 AI) on Setup", only once a Full Package client exists); `setup:system_mailbox` belongs to stage 9.
 
-Health lights:
-- `routine:build` — heartbeat as overview §7; red if a fire failed or content wasn't posted 3 h after a fire.
+Health lights (overview shape `{name, level: "green"|"amber"|"red"|"grey", detail, fix}`, added with stage 0's
+`registerLight`; stage 0's `computeLights` is not edited; grey means "not in use" and never adds a todo):
+- `routine:build` — stage 0's own light (heartbeat cadence, failed fire); this stage adds nothing to it.
 - `sites` — red if any site is past `due_live_at` without `live_at`, or a live site's DNS check failed twice in a row;
-  amber if any site is due within 48 h and not live; green otherwise.
+  amber if any site is due within 48 h and not live, if content wasn't posted 3 h after a build fire ("Claude hasn't
+  built {name}'s site"), or at 40+ live sites (section 15); green otherwise; grey when there are no client sites.
 - `chat` — amber if `ai_errors` today > 10 or the all-sites cap was hit today; grey when no site has chat on.
 
 ## 15. Edge cases

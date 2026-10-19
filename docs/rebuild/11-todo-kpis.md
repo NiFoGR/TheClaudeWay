@@ -38,25 +38,27 @@ Top to bottom. Every section works at 375 px wide with a 16 px gutter and no sid
 
 ### 1. Health lights
 
-From stage 0's `healthFromDb(DB, now)` (lights `{name, level: "green"|"amber"|"red", detail, fix}`), sorted red,
-then amber, then green, then by `name`.
+From stage 0's `(await healthFromDb(DB, env, now)).lights` (each `{name, level: "green"|"amber"|"red"|"grey",
+detail, fix}`; grey means "not in use"), sorted red, then amber, then green, then grey, then by `name`.
 
 - Each red or amber light is a full-width row: coloured dot, `detail` in bold, then `fix` on the next line.
-- Greens fold into one chip: "✓ <n> checks fine" ("1 check fine" for one). Tapping it shows the list.
-- All green: one chip, "✓ Everything is running."
+- Greens fold into one chip: "✓ <n> checks fine" ("1 check fine" for one). Tapping it shows the list, with any grey
+  lights under it marked "not in use". Grey lights never count as a problem.
+- No red or amber: one chip, "✓ Everything is running."
 - If health can't be computed, the row says "Couldn't check the system lights: <error>. Refresh the page."
 
 ### 2. Today
 
-Open `todos` (`status = 'open'`), except kind `health` (the lights already show those), grouped by stage 0's
-`groupBoard(rows, now)`:
+Open `todos` (`status = 'open'`), grouped by stage 0's `groupBoard(rows, now)`. A `health` todo is left out only when
+its `dedupe` equals `health:<name>` for one of the current lights (the light already shows it). Every other `health`
+todo (for example 02's `health:find:*` and `health:stale:*`, 06's `health:followup-*`, 10's day-90 waiting) is shown.
 
 1. **Overdue**: red label "Overdue", oldest first.
 2. **Today**: no label.
 3. **Coming up**: collapsed, "Coming up (<n>)".
 
-Within each group, rows sort by kind in this order: `escalation, call_time, call, hot, payment, build, care, kpi,
-pick, setup`. Within a kind they sort by `due_at` ascending, with no `due_at` last, then by `id`.
+Within each group, rows sort by kind in this order: `escalation, health, call_time, call, hot, payment, build, care,
+kpi, pick, setup`. Within a kind they sort by `due_at` ascending, with no `due_at` last, then by `id`.
 
 What each row shows. All text comes from the todo row, enriched by the API.
 
@@ -66,19 +68,20 @@ What each row shows. All text comes from the todo row, enriched by the API.
 | `call_time` | title, detail, `draft` if present | **Send** / **Edit** when a draft exists, **Open email thread**, Done, Dismiss |
 | `call` | title, time "Tue 11:00", phone | **Call <phone>** (`tel:`), **Open email thread**, Done, Dismiss |
 | `hot` | title, phone | **Call <phone>** when there's a phone, **Open lead**, Done, Dismiss |
-| `payment`, `build`, `care`, `kpi`, `pick`, `setup` | title, detail | **Open** (`todos.link`), Done, Dismiss |
+| `health`, `payment`, `build`, `care`, `kpi`, `pick`, `setup` | title, detail | **Open** (`todos.link`), Done, Dismiss |
 
 - **Phone:** for `call`, it's the phone on the soonest `calls` row with `status = 'confirmed'` for that `place_id`,
   else `leads.phone`. For `hot`, `call_time` and `escalation`, it's `leads.phone`. Phones are formatted as stored.
-- **Links:**
-  - Open lead: `#/lead/<place_id>` (stage 3).
-  - Open email thread: `#/lead/<place_id>/thread` (stage 7).
+- **Links** (every in-app link uses the `/#/…` form):
+  - Open lead: `/#/lead/<place_id>` (stage 3).
+  - Open email thread: `/#/replies/<place_id>` (stage 7's thread). `#/lead/<place_id>/thread` still works as an alias.
   - With no `place_id`, neither link is shown.
 - **Done / Dismiss:** `PATCH /api/todo/:id {status}`. The row disappears at once. If the call fails, it comes back with
   a toast: "Couldn't update it: <error>". A done or dismissed todo never comes back: `addTodo` inserts OR IGNORE on
   `dedupe`, so the same item is never re-added.
-- **Send:** `POST /api/todo/:id/send {body}`. On success the toast says "Sent. It's in the email thread." and the row
-  disappears (the todo is done).
+- **Send:** `POST /api/todo/:id/send {body}`. It sends through stage 7's `sendAsNik` (the inbound message id comes
+  from the todo's `dedupe`). On success the toast says "Sent. It's in the email thread." and the row disappears (the
+  todo is done). On failure the toast shows stage 7's plain-English error.
 - Empty: "Nothing for you right now. New things show up here the moment they need you."
 
 ### 3. Pipeline

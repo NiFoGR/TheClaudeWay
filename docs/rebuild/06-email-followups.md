@@ -738,13 +738,17 @@ test("sweepStops cancels queued follow-ups on opt-out, not on a demo view", asyn
 
 **Interfaces:**
 Consumes: `queueMessage(DB, msg)`; `demoReady(DB, placeId) → Promise<{ok, url, reason}>` (stage 4); `addTodo`,
-`closeTodos`; `businessName`; `renderFollowup`; `coldFooter`; `nextUkWindowStart`, `addUkDays`, `ukToUtc`.
+`closeTodos`; `businessName`; `renderFollowup`; `coldFooter`; `getSetting` (`business:sender_name`);
+`applyStageEvent` (stage 0); `nextUkWindowStart`, `addUkDays`, `ukToUtc`.
 Produces:
+`INTERRUPTED_PREFIX = "The send was interrupted"` (stage 0's error text for a send stuck in `sending`);
 `retryFailed(DB, now, {limit = 10}) → Promise<number>` (leads in `emailed`/`viewed`, `next_followup_at` NULL, whose
-latest message for step `followup_step + 1` is `failed`: fewer than 3 failed attempts → `next_followup_at` = next
-day's 07:00 UK (Sunday → Monday); 3 → `stopFollowups` + `health` todo `health:followup-fail:<place_id>`);
+latest message for step `followup_step + 1` is `failed`: if its `error` starts with `INTERRUPTED_PREFIX` → never
+retried (it may have gone): `stopFollowups` + `health` todo `health:followup-fail:<place_id>` "Follow-ups to
+<business> stopped: <error>"; otherwise fewer than 3 failed attempts → `next_followup_at` = next day's 07:00 UK
+(Sunday → Monday); 3 → `stopFollowups` + `health` todo `health:followup-fail:<place_id>`);
 `closeFinished(DB, now, {limit = 10}) → Promise<number>` (`followup_step = 9` and `next_followup_at ≤ now` →
-`sequence_done`, `lost_reason` "sequence_done");
+`applyStageEvent(DB, place_id, "sequence_done", now, {lost_reason: "sequence_done"})`);
 `queueDue(DB, now, {limit = 3}) → Promise<{queued: number, held: string|null}>`;
 `followupsStep(ctx: {DB, env, now}) → Promise<string>` (runs `ensureTemplates`, `syncSent`, `sweepStops`,
 `retryFailed`, `closeFinished`, `queueDue`; summary like `"synced 1, stopped 0, retried 0, closed 0, queued 2"` or
@@ -758,7 +762,8 @@ follow-up emails", link: "/#/voice", dedupe: "setup:followups"})`, return `held:
 not ok → `health` todo `health:followup-demo:<place_id>` "Follow-ups to <business> are on hold: their demo isn't
 available (<reason>)." and skip; ok → `queueMessage` with `kind "followup"`, `step`, `author "system"`, same
 `mailbox_id`, `to_addr` = `prospects.email`, `subject` "Re: " + subject, `body` = `renderFollowup(...)` + "\n\n" +
-`coldFooter(display_name)`, new `message_id`, `in_reply_to` = root, `refs` = root + sent follow-ups' ids,
+`coldFooter(<business:sender_name>)` (read once per run), new `message_id`, `in_reply_to` = root, `refs` = root + sent
+follow-ups' ids (stage 0's `dispatchDue` sends the row's own `message_id`/`in_reply_to`/`refs`),
 `due_at` = `next_followup_at`; then `next_followup_at` NULL and close `health:followup-demo:<place_id>`.
 
 - [ ] **Step 1: Write the failing test**

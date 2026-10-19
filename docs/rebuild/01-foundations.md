@@ -125,7 +125,7 @@ Setup, the relay Worker and the landing page.
 ### Email in
 - **Relay:** the relay Worker stores the lower-cased headers as JSON and the raw MIME, capped at 262,144 bytes, in
   `inbound_raw`. It then POSTs `APP_URL/api/tick?reason=inbound`. The `inbound` step handles up to 10 rows a tick,
-  oldest first.
+  oldest first, and doesn't start another row once it has made 30 D1 queries (the rest wait for the next tick).
 - **Body text:** the first `text/plain` part that isn't an attachment, decoded from quoted-printable or base64, in
   its charset (utf-8, iso-8859-1, windows-1252). If there's no text part, the `text/html` part with tags stripped.
   Multipart is followed up to 3 levels deep.

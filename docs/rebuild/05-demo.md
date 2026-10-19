@@ -871,7 +871,8 @@ put `demoCardHtml` into stage 3's `#d-demo` mount point; remove "Make demo now")
 Consumes: Task 13 routes; `esc`, `safeUrl`, `api`, `toast`, `pageHead`, `fmtDate` from `lib.js`.
 Produces: `demoPage()` (route `#/demo`), `demoCardHtml(info) → string` (pure, exported), `lookCardHtml(t) → string`
 (pure, exported). Iframes: `<iframe sandbox="" loading="lazy" src="/api/demo/preview?template=…&place_id=…">`.
-Copy exactly as Part A "What Nik sees".
+"Open demo" links (drawer card and Demo page) are the relative `/d/<slug>` (from `slug`, checked against
+`^[a-z0-9-]{3,60}$`), never `demo.url`; "Copy link" copies `demo.url`. Copy exactly as Part A "What Nik sees".
 
 - [ ] **Step 1: Write the failing test** — `demo-ui.test.mjs` imports the two pure functions (no DOM):
   ```js
@@ -881,13 +882,17 @@ Copy exactly as Part A "What Nik sees".
   assert.match(lookCardHtml({ id: "landscaper", label: "Landscaper", version: 1, approved: false, waiting: 6, previews: [] }), /6 leads are waiting for this look before their first email can go\./);
   assert.match(lookCardHtml({ id: "landscaper", label: "Landscaper", version: 2, approved: false, approved_version: 1, waiting: 0, previews: [] }), /This look changed since you approved version 1\./);
   assert.doesNotMatch(demoCardHtml({ demo: { slug: "x", url: "javascript:alert(1)", expires_at: "x" }, views: 0, ready: { ok: true } }), /href="javascript/);
+  const ready = demoCardHtml({ demo: { slug: "a-b-7k2p9q", url: "https://aetoswebsites.com/d/a-b-7k2p9q", expires_at: "2027-04-17T10:00:00Z" }, views: 0, ready: { ok: true } });
+  assert.match(ready, /href="\/d\/a-b-7k2p9q"[^>]*>Open demo/);          // relative: Nik's cookie goes with it, so his views never count
+  assert.doesNotMatch(ready, /href="https:\/\/aetoswebsites\.com\/d\/a-b-7k2p9q"[^>]*>Open demo/);
   ```
   (`demo.js` must import nothing that touches `document` at module load; DOM work happens inside `demoPage()`.)
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/demo-ui.test.mjs` → FAIL.
 - [ ] **Step 3: Implement `demoPage`, `demoCardHtml`, `lookCardHtml` in `control-room/public/js/demo.js`** and wire
-  the route, nav and drawer; "Approve this look" posts `{template, version}` and shows the API's error text in a toast.
+  the route (no nav item) and the drawer's `#d-demo` mount; "Approve this look" posts `{template, version}` and shows
+  the API's error text in a toast.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs && for f in control-room/public/js/*.js; do node --check "$f"; done` → PASS.
-- [ ] **Step 5: Commit** — `git add control-room/public/js/demo.js control-room/public/js/app.js control-room/public/js/leads.js control-room/public/js/roadmap.js control-room/public/style.css control-room/tests/demo-ui.test.mjs && git commit -m "Demo page: approve looks, see demos and views; demo card in the lead drawer" -m "$TRAILER"`
+- [ ] **Step 5: Commit** — `git add control-room/public/js/demo.js control-room/public/js/app.js control-room/public/js/leads.js control-room/public/style.css control-room/tests/demo-ui.test.mjs && git commit -m "Demo page: approve looks, see demos and views; demo card in the lead drawer" -m "$TRAILER"`
 
 Then run the Part A "Perfect when" live checks 6–12 on the deployed site.
 
