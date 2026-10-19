@@ -184,7 +184,7 @@ Setup, the relay Worker and the landing page.
 
   | Step | Every | Does |
   | --- | --- | --- |
-  | `inbound` | every tick | processes up to 10 `inbound_raw` rows |
+  | `inbound` | every tick | processes up to 10 `inbound_raw` rows, stopping at 30 D1 queries |
   | `send` | every tick | `dispatchDue` |
   | `health` | every tick | lights, todos, beat `tick` |
 
@@ -970,7 +970,7 @@ that UK day.
       this.
     - **`lost_reason`:** `opt_out`, `bounce` and `sequence_done` set it to the event name; `said_no` stores the
       caller's `lost_reason` (`not_now`, `not_interested` or `call`).
-    - When the stage becomes `lost`, it sets `next_followup_at = NULL` and cancels `queued` out messages of kind
+    - When the stage becomes `lost` or `won`, it sets `next_followup_at = NULL` and cancels `queued` out messages of kind
       `first`/`followup` for the lead (`status='cancelled'`, `error='Stopped: <event>'`).
   - `suppress(DB, value, kind, reason, now) → Promise<void>` (INSERT OR IGNORE).
   - `isSuppressed(DB, email) → Promise<string|null>`, which returns the reason for the exact lower-cased address or
@@ -1813,8 +1813,8 @@ Everything in overview §8 is built here with exactly those signatures. These ar
   `checkoutWeekend(now, seenWeekend)`, `formatPounds(pence)` (pennies and negatives too), `GUARANTEE`
   `{headline, section}`, `BUILD_GUARANTEE`, `WEEKEND_BANNER`, `NO_CONTRACT`. `money.js` re-exports `PACKAGES`.
   Later stages only add exports (07 `offerFacts`, 08 `BUILD_GUARANTEE_NOTE`), tested in their own new files; none
-  re-creates the module, `offer.test.mjs` or the `money.js` re-export. There is no `gbp`, `offerNow` or `*_PENCE`
-  besides `MONTHLY_PENCE`.
+  re-creates the module, `offer.test.mjs` or the `money.js` re-export. Amounts are always formatted with
+  `formatPounds`, and the only pence constant besides `PACKAGES` is `MONTHLY_PENCE`.
 - `STAGES`, `OPEN_STAGES`, `LOST_REASONS`, `nextStage(current, event)` (`_lib/stages.js`), with every event of
   overview §5 (including `reopen`, `nik_handled`, `call_cancelled`). Later stages don't edit `stages.js`.
 - `applyStageEvent(DB, placeId, event, now, {lost_reason, email, greet_name})` → `{from, to}|null`,
@@ -1827,52 +1827,73 @@ Everything in overview §8 is built here with exactly those signatures. These ar
 - `ROUTINES`, `FIRE_URL_RE`, `TOKEN_RE` (`_lib/routines.js`). `fireRoutine` takes an extra
   `{fetchImpl, now}` option bag, and `beat` takes an optional 5th argument `now`.
 - The standard Routine prompt preamble in `routines/README.md`, including the "Test from the Control Room" payload
-  handling. Every `routines/<name>.md` (stages 2, 7, 10, 11, KPIs) must start with it.
+  handling. Every `routines/<name>.md` (03, 07, 09, 10, 11) starts with it verbatim, its test asserts it, and the
+  prompt calls only `$CONTROL_ROOM_URL/api/agent/*` (the variable is set in the shared "Aetos" environment).
+  Routines are named `aetos-<name>`; their URL and token are pasted on **Setup → Claude**.
 
 **Mail**
 - `OPT_OUT_LINE` (`_lib/mail/compose.js`). `dispatchDue` refuses `first`/`followup` bodies that don't end with it,
   so stages 5–6 must append `coldFooter(nikName)`.
 - `sendViaSmtp(mailbox, password, message, {mailer})` returns `{ok, ms, error?}` and never throws. Also
   `testSmtpLogin`, `explainSmtpError`.
-- `dispatchDue` returns `{sent, failed, held}` (a superset of the overview's). It assigns `pickMailbox` to cold
-  messages that have no `mailbox_id`, and sets `prospects.mailbox_id` when it's null.
+- `dispatchDue(DB, env, now, {limit = 2, send = sendViaSmtp, kinds = null})` returns `{sent, failed, held}`. This
+  is the final contract: follow-ups before first emails before the rest; the row's `message_id`/`in_reply_to`/`refs`
+  are kept (a `message_id` is generated only when null); a paused mailbox holds only `first`/`followup`; suppression
+  is checked only for `first`/`followup`/`reply`. It assigns `pickMailbox` to cold messages that have no
+  `mailbox_id`, and sets `prospects.mailbox_id` when it's null.
 - `COLD_WINDOW`, `sendStep` (`_lib/mail/outbox.js`).
-- `processInbound`, `inboundStep`, `BOUNCE_PAUSE` (`_lib/mail/inbound-db.js`). Stage 7 extends the human branch;
-  stage 6's stop rules read `prospects.last_inbound_at`, which this step sets.
+- `processInbound`, `inboundStep`, `BOUNCE_PAUSE` (`_lib/mail/inbound-db.js`). Stage 7 calls its `onHumanInbound`
+  from the human branch of `processInbound`; stage 6's stop rules read `prospects.last_inbound_at`, which this step
+  sets. Linking also matches `From` against `client_links.email` and sets `messages.client_id`. For a `won`
+  prospect or a client, an `opt_out`-class email is handled as `human`.
 
 **Tick, health and setup**
-- `runTick` passes `ctx = {DB, env, now, reason, results}`. `reason` and `results` are additions to overview §8.
-- `loadSetupStatus`, `setupGaps` (`_lib/setupStatus.js`); `computeLights`, `healthFromDb`, `healthStep`
-  (`_lib/health.js`).
+- `runTick` passes `ctx = {DB, env, now, reason, results, budget}` (`DB` counted; `budget.left()`). A tick makes at
+  most 50 D1 queries, keeps 6 for `health`, and reports `"deferred"` for a step it can't start with 10 left.
+  `countingDB(DB)` (`_lib/d1count.js`) and `TICK_BUDGET` are exported. `tick.js` has a marker for every slot of
+  overview §8 (inbound, reply_fire, followups, send, hot, pick, daily_find, stale_jobs, calls, sites, care, purge,
+  health).
+- `loadSetupStatus`, `setupGaps` (`_lib/setupStatus.js`); `computeLights`, `registerLight`, `healthFromDb`,
+  `healthStep` (`_lib/health.js`). One light shape: `{name, level: "green"|"amber"|"red"|"grey", detail, fix}`;
+  grey never adds a todo. `computeLights` gives stage 0's 10 lights; later stages call `registerLight(fn)` and never
+  edit it. `healthFromDb(DB, env, now)` returns `{lights, gaps}`. Light names are unique and none is a prefix of
+  another (the research backlog is stage 2's registered `research` light).
 
 **Public site and settings**
-- `renderLanding`, `renderPrivacy`, `renderNotFound`, `siteResponse`, `rootHostFor` (`_lib/site.js`). The public
+- `renderLanding`, `traderLine(business) → string|""`, `renderPrivacy`, `renderNotFound`, `siteResponse`,
+  `rootHostFor` (`_lib/site.js`). `renderLanding` takes `extras: {chatbot, reviews}` from the settings
+  `offer:chatbot_live` / `offer:review_booster_live`. The public
   paths on the root host are `/d/*`, `/onboard/*`, `/s/*`, `/api/tick` and `/api/stripe/webhook`. A stage adding a
   new public prefix adds it in `_middleware.js` and in `site.test.mjs`.
 - Settings keys: `business:sender_name`, `business:legal_name`, `business:address`, `business:ico_number`,
   `site:contact_email`, `site:root_host`, `smtp:proof`, `mailbox:<id>:resumed_at`, `routine:<name>:retry_after`,
-  `dns:last:<domain>`, `agent_token:created_at`, `schema:version`. Secrets: `secret:mailbox:<id>`,
+  `dns:last:<domain>`, `agent_token:created_at`, `schema:version`, `offer:chatbot_live`,
+  `offer:review_booster_live`. Secrets: `secret:mailbox:<id>`,
   `secret:agent_token`, `secret:routine:<name>:url`, `secret:routine:<name>:token`.
 
 **App shell**
-- `PAGES` registry in `public/js/app.js`: each later stage adds `{route, label, icon, render}`. File 11 swaps Home
-  for Todo.
+- `PAGES` registry in `public/js/app.js`: each later stage adds `{route, label, icon, render}` until file 11 ships.
+  File 11 then replaces it with `public/js/nav.js` (`NAV` + `routeFor`) and owns routing; later stages add their
+  routes there.
 
 **Needed from other stages**
-- **Stage 9:** delete a `suppression` row when that address pays (the `paid` event).
-- **Stage 10:** add the chatbot line to the landing page's "What you get" only when the chatbot is live (truth rule).
-- **A retention purge** (by Oct 2027): the privacy notice promises deleting non-customers' details 12 months after
-  last contact. Recommended owner: file 11's care/todo tick step.
+- **Stage 9 (08):** `fulfilCheckout` deletes the `suppression` row for the checkout email, with a test.
+- **Stage 10 (09):** write the landing's chatbot line, shown only while `offer:chatbot_live` is on (truth rule).
+- **Stage 11 (10), with Q-B's default:** add "Your 90 days start the day you give us access to your Google Business
+  Profile." to the landing's guarantee paragraph.
+- **Stage 4 (05):** the demo footer links "How we use your information" to `https://aetoswebsites.com/privacy`
+  (Q-N).
+- **File 11:** the monthly `purge` tick step (before `health`) that deletes non-clients' `prospects`/`messages`/
+  `research` rows with no message in 12 months, keeping `suppression` (Q-P; needed by Oct 2027).
 
 ## Questions for Nik
 
-1. **Privacy notice at first contact (UK GDPR Art. 14).** The first email may carry only one link (the demo).
-   Recommended default: the demo page footer (stage 4) links to aetoswebsites.com/privacy, and the email stays at
-   one link.
-2. **Landing page promise "We build a preview of your new website, free".** This is true of the demo system.
-   Recommended default: keep it, since inbound enquiries get a demo like any lead.
-3. **How long we keep data on people who never buy.** Recommended default: 12 months after last contact (written
-   in the privacy notice), with the purge built by file 11.
-4. **D-1 (how replies reach us).** If the old guide's Part 3 already pointed aetoswebsites.com's mail at Cloudflare,
-   option A means switching the MX back to Namecheap. Recommended default: option A (a ~£5/yr receive-only
-   domain), so your Namecheap inbox stays the real inbox.
+| # | Question | Default the build uses |
+| --- | --- | --- |
+| Q-A | Weekend crossed-out price: £1,950 or £2,000? (The landing page shows it.) | ~~£1,950~~ £1,750 in writing; "around £2,000" only when spoken |
+| Q-D | How replies reach Cloudflare (D-1). If the old guide's Part 3 already pointed aetoswebsites.com's mail at Cloudflare, option A means switching the MX back to Namecheap. | Option A: a ~£5/yr receive-only domain, so your Namecheap inbox stays the real inbox |
+| Q-E | Cloudflare $5/month plan (D-2), decided by the SMTP proof in Task 24 | Free plan until the SMTP test fails |
+| Q-J | Business address in footers (D-7) | Setup field; red banner until filled |
+| Q-N | Privacy notice at first contact (UK GDPR Art. 14); the first email may carry only one link (the demo) | Demo footer links /privacy; email keeps one link |
+| Q-O | Keep the landing promise "We build a preview of your new website, free"? It's true of the demo system. | Keep |
+| Q-P | Data retention for people who never buy | 12 months (written in the privacy notice), purge built in file 11 |

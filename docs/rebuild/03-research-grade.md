@@ -731,7 +731,8 @@ gaps}>` (stage 0). Produces
 `researchFacts(DB) → Promise<{queued, lastPostAt, oldestQueuedAt, recent: [{best_email, too_big}]}>` (recent = last 20
 `done` rows by `researched_at` desc, too_big included so `emailHitRate` can drop them), and the registration
 `registerLight(async (DB, env, now) => researchLight(await researchFacts(DB), now))` at module load of
-`_lib/research-db.js`.
+`_lib/research-db.js`, plus one line `import "./research-db.js";` in `_lib/tick.js` (with the other side-effect
+imports) so the light is registered wherever `/api/tick` or `/api/health` runs.
 
 - [ ] **Step 1: Write the failing test** — append to `research-health.test.mjs`:
   - `"facts from the db"`: seed 4 queued (oldest `queued_at` 2026-10-18T05:00:00Z) + 22 done (7 of the newest 20 with

@@ -610,7 +610,7 @@ figures from care. Client email goes through stage 9's `sendClientMail`; Stripe 
 - Guarantee: 90 days; decided only by the first scheduled scan with day ≥ 90; `health` todo at care day 92.
 - Draft lead time 2 days; `m.*` not fired for until 06:00 UK the day after due; `review.*` fired at once; one Routine
   fire per tick; no automatic retries (Routine or Stripe).
-- Todo `due_at` = `ukToUtc(due_on, "08:00")`; dedupe `care:<client_id>:<key>`; link `/#/client/<client_id>?task=<id>`.
+- Todo `due_at` = `iso(ukToUtc(due_on, "08:00"))` (e.g. `2026-11-12T08:00:00Z`); dedupe `care:<client_id>:<key>`; link `/#/client/<client_id>?task=<id>`.
 - Post slots: days 1, 8, 15, 22 of the month, first on/after care day 7. Monthly report from care day 84. Nudge on the
   15th from care day 7. Referral at live_on + 30.
 - Review check: Mondays and the 1st from 06:00 UK, once per UK date; low-star alert ≤ 3 stars.
@@ -1307,12 +1307,14 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
 
 **Interfaces:**
 - Consumes: agent routes (Task 12), heartbeat route (stage 0).
-- Produces: the R9 prompt verbatim; README section "monthly-care": name "Aetos monthly care", model Sonnet, schedule
+- Produces: the R9 prompt verbatim; README section "monthly-care": name `aetos-monthly-care`, model Sonnet, schedule
   "Monthly, day 1, 08:47, Europe/London", add an API trigger, generate its token, paste URL + token in Setup →
-  Routines → monthly-care; environment = the same one with the Control Room network secret and web access.
+  Claude → monthly-care; environment = the shared "Aetos" one (network secret, `CONTROL_ROOM_URL`, web access).
 
-- [ ] **Step 1: Write the failing test** — `routines.test.mjs`: `monthly-care.md` contains `/api/agent/heartbeat`
-  twice, `/api/agent/care`, `/drafts`, `routine-fire-payload`, "Never write \"SEO\"" and "never type a digit".
+- [ ] **Step 1: Write the failing test** — `routines.test.mjs`: `monthly-care.md` starts with stage 0's standard
+  preamble with `<name>` replaced by `monthly-care` (read from `routines/README.md`, compared exactly), contains
+  `$CONTROL_ROOM_URL/api/agent/care`, `/drafts`, `routine-fire-payload`, "Never write \"SEO\"" and "never type a
+  digit", and does not contain the bare word `CONTROL_ROOM/`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/routines.test.mjs` → ENOENT.
 - [ ] **Step 3: Write `routines/monthly-care.md` and the README section** — text from R9.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/routines.test.mjs` → PASS.
@@ -1327,8 +1329,9 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
 - Consumes: `runCare`, `saveDrafts`, `careContext`, owner `access` action, `fakeD1()`.
 - Produces: nothing new (end-to-end proof).
 
-- [ ] **Step 1: Write the failing test** — seed the Perfect-when-1 client, a `system` mailbox, `care:nik_google_email`
-  and both template approvals; set day 0 through the owner `access` action on 2026-11-11; loop UK days 2026-11-09 → 2027-03-02,
+- [ ] **Step 1: Write the failing test** — seed the Perfect-when-1 client (onboarding `form` with `services`, `areas`
+  and `gbp.invite_sent: false`), a `system` mailbox, `business:sender_name`, `care:nik_google_email` and both template
+  approvals; set day 0 through the owner `access` action on 2026-11-11; loop UK days 2026-11-09 → 2027-03-02,
   running `runCare` at 06:30, 09:00 and 18:00 UK each day; the stub `fire` immediately answers with valid drafts built
   from `careContext(...).pending` formats; stub `start` marks the scan `done` with ranks (not Top 3 until day 120);
   stub `pause`/`resume` record calls. Assert every date in Perfect when 1, `pause` once on 2027-02-09, scans on days
@@ -1342,58 +1345,135 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
 - [ ] **Step 5: Commit** — `git add control-room/tests/care-sim.test.mjs` + `git commit -m "Care: 12-week plan
   simulation test" -m "$TRAILER"`.
 
+### Task 18: Money skips the retainer while working free
+
+**Files:** Modify `control-room/functions/_lib/money.js` (`loadMoney`, `ledger`, `summarise`); Test
+`control-room/tests/money.test.mjs` (add tests).
+
+**Interfaces:**
+- Consumes: the `care` table (Task 1); file 11's `loadMoney(DB, today)` and `PACKAGES`.
+- Produces: `loadMoney`'s clients query LEFT JOINs `care` and selects `care.guarantee AS care_guarantee`;
+  `clientStatus(c, today)` returns key `"working_free"` for a non-stopped monthly client whose `care_guarantee` is
+  `working_free`; `ledger` adds no forecast `Monthly retainers` item for such a client; `summarise`'s `mrr` and
+  `mrrSoon` leave it out. Past income still comes from actual `payments`.
+
+- [ ] **Step 1: Write the failing test** — in `money.test.mjs`: a Stripe client paying `PACKAGES.full.monthly`,
+  `care_guarantee: "working_free"` → `summarise(...)` forecast months have no `Monthly retainers` for them, `mrr` 0,
+  and the client's status key is `working_free`; the same client with `care_guarantee: "met"` → the retainer is back
+  in the forecast and `mrr`; a client with no care row (`care_guarantee` null) is unchanged. A `loadMoney` test on
+  `fakeD1()` with a `care` row `working_free` gives the same result.
+- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/money.test.mjs` → the retainer is still
+  forecast.
+- [ ] **Step 3: Implement** the join, the status key and the two filters.
+- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS.
+- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/money.js control-room/tests/money.test.mjs` +
+  `git commit -m "Money: no retainer forecast while a client's guarantee is working free" -m "$TRAILER"`.
+
+### Task 19: "Your 90 days start…" on the order page, welcome email and landing page
+
+Q-B's default: the clock starts the day Nik becomes a Manager on their Google profile, so every place a buyer reads
+the guarantee before paying or right after says so.
+
+**Files:** Modify stage 9's `control-room/functions/_lib/order-page.js` (`renderOrder`, FAQ 5) and
+`control-room/functions/_lib/client-mail.js` (`welcomeEmail`, Full Package paragraph), stage 0's
+`control-room/functions/_lib/site.js` (`renderLanding`, "The guarantee" paragraph); Test
+`control-room/tests/order-page.test.mjs`, `control-room/tests/client-mail.test.mjs`, `control-room/tests/site.test.mjs`
+(add assertions).
+
+**Interfaces:**
+- Consumes: `renderOrder`, `welcomeEmail` (stage 9), `renderLanding` (stage 0), `GUARANTEE` (offer.js).
+- Produces: `CLOCK_START = "Your 90 days start the day you give us access to your Google Business Profile."`
+  exported from `care.js` (pure) and used by all three. FAQ 5 becomes `…we work for free until you are. Your 90 days
+  start the day you give us access to your Google Business Profile.`; the welcome email's Full Package paragraph gains
+  that sentence as its last line; the landing's guarantee paragraph gains it after "The map results at the top
+  count." The guarantee wording itself (`GUARANTEE.headline`/`.section`) doesn't change.
+
+- [ ] **Step 1: Write the failing test** — order page (weekday and weekend) contains `CLOCK_START`; `welcomeEmail`
+  full contains it, website-only doesn't; `renderLanding` contains it once; the existing exact-wording tests stay
+  green.
+- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/order-page.test.mjs
+  control-room/tests/client-mail.test.mjs control-room/tests/site.test.mjs` → the sentence is missing.
+- [ ] **Step 3: Implement** the three one-line changes.
+- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS.
+- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/care.js control-room/functions/_lib/order-page.js
+  control-room/functions/_lib/client-mail.js control-room/functions/_lib/site.js control-room/tests/order-page.test.mjs
+  control-room/tests/client-mail.test.mjs control-room/tests/site.test.mjs` + `git commit -m "Say when the 90 days
+  start: order page, welcome email, landing page" -m "$TRAILER"`.
+
 ---
 
 ## Cross-stage interfaces
 
 **Produced here (other stages use them):**
-- Tables `care`, `care_tasks`, `care_scans`, `care_reviews` (Task 1). Overview §4 should list them as stage 11's
-  tables (they add no column to any existing table).
-- Tick step `{name: "care", everyMinutes: 10, run: runCare}` at overview §8 position 9 (Task 11).
-- `GET /api/care/clients` JSON and `renderClientsSection(clients)` in `public/js/clientview.js` — file 11's Todo board
-  renders the Clients section with them. Route `#/client/<client_id>` (+ `?task=<id>`) and `#/client/settings`.
-- `careLights(...)` (Task 14) — stage 0's health step adds its three lights.
-- File 11 (Money): exclude a client's retainer from the forecast while `care.guarantee = 'working_free'`.
-- `scans.source = 'care'` and `api_usage.run_kind = 'care_reviews'`; the Map Rank page (file 11) may filter care scans
-  out of its list; SKUs `place_details_essentials`, `place_details_atmosphere` (Task 2).
+- Tables `care`, `care_tasks`, `care_scans`, `care_reviews` (Task 1), listed in overview §4 "Tables added by later
+  stages" and in `test_rebuild_tables_present` (they add no column to any existing table).
+- Tick step `{name: "care", everyMinutes: 10, run: runCare}` at overview §8 slot 11, after `sites` and before
+  `health` (Task 11); it respects `ctx.budget`.
+- Care figures on file 11's client cards: `loadBoard` joins `care` and the latest scored `care_scans` row;
+  `clientCards` uses `guaranteeLabel(care, ukToday)` and `careRankText(scan)` (Task 15). There is no
+  `/api/care/clients` and no second Clients section.
+- Routes `#/client/<client_id>` (+ `?task=<id>`) and `#/client/settings`, added to file 11's `nav.js` `routeFor`
+  (no `NAV` item) (Task 15).
+- `setCareAccess(DB, clientId, ukDay0, now)` and `POST /api/care/:id {action: "access", on}`: stage 10's "Invite
+  accepted" checkbox calls it to set day 0 (Tasks 11, 13).
+- Health lights `care_scans`, `care_reviews`, `care_drafts` via stage 0's `registerLight` (Task 14), shape
+  `{name, level, detail, fix}`. No second light for the Routine (stage 0's `routine:monthly-care` covers it). Health
+  todos `health:day90:<client_id>` and `health:care_scan:<client_id>:<day>` match no light, so file 11 shows them in
+  Today.
+- Money: no retainer in the forecast or monthly total while `care.guarantee = 'working_free'` (Task 18, `money.js`).
+- `CLOCK_START` (`care.js`) on stage 9's order-page FAQ 5 and Full Package welcome email and stage 0's landing
+  guarantee paragraph (Task 19, Q-B default).
+- `scans.source = 'care'` (stage 1's `stale_jobs` skips these; care fails its own scans at 45 min) and
+  `api_usage.run_kind = 'care_reviews'`; the Map Rank page (file 11) may filter care scans out of its list; SKUs
+  `place_details_essentials`, `place_details_atmosphere` (Task 2).
 - `map-rank.yml` input `place_id` and CLI `--place-id` (Task 3); new workflow `care-reviews.yml` (Task 4).
-- Build Routine payload `site update: client <client_id> task <task_id>`: stage 10's build Routine must handle it by
-  `GET /api/agent/care/<client_id>/tasks/<task_id>`, publishing the change, then `POST` the same URL with
-  `{"applied": true}`.
-- `monthly-care` Routine has **both** the schedule in overview §7 and an API trigger (overview §7's table should
-  say "schedule 1st of month 08:47 UK + API fire for draft requests").
-- Settings keys: `care:nik_google_email`, `care:template:referral`, `care:template:nudge` (JSON `{subject, body}`),
-  `care:template:<name>:approved`, `care:reviews:last`.
+- Build Routine payload `site update: client <client_id> task <task_id>`: stage 10's build Routine handles it by
+  `GET $CONTROL_ROOM_URL/api/agent/care/<client_id>/tasks/<task_id>`, publishing the change, then `POST` the same URL
+  with `{"applied": true}`.
+- Routine `aetos-monthly-care`: schedule 1st of month 08:47 UK **and** an API trigger (overview §7), prompt starting
+  with stage 0's preamble and using `$CONTROL_ROOM_URL`; URL + token on Setup → Claude.
+- Settings keys: `care:nik_google_email` (shared with stage 10's Setup field), `care:template:referral`,
+  `care:template:nudge` (JSON `{subject, body}`), `care:template:<name>:approved`, `care:reviews:last`.
 
 **Assumed from other stages (exact shapes this file relies on):**
-- Stage 0: `fakeD1()`, mutable `STEPS` in `tick.js`, `addTodo`/`closeTodos`, `fireRoutine`, `beat`, `requireAgent`,
-  `getSetting`/`setSetting`, `ukTime.js`, `queueMessage` as overview §8; a mailbox with `role = 'system'` is the
-  client mailbox; `POST /api/agent/heartbeat`; a logged-in request helper for route tests; the existing
-  `_lib/github.js` `startWorkflow(env, workflow, inputs)` is kept.
-- Stage 3: `_lib/offer.js` exports `MONTHLY_PENCE` and `gbp(pence)`; `public/js/html.js` exports `esc`, `safeUrl`.
-- Stage 7: inbound mail from a client's address (`client_links.email`) is saved in `messages` with `client_id` set
-  (care context reads the last 30 days as `client_emails`).
-- Stage 9: keeps `clients` and `client_links` as today (`stripe_subscription`, `email`, `cancelled_on` set on
-  `customer.subscription.deleted`); Stripe API pinned to 2024-06-20 (`subscription.current_period_end` top-level).
-- Stage 10 (09-build.md wasn't written when this file was): `onboarding.status = 'live'`, `live_at`, `site_url` as
-  overview §4; onboarding `form` JSON has `contact_name`, `email`, `phone`, `main_service`, `town`, `areas` (array),
-  `services` (array), `photos` (count or list); a `client_sites` row per client with `domain`; a table
-  `site_leads (id, client_id, created_at, …)` for chatbot/contact-form enquiries (care treats a missing table as "no
-  data", never as zero); `setSiteFeature(DB, client_id, feature, on)` switching `chatbot` (and the review booster's
-  automatic messages) off; the client site's home page carries the on-page basics the `w5.onpage_check` looks for; the
-  build Routine handles the `site update` payload above. If stage 10 names any of these differently, only
-  `careContext`, `stopCare` and `onPageCheck`'s inputs change.
+- Stage 0: `fakeD1()` (`{prepare, batch, exec, raw}`), mutable `STEPS` in `tick.js` with `ctx.budget`,
+  `addTodo`/`closeTodos`, `fireRoutine`, `beat`, `requireAgent(request, env, DB)`, `getSetting`/`setSetting`,
+  `ukTime.js`, `util.now()`/`iso()`, `registerLight(fn)` and `healthFromDb(DB, env, now) → {lights, gaps}` in
+  `health.js`; `ROUTINES` entry `monthly-care` (768 h cadence light); the standard Routine preamble in
+  `routines/README.md` and the "Aetos" environment's `CONTROL_ROOM_URL`; `POST /api/agent/heartbeat`; a logged-in
+  request helper for route tests; the existing `_lib/github.js` `startWorkflow(env, workflow, inputs)` is kept;
+  `_lib/offer.js` exports `PACKAGES`, `MONTHLY_PENCE`, `formatPounds`, `GUARANTEE`; `_lib/site.js` `renderLanding`;
+  setting `business:sender_name` (Setup → Business) is the sign-off name; `dispatchDue` checks suppression only for
+  `first`/`followup`/`reply`, so `system` mail to clients always goes.
+- Stage 1: `stale_jobs` skips `scans.source = 'care'`.
+- Stage 3: `public/js/html.js` exports `esc`, `safeUrl` (`lib.js` re-exports them).
+- Stage 7: `onHumanInbound` sets `messages.client_id` (`clients.id` by `place_id`) for mail from a `won` prospect, and
+  stage 0's inbound linking also matches `From` against `client_links.email` (care context reads the last 30 days as
+  `client_emails`).
+- Stage 9 (08-order-pay.md): keeps `clients` and `client_links` as today (`stripe_subscription`, `email`,
+  `cancelled_on` set on `customer.subscription.deleted`); `_lib/stripe.js` `stripeApi(key, method, path, params,
+  fetchImpl)` and `stripeKey(env, DB)`, API pinned to 2024-06-20 (`subscription.current_period_end` top-level);
+  `tests/helpers/fakeStripe.mjs`; `_lib/client-mail.js` `systemMailbox(DB, now)` and `sendClientMail(DB, {client_id,
+  place_id, to, business, compose, now})` (owns `setup:system_mailbox`); `_lib/order-page.js` `renderOrder` (FAQ 5)
+  and `welcomeEmail`; `fulfilCheckout` deletes the client's `suppression` row.
+- Stage 10 (09-build.md): `onboarding.status = 'live'`, `live_at`, `site_url` as overview §4; onboarding `form` keys
+  `business.{name, phone, email}`, `services[] {name, on}` (service = first with `on`), `areas[]` (town =
+  `areas[0]`), `gbp.{has, invite_sent}`; contact first name = `research.owner.first` (only when confident); photos =
+  count of `photos[]` in `client_sites.content`; `client_sites` row per client with `domain` JSON, `host` and
+  `review_url`; `site_leads (id, client_id, created_at, …)` for enquiries (care treats a missing table as "no data",
+  never as zero); `setSiteFeature(DB, client_id, feature, on, now)` (`_lib/sites/db.js`) switching `chatbot` (and the
+  review booster) off; the "Invite accepted" checkbox calls care's `access` action; the client site's home page
+  carries the on-page basics the `w5.onpage_check` looks for; the build Routine handles the `site update` payload
+  above.
+- File 11: `board.js` `clientCards(rows, now)` and `todo.js` `loadBoard(DB, now)` (Task 15 extends both), `nav.js`
+  `routeFor` (Task 15 adds the client routes), `money.js` `loadMoney` (Task 18).
 
 ## Questions for Nik
 
-1. **When does the 90-day clock start, in the words clients see?** We can only work on their Google profile once
-   you're a Manager, so the clock starts that day. Default: the order page and onboarding email add "Your 90 days start
-   the day you give us access to your Google Business Profile." (stages 4 and 9 copy).
-2. **How big an area counts as "their area"?** Default: 7×7 points 800 m apart (about 1.5 miles each way from their
-   address); Top 3 = at their address and in at least half of those points. Bigger is more impressive but harder to
-   win, and the guarantee costs us if we miss.
-3. **Weekly client emails:** each needs your Send for the first 12 weeks (about 12 approvals per client). Default:
-   yes, every one approved by you; we can switch to "send automatically unless you edit" later.
-4. **Foursquare listing ($20 per client):** the playbook lists it. Default: skip it; Bing, Apple, Yell and Facebook are
-   free.
-5. **Referral reward:** default none (the referral email offers nothing); say if you want to give, e.g., a free month.
+| # | Question | Default the build uses |
+| --- | --- | --- |
+| Q-B | When does the 90-day guarantee clock start? We can only work on their Google profile once you're a Manager, so the clock starts that day (this also answers file 11's question about the clock on the client cards). | The day you become Manager on their Google profile; the order page, the welcome email and the landing page say "Your 90 days start the day you give us access to your Google Business Profile." (Task 19) |
+| Q-C | How big an area counts as "their area" for Top 3? Bigger is more impressive but harder to win, and the guarantee costs us if we miss. | 7×7 points 800 m apart (about 1.5 miles each way from their address); Top 3 at their address and in at least half the points |
+| Q-AH | Approve each of the 12 weekly client emails? (About 12 approvals per client; we can switch to "send automatically unless you edit" later.) | Yes, every one approved by you |
+| Q-AI | Foursquare listing ($20 per client)? The playbook lists it; Bing, Apple, Yell and Facebook are free. | Skip |
+| Q-AJ | Referral reward? (The referral email offers nothing; say if you want to give, e.g., a free month.) | None |

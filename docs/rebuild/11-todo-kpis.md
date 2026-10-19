@@ -425,7 +425,8 @@ The privacy notice (stage 0) promises: "If we contacted you and you didn't becom
   scraped `leads` row (public business listing, owned by the scraper).
 - **Limits:** at most 90 leads per round, and only as many rounds as the tick's query budget allows (stage 0's
   `ctx.budget`); the rest waits for the next tick.
-- **Result line:** "purged <n> leads" / "purged <n> leads, more next tick" / "nothing to purge" / "done this month".
+- **Result line:** "purged <n> leads" / "purged <n> leads, more next tick" / "nothing to purge" / "done this month" /
+  "deferred" (not enough query budget left this tick).
 
 ## Todos it adds
 
@@ -1317,7 +1318,86 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
   - `node --test control-room/tests/*.test.mjs` passes (today.test is gone; nothing else breaks).
   - `for f in control-room/public/js/*.js; do node --check "$f"; done` passes.
 - [ ] **Step 5: Commit.** `git add -A control-room/public/js control-room/functions control-room/tests CLAUDE.md` then
-  `git commit -m "Nav: Todo home, KPIs; remove Home, What to do, Roadmap, Outreach pages" -m "$TRAILER"`.
+  `git commit -m "Nav: Todo home, Replies, KPIs; remove Home, What to do, Roadmap, Outreach pages" -m "$TRAILER"`.
+
+### Task 12: Monthly 12-month data purge (tick step `purge`)
+
+**Files:**
+- Create: `control-room/functions/_lib/purge.js`
+- Modify: `control-room/functions/_lib/tick.js` (add `purgeStep` to `STEPS` right before `health`, after `care`)
+- Test: `control-room/tests/purge.test.mjs`
+
+**Interfaces:**
+- Consumes: `getSetting`, `setSetting`, `ukDate`, `ukToUtc`, `iso` (stage 0); `runTick`'s `ctx = {DB, env, now,
+  reason, results, budget}` (stage 0; `budget` = the queries this step may still use).
+- Produces:
+  - `PURGE_BATCH = 90`
+  - `purgeCutoff(now) → ISO string`: UK midnight at the start of the same UK calendar date one year earlier (29 Feb →
+    28 Feb).
+  - `purgeOld(DB, now, {maxRounds}) → Promise<{purged, done}>`: each round is 1 select + 1 `DB.batch` of 3 deletes;
+    `done` is true when the last select returned fewer than `PURGE_BATCH` ids.
+  - `purgeStep = {name: "purge", everyMinutes: 60, run}`.
+
+- [ ] **Step 1: Write the failing test.** `NOW = 2026-10-22T12:00:00Z` (cutoff `2025-10-21T23:00:00Z`, UK midnight
+  BST). Seed via `fakeD1()`:
+
+  | place | rows | last contact | expected |
+  | --- | --- | --- | --- |
+  | old1 | prospect `lost`, 2 messages (newest 2025-10-20T09:00Z), research, suppression row for its email | 2025-10-20 | prospect, messages, research gone; suppression kept |
+  | old2 | research only, `researched_at` 2025-09-01T07:00Z, no prospect | 2025-09-01 | research gone |
+  | recent | prospect, message 2025-11-01T09:00Z, research 2025-09-01 | 2025-11-01 | kept |
+  | client1 | prospect `won`, messages 2025-01-10, `clients` row with this `place_id` | 2025-01-10 | kept |
+  | nodate | research with `researched_at` and `queued_at` NULL | none | kept |
+
+  ```js
+  test("deletes only non-clients last contacted over 12 months ago", async () => {
+    assert.equal(purgeCutoff(NOW), "2025-10-21T23:00:00Z");
+    const r = await purgeOld(DB, NOW, { maxRounds: 5 });
+    assert.deepEqual(r, { purged: 2, done: true });
+    const left = async (t) => (await DB.prepare(`SELECT DISTINCT place_id FROM ${t} ORDER BY place_id`).all()).results.map((x) => x.place_id);
+    assert.deepEqual(await left("prospects"), ["client1", "recent"]);
+    assert.deepEqual(await left("messages"), ["client1", "recent"]);
+    assert.deepEqual(await left("research"), ["nodate", "recent"]);
+    assert.equal((await DB.prepare("SELECT COUNT(*) AS n FROM suppression").first()).n, 1);
+  });
+  test("big backlogs go in rounds and stop at the budget", async () => {
+    // seed 95 research-only leads researched 2025-01-01
+    assert.deepEqual(await purgeOld(DB, NOW, { maxRounds: 1 }), { purged: 90, done: false });
+    assert.deepEqual(await purgeOld(DB, NOW, { maxRounds: 1 }), { purged: 5, done: true });
+  });
+  test("runs once a month", async () => {
+    const ctx = { DB, env: {}, now: NOW, budget: 30 };
+    assert.equal(await purgeStep.run(ctx), "nothing to purge");
+    assert.equal(await getSetting(DB, "purge:month"), "2026-10");
+    assert.equal(await purgeStep.run({ ...ctx, now: new Date("2026-10-30T12:00:00Z") }), "done this month");
+    assert.equal(await purgeStep.run({ ...ctx, budget: 3 }), "done this month");
+  });
+  ```
+- [ ] **Step 2: Run it to verify it fails.** `node --test control-room/tests/purge.test.mjs` fails with "Cannot find
+  module …/_lib/purge.js".
+- [ ] **Step 3: Implement `purge.js` and register the step.**
+  - Candidate select (bound `?1` = cutoff, `?2` = `PURGE_BATCH`):
+    ```sql
+    SELECT place_id, MAX(at) AS last FROM (
+      SELECT place_id, created_at AS at FROM messages WHERE place_id IS NOT NULL
+      UNION ALL SELECT place_id, updated_at FROM prospects
+      UNION ALL SELECT place_id, COALESCE(researched_at, queued_at) FROM research
+    ) GROUP BY place_id
+    HAVING last IS NOT NULL AND last < ?1
+       AND place_id NOT IN (SELECT place_id FROM clients WHERE place_id IS NOT NULL)
+    ORDER BY last LIMIT ?2
+    ```
+  - Delete with one `DB.batch` of `DELETE FROM prospects|messages|research WHERE place_id IN (…)`. Never touch
+    `suppression`, `clients`, `client_links` or `leads`.
+  - `run(ctx)`: `month = ukDate(now).slice(0, 7)`; if `purge:month` equals it, return "done this month" (1 query).
+    Otherwise `maxRounds = min(5, floor((ctx.budget - 2) / 4))`; with 0 rounds return "deferred". Run `purgeOld`;
+    when `done`, set `purge:month = month`. Return "nothing to purge", "purged <n> leads" or "purged <n> leads, more
+    next tick".
+- [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/purge.test.mjs` passes (3 tests),
+  and `node --test control-room/tests/tick.test.mjs` still passes.
+- [ ] **Step 5: Commit.** `git add control-room/functions/_lib/purge.js control-room/functions/_lib/tick.js
+  control-room/tests/purge.test.mjs` then `git commit -m "Purge non-customers' data 12 months after last contact"
+  -m "$TRAILER"`.
 
 ---
 
@@ -1328,63 +1408,75 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
 - **New todo kind `kpi`**, added to overview §6.
   - Added by: `POST /api/agent/kpis/:week`.
   - Example title: "Claude's email review for 19–25 Oct: 2 suggestions".
-  - Dedupe `kpi:<week>`, link `#/kpis?week=<week>`, due Monday 08:00 UK.
+  - Dedupe `kpi:<week>`, link `/#/kpis?week=<week>`, due Monday 08:00 UK (no milliseconds).
 - **`_lib/todo.js` additions:**
-  - `KIND_ORDER`, `sortTodos(items)`;
-  - `loadBoard(DB, now)`;
+  - `KIND_ORDER`, `sortTodos(items)`, `visibleTodos(rows, lights)`, `messageIdFromDedupe(dedupe)`;
+  - `loadBoard(DB, env, now)`;
   - `setTodoStatus(DB, id, status, now)`.
   - Every stage's todos must set `place_id` (for lead items) or `client_id` (for client items) so the board can
     enrich and link them.
+  - `health` todos: only `health:<light name>` is hidden (the light shows it); any other `health:` dedupe shows in
+    Today, right after escalations.
   - Stage 11 `care` todos must set `client_id` and `due_at` (the Clients section shows the earliest one).
 - **`_lib/board.js`:**
   - `pipelineColumns`, `clientCards`, `lastEvent`, `pastWhen`, `futureWhen`, `ukShortDate`, `ukDayDate`,
-    `guaranteeWords`;
-  - `leadLink(id) → "#/lead/<id>"`, `threadLink(id) → "#/lead/<id>/thread"`. Todo `link` values from other stages
+    `guaranteeWords`, `rankWords`, `LOST_WORDS`;
+  - `leadLink(id) → "/#/lead/<id>"`, `threadLink(id) → "/#/replies/<id>"`. Todo `link` values from other stages
     should use these.
-- **`_lib/kpis.js`:** `isoWeekOf`, `weekStartOf`, `weekLabel`, `rate`, `computeWeek`, `credit`, `POSITIVE_INTENTS`,
-  `kpisLight`.
+- **`_lib/kpis.js`:** `isoWeekOf`, `weekStartOf`, `weekLabel`, `rate`, `computeWeek`, `credit`, `POSITIVE_INTENTS`.
 - **`_lib/kpis-db.js`:** `loadKpiRows`, `kpiPayload`.
+- **`_lib/purge.js`:** `purgeStep` (tick step `purge`, placed after `care` and before `health` in overview §8),
+  `purgeOld`, `purgeCutoff`. Settings key `purge:month`. This is stage 0's promised 12-month retention purge.
 - **Routes:**
   - `GET /api/todo`, `GET /api/todo/count`, `PATCH /api/todo/:id`, `POST /api/todo/:id/send`;
   - `GET /api/kpis`, `GET /api/agent/kpis`, `POST /api/agent/kpis/:week`;
   - `GET /api/offer`.
 - **Front end:**
-  - `public/js/nav.js` (`NAV`, `routeFor`): the final route list. Pages added later register in `app.js` through it.
+  - `public/js/nav.js` (`NAV`, `routeFor`): the final route list; this file owns routing once it ships. Pages added
+    later (09's `sites`/`site/<id>`, 10's `client/<id>`/`client/settings`) add their routes to `routeFor` and
+    `nav.test.mjs`, not to `PAGES`.
   - `getOffer()` in `lib.js`.
   - `paymentLinks(links, packages)` now takes the packages.
-- **Health light `weekly-kpis`:** from `kpisLight`, added to `healthFromDb` (Task 6). A red light becomes a `health`
-  todo with dedupe `health:weekly-kpis` (stage 0 rule).
+- **No health light of its own.** Stage 0's `routine:weekly-kpis` light (192 h cadence) covers the weekly review.
 
 **Needed from other stages (exact shapes this file relies on)**
 
 - **Stage 0:**
-  - `healthFromDb(DB, now) → Promise<[{name, level: "green"|"amber"|"red", detail, fix}]>`; if it returns an object,
-    `loadBoard` reads its light array.
+  - `healthFromDb(DB, env, now) → Promise<{lights, gaps}>`, lights `{name, level: "green"|"amber"|"red"|"grey",
+    detail, fix}`; light names like `tick`, `routine:weekly-kpis`, and `health:<name>` todo dedupes.
   - `groupBoard(rows, now) → {today, overdue, later}`: open items only. NULL `due_at` counts as today; "later" means
     after the end of UK today.
   - `addTodo` inserts OR IGNORE on `dedupe`.
   - `fakeD1()` with the full schema and `DB.exec(sql)` for seed files.
   - `requireAgent`, `POST /api/agent/heartbeat`, `heartbeats` rows named `routine:<name>`.
   - `setupPage()` exported from `public/js/setup.js`.
-  - The Routine README convention with `CONTROL_ROOM_URL`.
+  - `routines/README.md`: the standard preamble, Routine names `aetos-<name>`, the `CONTROL_ROOM_URL` environment
+    variable, and Setup → Claude for each Routine's URL and token.
+  - `_lib/offer.js`: `PACKAGES` (re-exported by `money.js`), `MONTHLY_PENCE`, `formatPounds`.
+  - `util.now()`/`iso()` (UTC ISO without milliseconds).
+  - `runTick` gives each step `ctx.budget` (queries it may still use) and keeps 6 for `health`.
+  - `messages.intent TEXT` in the schema.
 - **Stage 3:**
-  - `offer.js` constants and `gbp`;
-  - `isHot`, `STAGE_LABELS` (`_lib/shortlist.js`);
+  - `isHot`, `STAGE_LABELS` (`_lib/shortlist.js`; `isHot` is true only for `emailed`/`viewed`);
   - `public/js/html.js` (`esc`, `safeUrl`, `icon`);
   - `leadsPage(params)`, `openLeadDrawer(placeId)`;
   - routes `#/lead/<id>` and `#/leads?view=ready|all`.
 - **Stage 4:** `demoPage()` exported from `public/js/demo.js` (route `#/demo`, linked from Setup and Leads, not in
   the nav).
-- **Stage 6:** follow-up messages are stored with `kind = 'followup'`, `author = 'system'`, `step` 1–9.
-  `prospects.lost_reason` holds the event name (`opt_out|bounce|said_no|sequence_done`).
+- **Stage 6:**
+  - follow-up messages are stored with `kind = 'followup'`, `author = 'system'`, `step` 1–9;
+  - `voicePage()` exported from `public/js/voice.js` (06 owns the Voice page).
+- **Stages 6–7:** `prospects.lost_reason` is one of `opt_out|bounce|sequence_done|not_now|not_interested|call`.
 - **Stage 7:**
-  - `messages.intent` (TEXT, inbound human only) with the values above plus `not_interested` etc. If stage 7 stores
-    intent elsewhere, `loadKpiRows` maps it to `intent`.
-  - `sendNikReply(DB, {place_id, body, now}) → Promise<{message_id}>`: queues Nik's reply in the lead's thread
-    (`kind 'reply'`, `author 'nik'`) and throws plain-English errors (for example, the lead opted out).
-  - The thread view at `#/lead/<id>/thread`.
-  - `voicePage()` exported from `public/js/voice.js`.
-  - `escalation` todos carry `draft` and `place_id`.
+  - `messages.intent` set on inbound human mail with the values above plus `not_interested` etc.
+  - `sendAsNik(DB, {message_id, body, now}) → Promise<{status, body}>` (`_lib/replies-db.js`): queues Nik's reply in
+    the thread of that inbound message (`kind 'reply'`, `author 'nik'`), closes `escalation:<id>`/`call_time:<id>`,
+    and returns plain-English errors in `body.error` (422 for an empty body or no mailbox).
+  - `escalation` todos carry `draft`, `place_id` and dedupe `escalation:<message_id>`; `call_time` todos dedupe
+    `call_time:<message_id>`; unknown-sender escalations use `escalation:unknown:…`.
+  - Test and drill leads have `place_id` starting `drill:` or `test:`.
+  - `repliesPage()`, `threadPage(placeId)` from `public/js/replies.js` (routes `#/replies`, `#/replies/<id>`) and
+    `callPage(id)` from `public/js/call.js` (route `#/call/<id>`). 11 Task 11 takes these routes into `routeFor`.
 - **Stage 8:**
   - `calls.phone` set on confirmed calls;
   - `call` todos with `place_id` and `due_at = slot_at`;
@@ -1393,11 +1485,17 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
   - a `clients` row with `place_id` on every paid order (it counts as an order on `paid_on`);
   - an `onboarding` row per client.
 - **Stage 10:** `onboarding.status`, `due_live_at`, `live_at` as overview §4.
-- **Stage 11 (10-monthly-care.md):** the Clients section reads only `clients`, `onboarding`, `client_links.failed_on`,
-  `lead_map_rank` (by the client's `place_id`) and open `care`/`build` todos. If stage 11 adds per-client care state,
-  it must also add a `care` todo for the next job so the card shows it.
+- **Stage 11 (10-monthly-care.md):**
+  - Its Task 15 modifies `loadBoard`/`clientCards`: a client with a `care` row takes `guarantee` from
+    `guaranteeLabel(care, ukToday)` and `rank` from its latest scored `care_scans` row. It adds no second Clients
+    section (`renderClientsSection` and `/api/care/clients` aren't used by Todo).
+  - Otherwise the Clients section reads only `clients`, `onboarding`, `client_links.failed_on`, `lead_map_rank` (by
+    the client's `place_id`) and open `care`/`build` todos. Stage 11 adds a `care` todo for each client's next job so
+    the card shows it.
 
 ## Questions for Nik
 
-1. **When does the 90-day guarantee clock start?** Default: the day their site goes live (that is when Google can
-   start ranking it), so the card says "Guarantee day 1 of 90" on launch day. The alternative is the day they paid.
+| # | Question | Default |
+| --- | --- | --- |
+| Q-B | When does the 90-day guarantee clock start? (was this file's Q1, merged with 10 Q1) | The day Nik becomes Manager on their Google profile; the order page and welcome email say so. Until stage 11 adds a client's `care` row, the card falls back to counting from `live_at`. |
+| Q-P | How long do we keep data on people who never buy? | 12 months after last contact, deleted by this file's monthly `purge` step (Task 12). |
