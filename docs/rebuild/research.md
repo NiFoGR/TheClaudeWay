@@ -164,3 +164,61 @@ code.claude.com/docs/en/cloud-environments.
 - DKIM selector: `privateemail._domainkey`. Add it by hand in Cloudflare DNS.
 - Namecheap's hosting help says it is "zero tolerant" on spam; whether that covers one-to-one cold email is
   unverified.
+
+## Cloudflare Workers, SMTP and Stripe
+
+### Workers Free plan
+- CPU: 10 ms per request, per cron run and per email() handler. Waiting on network, KV or D1 doesn't count.
+- 100k requests a day. Static asset requests are free and don't count.
+- 5 cron triggers per account. 50 subrequests and 6 open connections per invocation.
+- D1 free: 5M rows read and 100k written a day, 500 MB per database, 50 queries per invocation.
+- UNKNOWN: whether TLS set up through `connect()` counts toward CPU time.
+- Workers Paid is $5 a month and removes the CPU risk.
+
+### Sending SMTP from a Worker
+- `worker-mailer` ≥ 1.3.0 (MIT, published 17 Oct 2026; 1.3.0 fixes a busy-loop bug):
+  - `secure: true` on port 465;
+  - AUTH plain/login;
+  - custom headers, so In-Reply-To, References and our own Message-ID all work.
+- Only port 25 is blocked. No reports found of 465, 587 or 993 being blocked.
+- No report found of it working on the free plan's CPU limit, so this has to be tested first.
+
+### Saving a copy to the Sent folder
+- IMAP APPEND via imapflow 2.5.7 (needs `nodejs_compat`). It's a heavy library.
+- One report of intermittent failures on port 993 from Workers.
+- Treat saving to Sent as optional.
+
+### Receiving mail (Email Routing)
+- Email Routing **can't** run on a subdomain while the root domain's MX records stay with Namecheap. Cloudflare's MX
+  has to be on the root domain.
+- So either:
+  - move the root domain's MX to Cloudflare, so the Worker receives everything and Namecheap is used only for
+    sending; or
+  - use a separate receive-only domain that Namecheap forwards to.
+- Inbound limit is 25 MiB. The email() handler gets `message.headers` and `message.raw` (a stream), and can
+  `forward()` to verified addresses.
+- `wrangler deploy` can manage routing rules through the `addresses` config (added 4 Sep 2026).
+
+### Hosting on one Worker
+- One Worker can serve several hostnames as custom domains.
+- A custom domain can't be created on a hostname that already has a CNAME record.
+
+### Stripe
+- One Checkout Session can hold the recurring price plus the one-off build fee (`mode=subscription`, with
+  `subscription_data.trial_period_days` = 60 or 90).
+- The card is saved and charged automatically when the trial ends. Confirm the one-off fee is charged upfront
+  in test mode.
+- Webhooks to handle:
+  - `checkout.session.completed`;
+  - `invoice.paid` (only when the subscription is active);
+  - `invoice.payment_failed`;
+  - `customer.subscription.deleted`;
+  - `customer.subscription.trial_will_end` (3 days before).
+- On API version 2025-03-31.basil and later, the invoice's subscription is at
+  `parent.subscription_details.subscription`.
+
+### Cloudflare API token for GitHub Actions
+- Account permissions: Workers Scripts Edit, Account Settings Read, D1 Edit.
+- Zone permissions: Workers Routes Edit, Email Routing Rules Edit, Zone Settings Edit.
+- User permissions: User Details Read, Memberships Read.
+- Use `cloudflare/wrangler-action@v4`.
