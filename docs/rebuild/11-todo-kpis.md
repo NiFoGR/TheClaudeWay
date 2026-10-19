@@ -1294,6 +1294,9 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
   - `CLAUDE.md` (replace the Home / What to do / Roadmap / Outreach-page lines with Todo, Replies and KPIs)
   - `control-room/tests/shell.test.mjs` (stage 0: delete the assertion that the `PAGES` routes include stage 0's
     five; keep "no `soon`, no roadmap/outreach routes" and the `setup.js` checks)
+  - `control-room/tests/replies-page.test.mjs` and `control-room/tests/call-page.test.mjs` (stage 7: delete the
+    `readFileSync(".../app.js")` line and its `assert.match(app, …)`; `nav.test.mjs` covers `replies`, `replies/<id>`
+    and `call/<id>`, and its exact NAV order shows Replies in the nav and Call not)
 - Delete:
   - `control-room/public/js/home.js`
   - `control-room/public/js/roadmap.js`
@@ -1347,8 +1350,9 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
     - calls `stopTodoPoll()` on every route change;
     - after each route, fetches `/api/todo/count` into `#todo-badge`: the due count, plus a red dot when `red > 0`,
       and hidden at 0 and 0. A failed count fetch leaves the badge hidden.
-  - Delete the files listed above, and the `PAGES`-routes assertion in `shell.test.mjs` (`app.js` has no `PAGES` any
-    more; `nav.test.mjs` now owns the route list).
+  - Delete the files listed above, the `PAGES`-routes assertion in `shell.test.mjs`, and the `app.js` `PAGES`
+    assertions in `replies-page.test.mjs` and `call-page.test.mjs` (`app.js` has no `PAGES` any more; `nav.test.mjs`
+    now owns the route list).
   - `grep -rn "api/today\|api/overview\|roadmap\|homePage\|outreachPage" control-room/public control-room/functions`
     must print nothing.
 - [ ] **Step 4: Run tests to verify they pass.**
