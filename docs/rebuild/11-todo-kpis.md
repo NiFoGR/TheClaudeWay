@@ -101,7 +101,8 @@ One column per stage from overview §5, in this order. Labels come from stage 3'
 **Lost** is a collapsed section under the columns: "Lost (<n>)".
 
 - **Column header:** label and count. The column shows at most 50 cards; if there are more, the last line reads
-  "+<n> more on the Leads page" and links to `#/leads?view=all`.
+  "+<n> more on the Leads page" and links to `/#/leads?view=all`.
+- **Left out:** test and drill leads (`place_id LIKE 'drill:%'` or `'test:%'`, stage 7's rule).
 - **Card order:** hot first (stage 3's `isHot(prospect, now)`), then newest `stage_at` first.
 - **Each card:**
   - business name (`leads.name`);
@@ -115,7 +116,7 @@ One column per stage from overview §5, in this order. Labels come from stage 3'
   | Condition | Text |
   | --- | --- |
   | stage `won` | `Paid · <when stage_at>` |
-  | stage `lost` | `<reason> · <when stage_at>`. Reasons from `lost_reason`: `opt_out` "Said no thanks", `bounce` "Email bounced", `said_no` "Said no", `sequence_done` "No reply to any email" |
+  | stage `lost` | `<reason> · <when stage_at>`. Reasons from `lost_reason`: `opt_out` "Said no thanks", `bounce` "Email bounced", `sequence_done` "No reply to any email", `not_now` "Not right now", `not_interested` "Not interested", `call` "Said no on the call"; anything else (or none) "Lost" |
   | stage `call_booked` with a confirmed call | `Call <day> <HH:MM>` (UK) |
   | otherwise, the newest of these three | view → `Viewed site once` / `Viewed site <n>×`; inbound → `Replied`; outbound → by kind: `first` "You emailed", `followup` "Follow-up <step> sent", `reply`+`claude` "Claude replied", `reply`+`nik` "You replied" |
   | nothing at all | `Demo ready · <when stage_at>` |
@@ -127,7 +128,7 @@ One column per stage from overview §5, in this order. Labels come from stage 3'
 - **Next follow-up:** for stages `emailed` and `viewed` with `next_followup_at` set: "Next email <future when>". Every
   other card has no next line.
 - **Empty board** (no prospects): "No one in the pipeline yet. Pick today's leads on the Leads page." with a link to
-  `#/leads?view=ready`.
+  `/#/leads?view=ready`.
 - **Empty column:** "Nobody here".
 - **Phone layout:** at 640 px or less the columns stack. Each column is a `<details>`, open when it has cards. Above
   640 px they sit side by side and scroll sideways inside the board only.
@@ -141,14 +142,16 @@ Under the cards: "<n> past clients on the Money page" when there are any.
 | --- | --- |
 | Phase | no `onboarding` row or `status = 'sent'` → `onboarding`; `submitted`/`building`/`review` → `building`; `live` → `live` |
 | Build | onboarding with no row: "Onboarding form not sent yet". `sent`: "Waiting for their onboarding form · sent <when created_at>". Building: days = UK days from today to `due_live_at`; ≥ 2 "Live by Sat 24 Oct · <n> days left", 1 "Live by tomorrow", 0 "Due live today", < 0 "<n> days late" (red, needs attention). `live`: no build line. |
-| Guarantee | Only for packages with a monthly fee and `live_at` set. Day = UK days since `live_at` + 1. Up to day 90: "Guarantee day <d> of 90". After that: "90-day guarantee ended <live + 89 days, D Mon>". |
-| Rank | No `lead_map_rank` row: "No Map Rank scan yet" (links `#/maprank`). Else "Top 3 in <top3_pct>% of their area · average position <avg_rank 1 dp> · checked <when updated_at>" (links `#/maprank?scan=<scan_id>&biz=<place_id>`). |
-| Monthly | `failed_on` set: "Card failed <D Mon>" (red, needs attention). Otherwise `free` "Free until <firstCharge D Mon>", `paying` "<gbp(monthly)> a month", `one-off` "Website only". |
+| Guarantee | A client with a `care` row (stage 11, 10-monthly-care.md) shows stage 11's `guaranteeLabel(care, ukToday)`; stage 11 owns the guarantee clock (Q-B). Without a `care` row (before stage 11 ships): only for packages with a monthly fee and `live_at` set. Day = UK days since `live_at` + 1. Up to day 90: "Guarantee day <d> of 90". After that: "90-day guarantee ended <live + 89 days, D Mon>". |
+| Rank | A client with a `care` row shows its latest scored `care_scans` row (stage 11's figures). Otherwise: no `lead_map_rank` row: "No Map Rank scan yet" (links `/#/maprank`). Else "Top 3 in <top3_pct>% of their area · average position <avg_rank 1 dp> · checked <when updated_at>" (links `/#/maprank?scan=<scan_id>&biz=<place_id>`). |
+| Monthly | `failed_on` set: "Card failed <D Mon>" (red, needs attention). Otherwise `free` "Free until <firstCharge D Mon>", `paying` "<formatPounds(monthly)> a month", `one-off` "Website only". |
 | Next care task | The earliest open todo with this `client_id` and kind `care` or `build`: "<title> · <future when due_at>". If there's none: "No care tasks due". |
 
 - **Card order:** needing attention first (late builds, then failed cards), then `building` by `due_live_at`, then
   `onboarding`, then `live` by name.
 - **Empty:** "No clients yet. Your first one shows up here the minute they pay."
+- This is the only Clients section on Todo. Stage 11 feeds its figures into these cards (its Task 15 modifies
+  `loadBoard`/`clientCards`); it doesn't add a second section.
 
 ### Errors
 
@@ -172,6 +175,8 @@ open Setup." It never shows a blank page.
 
 **What counts**
 - **Emails counted:** `messages` with `place_id` set. Outbound only when `status = 'sent'`.
+- **Never counted:** test and drill leads (`place_id LIKE 'drill:%'` or `'test:%'`, stage 7's rule), in every table
+  below.
 - **Groups:** `<kind>:<author>`, for example `first:nik`, `followup:system`, `reply:claude`, `reply:nik`. Steps run
   0 to 9: step 0 is the first email, 1–9 are the follow-ups.
 
@@ -198,7 +203,8 @@ open Setup." It never shows a blank page.
   - an order (`paid_on` UK date within the 7 days).
 - **Speed:** the median minutes from the latest human inbound before each Claude reply to that reply (overnight mail
   counts in full).
-- **Escalated:** `escalation` todos created that week.
+- **Escalated:** `escalation` todos created that week whose `dedupe` starts `escalation:` but not
+  `escalation:unknown:` (unknown-sender escalations aren't Claude's replies to a lead).
 
 **Week totals**
 - Sent, bounced, human replies received, positive replies received and opt-outs received in the week.
@@ -239,7 +245,7 @@ open Setup." It never shows a blank page.
    | Opened demo | Nik's view rate |
    | Replied | Nik's reply rate |
    | Calls booked | count |
-   | Orders | count and revenue via `gbp` |
+   | Orders | count and revenue via `formatPounds` |
 
 3. **Your emails vs Claude's.** Two cards.
 
@@ -314,7 +320,7 @@ p5 A.
 | Views | p1 2026-10-19T12:00Z; p1 2026-10-20T09:00Z; p2 2026-10-20T09:00Z; p5 2026-10-27T00:00Z |
 | Calls | p1 `confirmed`, created 2026-10-20T15:05Z; p9 `offered`, created 2026-10-21T09:00Z |
 | Orders | p5, paid_on 2026-10-24, 175000 |
-| Escalation todos | p3, created 2026-10-21T07:05Z |
+| Escalation todos | p3, dedupe `escalation:i4`, created 2026-10-21T07:05Z |
 | Research | p1 done with email 2026-10-19T07:00Z; p2 done with email 2026-10-20T07:00Z; p7 done, no email, 2026-10-21T07:00Z; p8 skipped 2026-10-21; p9 done with email 2026-10-12T07:00Z, notes `[Nik 2026-10-22] wrong owner` |
 
 **Expected numbers**
@@ -346,15 +352,16 @@ p5 A.
 | Research | 3 researched, 2 with email (66.7%), too big 0, 1 "research wrong" press |
 | Last 4 weeks | first emails: W40 0, W41 0, W42 1, W43 5 |
 
-### Weekly review (Routine `weekly-kpis`, Sonnet, Sunday 18:47 UK)
+### Weekly review (Routine `aetos-weekly-kpis`, Sonnet, Sunday 18:47 UK)
 
 **Steps**
-1. Heartbeat.
-2. `GET /api/agent/kpis?week=<current week>`. This returns the numbers, the last 4 weeks, up to 20 anonymised samples
+1. Heartbeat (the standard Routine preamble from stage 0's `routines/README.md`; a "Test from the Control Room"
+   fire only beats and stops).
+2. `GET $CONTROL_ROOM_URL/api/agent/kpis?week=<current week>`. This returns the numbers, the last 4 weeks, up to 20 anonymised samples
    of each email type with their outcomes, the approved follow-up wording, and the last 4 reviews. It also saves the
    numbers snapshot.
 3. Write the review.
-4. `POST /api/agent/kpis/<week> {analysis}`.
+4. `POST $CONTROL_ROOM_URL/api/agent/kpis/<week> {analysis}`.
 5. Heartbeat with `{ok, summary}`.
 
 **The review**
@@ -367,7 +374,8 @@ p5 A.
 - Early numbers only ever get "too early to tell".
 
 **Todo**
-- The API adds one `kpi` todo per week: dedupe `kpi:<week>`, due Monday 08:00 UK, link `#/kpis?week=<week>`.
+- The API adds one `kpi` todo per week: dedupe `kpi:<week>`, due Monday 08:00 UK (stored without milliseconds, via
+  `util.iso()`), link `/#/kpis?week=<week>`.
 - Title: "Claude's email review for 19–25 Oct: 2 suggestions", or "…: nothing to change".
 - Detail: the first line of each suggestion, joined with " · ", at most 300 characters.
 
@@ -376,7 +384,7 @@ Claude never edits templates, grades or anything else. Nik decides.
 ## Money, Map Rank and navigation
 
 **Money (kept)**
-- Prices come from `offer.js` via `GET /api/offer`.
+- Prices come from stage 0's `offer.js` (`PACKAGES`, `MONTHLY_PENCE`, `formatPounds`) via `GET /api/offer`.
 - Money's pipeline card counts `prospects` (`call_booked`; `replied` + `needs_nik`), not the old `leads.status`.
 - Nothing else changes.
 
@@ -385,9 +393,16 @@ Claude never edits templates, grades or anything else. Nik decides.
 - Client cards link into it.
 
 **Nav (exact order)**
-- Todo, Leads, Scraper, Map Rank, KPIs, Money, Voice, Setup; then Log out.
+- Todo, Leads, Scraper, Map Rank, Replies, KPIs, Money, Voice, Setup; then Log out.
 - Todo shows a gold count badge (overdue + today's todos) and a red dot when any light is red.
-- `#/demo` (stage 4) has no nav item. It is linked from Setup and Leads.
+- `#/demo` (stage 4) and `#/call/<id>` (stage 7) have no nav item. Demo is linked from Setup and Leads; call pages
+  from `call` todos.
+
+**Routes** (`nav.js` `routeFor` is the one route list; this file owns routing once it ships)
+- `todo` (also `#/`), `leads`, `lead/<id>`, `lead/<id>/thread` (an alias that opens `replies/<id>`), `scraper`,
+  `maprank`, `replies`, `replies/<id>`, `call/<id>`, `kpis`, `money`, `voice`, `setup`, `demo`.
+- Later stages (09's `sites`/`site/<id>`, 10's `client/<id>`/`client/settings`) add their routes to `routeFor` and
+  `nav.test.mjs`, not to a `PAGES` list.
 
 **Old routes and code**
 - Old routes `#/home`, `#/roadmap`, `#/outreach`, and anything unknown, open Todo.

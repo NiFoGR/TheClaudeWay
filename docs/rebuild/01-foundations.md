@@ -147,19 +147,24 @@ Setup, the relay Worker and the landing page.
   4. **human:** everything else.
 - **Linking:** first by `In-Reply-To` and then each `References` id, matched against an outgoing message's
   `message_id`. Bounces link by the original Message-ID inside the report, then by `Final-Recipient`. Otherwise by
-  the `From` address = `prospects.email` (ignoring case).
+  the `From` address = `prospects.email` (ignoring case). Separately, a `From` that matches `client_links.email`
+  (ignoring case) sets `messages.client_id` to that link's `client_id`, and `place_id` from `clients.place_id` when
+  the message isn't linked to a prospect yet.
+- **A paying client is never opted out:** when the linked prospect is `won`, or the sender matched only a client,
+  an `opt_out`-class email is handled as `human` (no suppression, no stage change; it goes to Nik).
 - **What happens:**
 
   | Class | Effect |
   | --- | --- |
-  | bounce | Suppression `(recipient, 'email', 'bounce')`; prospect event `bounce` (→ `lost`, follow-ups stopped, queued first/follow-ups cancelled). If the owning mailbox has 2 or more bounces in the last 7 days (counted from the later of now−7 d and its last Resume), it's paused with reason `2 emails bounced in 7 days (last: <address>). Check your addresses are real, then press Resume.` |
-  | opt_out | Suppression `(from, 'email', 'opt_out')`, even if unlinked; prospect event `opt_out` (→ `lost`, follow-ups stopped). |
+  | bounce | Suppression `(recipient, 'email', 'bounce')`; prospect event `bounce` (→ `lost` with `lost_reason` `bounce`, follow-ups stopped, queued first/follow-ups cancelled; a `won` prospect stays `won`). If the owning mailbox has 2 or more bounces in the last 7 days (counted from the later of now−7 d and its last Resume), it's paused with reason `2 emails bounced in 7 days (last: <address>). Check your addresses are real, then press Resume.` |
+  | opt_out | Suppression `(from, 'email', 'opt_out')`, even if unlinked; prospect event `opt_out` (→ `lost` with `lost_reason` `opt_out`, follow-ups stopped). Not for a `won` prospect or a client (see above). |
   | auto | Stored only. |
   | human, linked | `needs_reply = 1`; `prospects.last_inbound_at` set; prospect event `inbound_human`. Stage 7 adds the rest. |
+  | human, client only | Matched by `client_links.email` but to no prospect: stored with `client_id` and `needs_reply = 0`; todo `escalation` "Email from your client: <from>" (dedupe `escalation:client:<message id>`). |
   | human, unlinked | Stored with `needs_reply = 0`; todo `escalation` "Email from unknown sender: <from>". |
   | duplicate | An inbound row with the same `message_id` already exists, so outcome `duplicate` and nothing stored. |
 
-- Each `inbound_raw` row gets `processed_at` and an `outcome`: `bounce`, `auto`, `opt_out`, `human`,
+- Each `inbound_raw` row gets `processed_at` and an `outcome`: `bounce`, `auto`, `opt_out`, `human`, `client`,
   `unknown_sender`, `duplicate` or `error: <message>`. Errors are marked too, so one bad email never blocks the queue.
 
 ### Tick
@@ -169,8 +174,12 @@ Setup, the relay Worker and the landing page.
   lease `tick:lock` (expires 50 s after it starts) or returns `{ran:false, why:"locked"}`.
 - Steps run in the order of overview §8. `everyMinutes` is checked against the setting `tick:last:<step>`. A step
   that throws becomes `{error}` and the rest still run.
-- The public response is only `{ran, steps: {name: "ok" | "error" | "skipped"}}`. Details go to the `tick`
-  heartbeat.
+- **D1 budget:** a tick makes at most 50 D1 queries (the free plan's limit per invocation). `runTick` wraps `DB` in a
+  counter that counts every statement, including the runner's own, and gives each step `ctx.budget`. 6 queries are
+  always kept for `health`. A step other than `health` is not started with fewer than 10 left: it reports
+  `"deferred"` and runs on a later tick. `inbound` stops at 30.
+- The public response is only `{ran, steps: {name: "ok" | "error" | "skipped" | "deferred"}}`. Details go to the
+  `tick` heartbeat.
 - Stage 0 steps:
 
   | Step | Every | Does |
@@ -180,30 +189,42 @@ Setup, the relay Worker and the landing page.
   | `health` | every tick | lights, todos, beat `tick` |
 
 ### Health lights
-`{name, state, message, fix}`, worked out purely from numbers. "Ago" values are whole minutes, hours or days.
+One shape everywhere: `{name, level: "green"|"amber"|"red"|"grey", detail, fix}`, worked out purely from numbers.
+Grey means "not in use" (a part that isn't switched on yet); it never adds a todo. "Ago" values are whole minutes,
+hours or days.
 
-| name | red when | amber when | Message (red / amber / green) | Fix |
+Stage 0's 10 lights come from `computeLights`. Later stages never edit it: each one adds its own light with
+`registerLight(fn)` (`fn(DB, env, now) → Promise<Light>`), and `healthFromDb` returns stage 0's lights followed by
+the registered ones (e.g. 02 `lead_search`, 03 `research`, 06 `followups`, 07 `replies`, 08 `payments`, 10
+`care_drafts`). Light names are unique and none is a prefix of another.
+
+| name | red when | amber when | Detail (red / amber / green) | Fix |
 | --- | --- | --- | --- | --- |
 | `tick` | no `tick` heartbeat, or older than 15 min | | "The heartbeat has stopped: no timed work for N min" / – / "Heartbeat ran N min ago" | "Check the relay light below. If it's green, open GitHub → Actions → Deploy mail relay and run it again." |
 | `relay` | no `relay` heartbeat, or older than 15 min | | "The mail relay hasn't checked in for N min" / – / "Mail relay checked in N min ago" | "GitHub → Actions → Deploy mail relay → open the latest run. If it's red, its last step says what to fix." |
 | `routine:<name>` (5 of them) | last fire failed and is newer than the last heartbeat; or a heartbeat older than the cadence | not connected; connected but never checked in; last heartbeat `ok=0` | "Claude's <label> Routine hasn't run for N days" / "Claude's <label> Routine isn't connected" / "Claude's <label> Routine last ran N h ago" | "Setup → Claude → <label>: paste its URL and token, then press Test fire." or for failures: the fire's error text |
 | `mailboxes` | any mailbox paused | no mailbox | "<address> is paused: <reason>" / "No mailbox yet" / "N mailbox(es) sending" | "Read the reason, fix it, then press Resume on Setup → Mailboxes." / "Buy one Namecheap Private Email mailbox and add it on Setup → Mailboxes." |
-| `scrape` | | a `jobs` or `scans` row `queued` or `running` with `updated_at` more than 45 min ago | – / "A lead search has been running for N min" / "No stuck searches" | "It's probably stuck. Start a new one on Lead Scraper; the old one is marked failed automatically." |
-| `research_queue` | `research` rows `queued` > 0 and no `researched_at` in the last 26 h | | "N leads are waiting for Claude's research and nothing has come back for 26 hours" / – / "Research is up to date" | "Open the research Routine in Claude, check it's switched on, then press Run now." |
+| `scrape` | | a `jobs` or `scans` row `queued` or `running` with `updated_at` more than 45 min ago (`scans` with `source='care'` are left to stage 11's care light) | – / "A lead search has been running for N min" / "No stuck searches" | "It's probably stuck. Start a new one on Lead Scraper; the old one is marked failed automatically." |
 | `setup` | | any setup gap | – / "N things still to set up" / "Setup complete" | "Open Setup: each item says what to do." |
 
 - **Routine cadence** (hours): research 26, reply 26, weekly-kpis 192, monthly-care 768. `build` has no cadence:
   it's only red on a failed fire.
-- **Todos from lights:** a red light adds a `health` todo (dedupe `health:<name>`, link `/#/setup`). Any other
-  state closes it.
+- **Research backlog** is not a stage 0 light: stage 2 registers the `research` light (with its hit-rate amber).
+- **Todos from lights:** a red light (stage 0's or a registered one) adds a `health` todo (dedupe `health:<name>`,
+  link `/#/setup`). Any other level, grey included, closes it. The health step closes by exact dedupe
+  (`WHERE dedupe = ?`), never by prefix, so it can't close another stage's `health:…` todos (e.g. stage 1's
+  `health:find:towns`).
 - **Freeing the dedupe:** when the system closes a todo, its dedupe gets `@<done_at>` added, so the same problem
   can come back later as a new item. A todo Nik dismisses keeps its dedupe.
 
 ### Setup gaps (`setup` todos, dedupe `setup:<key>`, link `/#/setup`)
 
+The health step adds and closes only these keys, each by exact match (`WHERE dedupe = ?`), never by prefix. Other
+stages' `setup:` todos (05 `demo-template`, 06 `followups`, 08, 09, 10) are theirs to close.
+
 | key | Title | When |
 | --- | --- | --- |
-| `mailbox` | Add your first mailbox | no mailboxes |
+| `first_mailbox` | Add your first mailbox | no mailboxes |
 | `mailbox_password:<id>` | Add the password for <address> | no `secret:mailbox:<id>` |
 | `dns:<domain>` | Add the email DNS records for <domain> | a mailbox domain whose last DNS check isn't all green, or was never checked |
 | `agent_token` | Make Claude's access key | no `secret:agent_token` |
@@ -276,8 +297,10 @@ Setup, the relay Worker and the landing page.
   `From`, never `envelope_from`. Namecheap doesn't forward mail it filed as spam.
 - **The same email arrives twice** (forwarded and direct): the second has the same Message-ID, so it's a
   `duplicate`.
-- **A won client writes "unsubscribe":** `opt_out` wins from any stage (overview §5). The stage 9 payment handler
-  removes the suppression row when a suppressed address pays (cross-stage).
+- **A won client writes "unsubscribe":** it's handled as a human email, not an opt-out (overview §5): no suppression,
+  the stage stays `won`, and it goes to Nik. Their welcome and care emails keep going (`system` mail is never
+  checked against suppression). If someone who opted out earlier pays, stage 9's `fulfilCheckout` deletes the
+  `suppression` row for the checkout email.
 - **A mailbox is resumed after 2 bounces:** only bounces after the Resume count, so it isn't re-paused straight
   away.
 - **Bounce for a message we can't find:** the suppression is still added for `Final-Recipient`, and the outcome is
@@ -423,7 +446,8 @@ your town, this is for you.
 - **Found on Google.** We set up and look after your Google Business Profile and your site, so people searching for
   your service in your area find you first.
 - **More reviews, the honest way.** Your Google review link, a QR card for jobs, and ready-to-send messages to ask
-  every customer.
+  every customer. (Only while `offer:review_booster_live` is on.)
+- The chatbot is not mentioned while `offer:chatbot_live` is off. Stage 10 writes its line, shown only when it's on.
 - **Looked after every month.** Hosting, updates and changes, plus a short monthly report on where you rank and how
   your reviews are growing.
 
@@ -431,13 +455,13 @@ your town, this is for you.
 
 - **Full Package**
   - Monday to Friday: **£1,950** to build, then **£249 a month**. **First 60 days free.**
-  - Saturday and Sunday: ~~£2,000~~ **£1,750** to build, then **£249 a month**. **First 90 days free.** Gold tag:
+  - Saturday and Sunday: ~~£1,950~~ **£1,750** to build, then **£249 a month**. **First 90 days free.** Gold tag:
     "Weekend deal: ends Sunday midnight".
   - Bullets:
     - Website live in 7 days, GUARANTEED.
     - Top 3 in Google search results in 90 days. GUARANTEED.
     - Google Business Profile set up and looked after
-    - Review booster
+    - Review booster (only while `offer:review_booster_live` is on)
     - Monthly care and report
 - **Website Only:** **£1,750** one-off. Nothing monthly.
   - Bullets:
@@ -463,7 +487,8 @@ you keep your website and the monthly work stops.
 Email **{contact}** with your business name and town, and we'll take it from there.
 
 **Footer (Charcoal)**
-- With the name and address filled in: "Aetos Websites is a trading name of {legal_name}, {address}."
+- With the name and address filled in: "Aetos Websites is a trading name of {legal_name}, {address}." (from
+  `traderLine(business)`, which stage 9's pages use too).
 - Without them: "Aetos Websites".
 - Then: "Privacy notice" (`/privacy`) · `{contact}` · "© {UK year} Aetos Websites".
 - No phone number and no home address anywhere.
@@ -546,10 +571,12 @@ can also complain to the Information Commissioner's Office: https://ico.org.uk/m
 - `health`, from red lights.
 - `escalation` "Email from unknown sender: <from>", with the detail `Subject: <subject>` followed by the first 300
   characters of the body, dedupe `escalation:unknown:<message id>`.
+- `escalation` "Email from your client: <from>", same detail, dedupe `escalation:client:<message id>`.
 
 ## Health lights this stage feeds
-All of them: `tick`, `relay`, `routine:*`, `mailboxes`, `scrape`, `research_queue` and `setup`. Later stages feed
-the same lights through the tables they write (heartbeats, routine_fires, research, jobs).
+Its 10 lights: `tick`, `relay`, the 5 `routine:*`, `mailboxes`, `scrape` and `setup`. Later stages feed these
+through the tables they write (heartbeats, routine_fires, jobs, scans) and add their own lights with
+`registerLight`.
 
 ## Perfect when
 
@@ -579,8 +606,10 @@ the same lights through the tables they write (heartbeats, routine_fires, resear
    `class='human'`, and the test email isn't a prospect, so an open `escalation` todo "Email from unknown sender"
    exists. A second reply reading just "no thanks" gives outcome `opt_out` and a `suppression` row for that Gmail
    address. Delete that row afterwards.
-9. **Health works.** `GET /api/health` (logged in) returns 11 lights: tick, relay, 5 routines, mailboxes, scrape,
-   research_queue and setup. With no Routines connected, the 5 routine lights are amber, and
+9. **Health works.** The tests assert `computeLights(...).length === 10` with the names tick, relay,
+   routine:research, routine:reply, routine:weekly-kpis, routine:build, routine:monthly-care, mailboxes, scrape and
+   setup. Live, `GET /api/health` (logged in) lists those 10 first (later stages' registered lights follow). With no
+   Routines connected, the 5 routine lights are amber, and
    `SELECT dedupe FROM todos WHERE status='open' AND kind='setup'` lists `setup:routine:research` and the other
    four.
 10. **Claude plumbing works.** After generating the access key,
@@ -633,8 +662,9 @@ calls `/api/tick`. SMTP goes through vendored worker-mailer over `cloudflare:soc
 - Secrets are only ever stored as `settings` keys starting `secret:`. No API response, log line, heartbeat detail or
   error text contains a secret value.
 - Tick bounds:
+  - D1: 50 queries a tick, 6 kept for `health`, no step started with fewer than 10 left;
   - `dispatchDue` limit 2;
-  - inbound 10 rows;
+  - inbound 10 rows and 30 queries;
   - lease 50 s;
   - minimum gap 20 s;
   - `sending` timeout 10 min;
@@ -703,7 +733,8 @@ calls `/api/tick`. SMTP goes through vendored worker-mailer over `cloudflare:soc
 
 **Interfaces:**
 - Consumes `SCHEMA` from `functions/_lib/schema.js`.
-- Produces `fakeD1({schema = true} = {}) → {prepare(sql), batch(stmts), raw: DatabaseSync}`. Statements support:
+- Produces `fakeD1({schema = true} = {}) → {prepare(sql), batch(stmts), exec(sql), raw: DatabaseSync}`.
+  `exec(sql)` runs one or more statements with `raw.exec(sql)` (file 11's tests seed with it). Statements support:
   - `bind(...args)`;
   - `first(col?)`, which returns the row or the column value, else `null`;
   - `all()` → `{results}`;

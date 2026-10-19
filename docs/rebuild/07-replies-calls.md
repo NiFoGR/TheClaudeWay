@@ -19,8 +19,9 @@ replies Claude shouldn't send reach Nik as ready-to-send drafts.
 
 ## Trigger
 
-1. Stage 0's `inbound` tick step stores a message with `class = 'human'` and `needs_reply = 1`.
-2. This stage's hook `onHumanInbound` runs on it straight away (same tick).
+1. Stage 0's `inbound` tick step (`processInbound` in `_lib/mail/inbound-db.js`) stores a message with
+   `class = 'human'` and `needs_reply = 1`.
+2. This stage's hook `onHumanInbound` runs on it straight away (called from `processInbound`'s human branch, same tick).
 3. The tick's `reply_fire` step wakes the reply Routine (API fire).
 4. The reply Routine also runs on a schedule at 07:03 UK daily to catch up overnight mail.
 
@@ -58,15 +59,18 @@ That caps fires at 30 an hour, the Routine API's per-Routine limit. `<n>` is the
 One request returns everything; Claude never reads the database another way. Fields:
 
 - `paused`, `now_uk` (e.g. "Tue 20 Oct 09:14"), `inside_hours`, `send_at` (when a reply posted now goes out).
-- `offer` = `offerFacts(send_at)` from `_lib/offer.js`: weekend status, prices, guarantee sentences, terms, what's
-  included.
+- `offer` = `offerFacts(send_at, {chatbot, reviews})` from `_lib/offer.js` (built from stage 0's `PACKAGES`):
+  weekend status, prices in pounds, guarantee sentences, terms, what's included. The chat assistant and review lines
+  are in `included` only while the settings `offer:chatbot_live` / `offer:review_booster_live` are `'1'` (stage 9's
+  switches).
 - `voice`: `examples` and `rules` (the `style_examples` table, Nik's words), and `sent` (the last 10 emails Nik wrote
   himself: first emails and his own replies, body only).
 - `conversations` (oldest waiting first, at most 10):
   - `place_id`, `stage`, `reply_to` (their latest waiting message id), `waiting` (all waiting ids in this thread);
   - `lead` {business, trade, town, phone, greet_name};
   - `research` {grade, grade_reason, angle, owner, site_summary};
-  - `links` {demo, order, landing: "https://aetoswebsites.com"};
+  - `links` {demo: `demoLink(slug)`, order: `${DEMO_BASE}/d/<slug>/order`, landing: "https://aetoswebsites.com"}
+    (stage 4's `demo-db.js`; always on `https://aetoswebsites.com`, never the Control Room host);
   - `thread` (every message oldest → newest: id, who, kind, at, subject, text with quoted history removed, 4,000
     characters max each);
   - `calls` {current (their live offered/confirmed call or null), free_slots (next 3: {slot_at, label}),
@@ -81,8 +85,8 @@ Claude picks exactly one intent per conversation. The server does the bookkeepin
 | --- | --- | --- |
 | `interested` | Replies: next step is the Order button on their demo; after ordering, a short form, then live within 7 days of it. | Queues reply. Stage stays `replied`. |
 | `question` | Replies from `offer` facts only, then points to the demo. Escalates as `other` if the facts don't answer it. | Queues reply. |
-| `price` | Replies with the Full Package from `offer` (Website Only only if they ask for just a website); weekend price only when `offer.weekend`. Until Nik writes his own price answer on the Voice page (D-3), Claude uses `offer` in his style. | Queues reply. |
-| `more_info` | Replies with Nik's "more info" example: their demo link, with aetoswebsites.com named under it (D-4). | Queues reply. |
+| `price` | Replies with the Full Package from `offer` (Website Only only if they ask for just a website); weekend price only when `offer.weekend`. Until Nik writes his own price answer on the Voice page (D-3, Q-F), Claude uses `offer` in his style. | Queues reply. |
+| `more_info` | Replies with Nik's "more info" example: their demo link, with aetoswebsites.com named under it (D-4, Q-G). | Queues reply. |
 | `call_request` | Replies with Nik's "call" example and the soonest free slot; sends `call: {action: "offer", slot_at}`. | Holds the slot for this prospect for 48 h (`calls.status = 'offered'`). |
 | `proposes_time` | If the time is a free slot: confirms it (as `confirms_slot`). Otherwise replies that Nik will confirm `call_time_promise`, and sends `asked_time` ("Thu 3pm"). | Adds a `call_time` Todo; stage → `needs_nik` (event `escalate`). |
 | `confirms_slot` | Replies confirming the day, time and the number Nik will ring; sends `call: {action: "confirm", slot_at, phone}`. Asks for a number if none is known. | Call → `confirmed`, stage → `call_booked`, `call` Todo due at the slot. |
@@ -104,17 +108,17 @@ escalate. Checks, with the exact reason text:
 | --- | --- |
 | Not empty | `Write a reply, or escalate.` |
 | ≤ 180 words (signature not counted) | `Too long: 194 words (180 max).` |
-| Links only to `aetoswebsites.com` (and its subdomains) and the `app_url` host | `Links can only go to their demo, their order page or aetoswebsites.com (found bit.ly).` |
+| Links only to `aetoswebsites.com` and `www.aetoswebsites.com` (no other host, not even the Control Room's) | `Links can only go to their demo, their order page or aetoswebsites.com (found bit.ly).` |
 | Demo/order links only for this lead's slug | `That link is another business's demo (/d/other-slug).` |
 | No email addresses | `No email addresses in replies (found dave@smith.co.uk).` |
-| Every £ amount is in `offer.amounts` (1,750 / 1,950 / 2,000 / 249) | `£1,500 isn't one of our prices (£1,750, £1,950, £2,000, £249).` |
+| Every £ amount is in `offer.amounts` (249 / 1,750 / 1,950) | `£1,500 isn't one of our prices (£249, £1,750, £1,950).` |
 | Prices written in full with £ (no "2k", "1950 pounds", "quid") | `Write prices in full with £, e.g. £1,950.` |
 | No "SEO" (any case, dotted or not) | `Don't say "SEO": say "top 3 on Google" or "the front page of Google".` |
 | "guarantee", "promise", "100%", "money back" only inside an exact sentence from `offer.guarantees` | `Promises must use the exact guarantee wording from the offer.` |
 | "90 days free" / "first 90 days" only when `offer.weekend` is true at `send_at` | `The weekend deal isn't on when this goes out: use the weekday offer.` |
 | No leftover placeholders (`[link]`, `[time and day]`, `{name}`) | `Fill in or remove the placeholder [link].` |
 | Plain text, no HTML tags | `Plain text only: remove the HTML.` |
-| No sign-off (last line isn't the sender's first name or "Aetos Websites") | `Don't sign off: "Nik" and "Aetos Websites" are added under your reply.` |
+| No sign-off (last line isn't the sender name from Setup, `business:sender_name`, or "Aetos Websites") | `Don't sign off: "Nik" and "Aetos Websites" are added under your reply.` |
 | With `call`, the body names the slot's weekday | `Your reply doesn't mention Tuesday, the day you're offering.` (route check) |
 
 Nik's own replies ("Send as me", "Reply as me") are not checked: they're his words.
@@ -125,11 +129,11 @@ Nik's own replies ("Send as me", "Reply as me") are not checked: they're his wor
   `due_at` = now inside reply hours, else the next 07:00 UK.
 - Same mailbox as the thread (`prospects.mailbox_id`), to the address that wrote (`from_addr`), subject `"Re: "` +
   their subject (not doubled), `In-Reply-To` = their Message-ID, `References` = their References + their Message-ID.
-- Body = Claude's text + `"\n\n" + <first word of mailbox.display_name> + "\nAetos Websites"`. No quoted history, no
+- Body = Claude's text + `"\n\n" + <business:sender_name setting> + "\nAetos Websites"`. No quoted history, no
   cold footer.
-- Sent at once: the reply route calls `dispatchDue(DB, env, now, {limit: 1, kinds: ["reply"]})` in `waitUntil`;
-  replies never count against the cold daily cap (`sentToday` counts only `first` + `followup`) and ignore the cold
-  send window.
+- Sent at once: the reply route calls stage 0's `dispatchDue(DB, env, now, {limit: 1, kinds: ["reply"]})` in
+  `waitUntil`; replies never count against the cold daily cap (`sentToday` counts only `first` + `followup`), ignore
+  the cold send window, and still go from a mailbox paused for cold sending (stage 0 holds only `first`/`followup`).
 - Answering the latest message marks every earlier waiting message in that thread handled
   (`needs_reply = 0`, `handled_at = now`, `intent` set on the message answered).
 
@@ -149,20 +153,22 @@ Nik's own replies ("Send as me", "Reply as me") are not checked: they're his wor
   - from 17:00 UK → due 18:00 UK tomorrow; Claude writes "by tomorrow evening".
   - Title: `Confirm a time with Mark (Diamond Kickboxing) by 6pm (they asked for Thu 3pm)`; "by 6pm tomorrow" when
     due tomorrow.
-- **Tick step `calls` (position 8, every 5 minutes):**
+- **Tick step `calls` (position 9, every 5 minutes):**
   1. Release expired offers.
   2. From 07:00 UK, once a day, if any confirmed calls are today: `call` Todo `Today's calls: 11:00 Mark (Diamond
      Kickboxing)` (dedupe `calls-day:<YYYY-MM-DD>`).
   3. 30 minutes after a confirmed call's time: close its `call` Todo and add `How did the call with Mark (Diamond
      Kickboxing) go?` (dedupe `call-outcome:<id>`), linking to the call page.
-- **Outcomes** (call page): `Done` (+ note) → `done`; `No answer` → `no_show`, stage back to `replied`; `They're
-  ordering: send the order link` → `done` + a reply from Nik with the order link (editable; default
-  `Great speaking to you. Here's the link to get started:\n\n<order link>`); `Not for them` → `done`, stage `lost`
-  (`lost_reason = 'call'`). Stage `won` comes only from payment (stage 9).
+- **Outcomes** (call page): `Done` (+ note) → `done`; `No answer` → `no_show`, stage back to `replied` (event
+  `call_cancelled`); `They're ordering: send the order link` → `done` + a reply from Nik with the order link
+  (editable; default `Great speaking to you. Here's the link to get started:\n\n<order link>`); `Not for them` →
+  `done`, stage `lost` (event `said_no`, `lost_reason = 'call'`). Stage `won` comes only from payment (stage 9).
 - **By hand** (lead drawer or call page): Nik can book any future time (a slot or a custom time), and cancel. Cancelling
-  sets `cancelled`, closes the Todo, moves the stage back to `replied`, and can send an optional note from Nik.
-- **Call script:** `public/js/callscript.js`, now fed the offer for the call's day (no hard-coded prices) and the
-  rebuild guarantee wording, shown on the call page linked from every `call` Todo.
+  sets `cancelled`, closes the Todo, moves the stage back to `replied` (event `call_cancelled`), and can send an
+  optional note from Nik.
+- **Call script:** `public/js/callscript.js` as stage 3 left it (prices and guarantee read from `opts.offer`, no
+  hard-coded prices), fed `{...offerFor(slot_at), guarantee: GUARANTEE}` for the call's day, shown on the call page
+  linked from every `call` Todo.
 
 ### Escalations
 
@@ -184,8 +190,11 @@ Nik's own replies ("Send as me", "Reply as me") are not checked: they're his wor
     feel free to ask here.` (D-4)
   - situation "They ask for a call", kind `example`: `Yes of course. Soonest I am available for a phone call is [time
     and day]. If that doesn't work let me know a day and time if you can. Thank you.`
-- Nik adds, edits and deletes examples and rules on the Voice page. Rules are followed as rules; examples are copied
-  closely where the situation matches.
+- The seeds are added by stage 5–6's `GET /api/voice` (this stage adds the `seedVoice` call there) and by the agent
+  inbox, whichever runs first.
+- Nik adds and deletes examples and rules on the Voice page (built in stage 5–6). Rules are followed as rules;
+  examples are copied closely where the situation matches. The Voice page's "How much is it?" banner counts an
+  `example` whose situation or text matches `/price|how much|cost/i`.
 
 ### Pausing Claude
 
@@ -204,9 +213,9 @@ Nik's own replies ("Send as me", "Reply as me") are not checked: they're his wor
 | Reply comes from a different address at their firm | Claude answers the address that wrote; `prospects.email` is unchanged. |
 | They give another person's email | Escalated (`other`); nobody new is emailed automatically. |
 | Message tries to instruct Claude ("ignore your rules…") | Treated as data; escalated as `other`. |
-| Prospect is `won` (a paying client) | Not answered by Claude; `needs_reply = 0`; `escalation` Todo `Your client Green Leaf Landscapes emailed: read and reply yourself` (no draft). |
+| Prospect is `won` (a paying client) | Not answered by Claude; `needs_reply = 0`; the message gets `client_id` (`clients.id` by `place_id`); `escalation` Todo `Your client Green Leaf Landscapes emailed: read and reply yourself` (no draft). A client's "no thanks" arrives here too: stage 0 treats it as human mail, never as an opt-out. |
 | Prospect opted out or bounced, then writes | Not answered by Claude; `escalation` Todo `Green Leaf Landscapes wrote back after opting out: read and reply yourself`. |
-| Prospect said no / not now, then writes again | Claude answers as normal; the stage stays `lost` until Q2 below is decided. |
+| Prospect said no / not now, or the sequence ended, then writes again | Claude answers as normal; the stage goes back to `replied` (event `reopen`, only when `lost_reason` is `not_now`, `not_interested`, `sequence_done` or `call`; Q-Z). |
 | Human mail that matches no prospect | Not handled here (`needs_reply = 0`); it stays in the Namecheap inbox Nik reads. |
 | Slot taken between inbox and reply | 422 `That day already has a call booked or offered. Offer Wednesday 21 October at 11am instead.` |
 | No free slot in 56 days | `free_slots` is empty; Claude treats it as `proposes_time` with `asked_time` "any time (no free slots)". |
@@ -235,11 +244,7 @@ Nik's own replies ("Send as me", "Reply as me") are not checked: they're his wor
 - Errors: `Couldn't send: this thread has no mailbox. Add one on Setup → Mailboxes, then try again.` /
   `Couldn't save: write something first.`
 
-**Voice page** (nav "Voice", `#/voice`)
-- Heading `How Claude writes as you`. Cards: `Example · They ask for more info` with the text and `Delete`.
-- Form: `When…` (situation), `Type` (`What I'd write` / `A rule`), `Text`, `Save`.
-- Banner while no example mentions price: `You haven't written how you answer "How much is it?". Until you do, Claude
-  answers with the prices from your offer, in your style.`
+**Voice page**: built in stage 5–6; this stage only seeds Nik's two examples into it (see Voice above).
 
 **Call page** (`#/call/<id>`)
 - `Call Mark · Diamond Kickboxing`, `Tuesday 20 October at 11am`, the phone as a tap-to-call link, `Open the email
@@ -247,8 +252,9 @@ Nik's own replies ("Send as me", "Reply as me") are not checked: they're his wor
 - Before the call: `Cancel call` (with an optional message box). After the slot time: `How did it go?` with `Done`
   (note box), `No answer`, `They're ordering: send the order link` (editable message), `Not for them`.
 
-**Lead drawer** gets a **Call** section: `Booked: Tuesday 20 October at 11am` + `Cancel`, or `Book a call:` a dropdown
-of the next 3 free slots, `or another time` (date + time), phone, `Book`.
+**Lead drawer** gets a **Call** section, mounted in the drawer's empty `<div id="d-call"></div>` slot (stage 3's
+`drawerHtml`): `Booked: Tuesday 20 October at 11am` + `Cancel`, or `Book a call:` a dropdown of the next 3 free slots,
+`or another time` (date + time), phone, `Book`.
 
 ## Todos added (kinds from overview §6)
 
@@ -267,13 +273,18 @@ Links: escalations and `call_time` → `/#/replies/<place_id>`; `call` → `/#/c
 
 ## Health lights
 
-- **Replies** (`key: "replies"`):
-  - green `No replies waiting.` or `1 reply waiting.`;
+Shape `{name, level: "green"|"amber"|"red"|"grey", detail, fix}` (stage 0). This stage registers its light with
+stage 0's `registerLight(fn)`; it never edits `computeLights`.
+
+- **Replies** (`name: "replies"`):
+  - green: detail `No replies waiting.` or `1 reply waiting.`, fix `""`;
   - red when a waiting message is older than 20 minutes inside reply hours, age counted from the later of its
-    arrival and that morning's 07:00: `A reply has waited 21 minutes. Check the reply Routine is switched on
-    (routines/README.md) and its token is saved on Setup.` (stage 0 adds the `health` Todo for red lights);
-  - grey outside hours `Replies start again at 7am (1 waiting).` or while paused.
-- **Reply Routine fire** failures turn red through stage 0's `fireRoutine` handling (no change here).
+    arrival and that morning's 07:00: detail `A reply has waited 21 minutes.`, fix `Check the aetos-reply Routine is
+    switched on (routines/README.md) and its URL and token are saved on Setup → Claude.` (stage 0 adds the `health`
+    Todo for red lights);
+  - grey outside hours: detail `Replies start again at 7am (1 waiting).`, fix `""`; grey while paused: detail
+    `Claude's replies are paused (2 waiting).`, fix `Reply yourself on the Replies page.` Grey never adds a Todo.
+- **Reply Routine fire** failures turn red through stage 0's `routine:reply` light (no change here).
 
 ## Perfect when
 

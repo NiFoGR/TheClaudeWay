@@ -787,6 +787,10 @@ test("queues a threaded follow-up 1", async () => {
 });
 test("demo not ready holds the follow-up with a health todo", async () => { /* demoReady stub {ok:false, reason:"template not approved"} → 0 queued, todo health:followup-demo:p1 */ });
 test("a failed follow-up is retried next day, stopped after 3", async () => { /* 1 failed → next_followup_at 07:00 UK next day; 3 failed → stopped + health todo */ });
+test("an interrupted send is never retried", async () => {
+  /* 1 failed step-2 follow-up with error "The send was interrupted. It may or may not have gone: check the Sent folder…"
+     → retryFailed: next_followup_at stays NULL, no new queued row, open todo health:followup-fail:p1 whose title has that error */
+});
 test("step 9 + 7 days → lost/sequence_done", async () => { /* followup_step 9, next_followup_at past → stage 'lost', lost_reason 'sequence_done' */ });
 test("bounded work: 40 due leads, ≤ 18 D1 round trips, 3 queued", async () => {
   const DB = await manyDue(40); await approveAll(DB);
@@ -797,25 +801,30 @@ test("bounded work: 40 due leads, ≤ 18 D1 round trips, 3 queued", async () => 
 });
 ```
 (`demoReady` is injected for tests: `followupsStep(ctx, {demoReady})` defaulting to stage 4's import; one `demoReady`
-call per lead queued, at most 3 per run, inside the 18-round-trip budget.)
+call per lead queued, at most 3 per run, inside the 18-round-trip budget. `dueLead`/`manyDue` seed the setting
+`business:sender_name` = "Nik" and a mailbox whose `display_name` is "Nik Example", so the footer test proves the
+setting is used. When `ctx.budget` is set and below 18, the step stops starting sub-steps once it is spent.)
 - [ ] **Step 2: Run it to verify it fails** — → `followupsStep is not a function`.
 - [ ] **Step 3: Implement `retryFailed`, `closeFinished`, `queueDue`, `followupsStep`; add the STEPS entry in `tick.js`.**
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/followups-db.test.mjs control-room/tests/tick.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add …followups.js control-room/functions/_lib/tick.js …followups-db.test.mjs` + `git commit -m "Tick step: queue due follow-ups, retry, close finished sequences"`.
 
-### Task 9: Composer logic (db)
+### Task 9: First-email logic (db)
 
-**Files:** Create `control-room/functions/_lib/composer.js`. Test `control-room/tests/composer.test.mjs`.
+**Files:** Create `control-room/functions/_lib/first-email.js` (server side; the browser file is `public/js/compose.js`,
+Task 13). Test `control-room/tests/first-email.test.mjs`.
 
 **Interfaces:**
 Consumes: `greetingFor`, `firstEmailIssues`, `renderFirstEmail`, `businessName`; `roomForFirsts`, `planningRows`,
 `loadByDay`, `roomFor`, `COLD_WINDOW`, `followupsApproved`; `pickMailbox`, `mailboxCap`, `rampCap`;
-`makeMessageId`, `coldFooter`; `queueMessage`; `demoReady`; `inUkWindow`, `nextUkWindowStart`, `ukDate`, `addUkDays`.
+`makeMessageId`, `coldFooter`; `queueMessage`; `demoReady`; `getSetting` (`business:sender_name`); `inUkWindow`,
+`nextUkWindowStart`, `ukDate`, `addUkDays`.
 Produces:
 `composeContext(DB, placeId, now) → Promise<{business, to_options: [{email, where, source_url, best}], greeting: {line, name},
 angle: [{fact, source_url}], opener, demo: {ok, url, reason}, due_at, mailbox: {id, address, display_name}|null,
-blocking: [{code, message}], followups_approved: boolean, stage, first_message_id|null}>`
-(`blocking` = the A3 db-side checks: `no_prospect`, `demo_not_ready`, `no_mailbox`, `warming_up`, `no_room`,
+sender_name, blocking: [{code, message}], followups_approved: boolean, stage, first_message_id|null}>`
+(`sender_name` = the `business:sender_name` setting, used for the footer, while `mailbox.display_name` is only the
+From line; `blocking` = the A3 db-side checks: `no_prospect`, `demo_not_ready`, `no_mailbox`, `warming_up`, `no_room`,
 `already_emailed`, `queued_already`);
 `previewFirst(ctx, {to, subject, body}) → {text, from, issues: [{code, message}]}` (pure on the context: text checks +
 `not_in_list` + `blocking`);
@@ -826,7 +835,7 @@ blocking: [{code, message}], followups_approved: boolean, stage, first_message_i
 ```js
 const input = { to: "mark@greenleaf.co.uk", subject: "Your website", body: "I made you a site: {demo_link}" };
 test("send queues one first email and keeps the lead ready", async () => {
-  const DB = await readyLead();                                          // research, prospect 'ready', mailbox m1 cap 10, demo ok
+  const DB = await readyLead();                                          // research, prospect 'ready', mailbox m1 cap 10, demo ok, business:sender_name "Nik"
   const r = await sendFirst(DB, "p1", input, new Date("2026-10-22T08:15:00Z"));
   assert.equal(r.ok, true); assert.equal(r.due_at, "2026-10-22T08:15:00Z");
   const m = await DB.prepare("SELECT * FROM messages WHERE id = ?").bind(r.id).first();
@@ -862,14 +871,14 @@ test("each db check has its exact message", async () => {
 test("greeting falls back to Hi, when the owner isn't confident", async () => { /* owner.confident false → body starts "Hi,\n\n", greet_name null */ });
 ```
 (`issueFor(setup)` is a local helper: builds `readyLead()` with the change and returns the first issue's message.)
-- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/composer.test.mjs` → `Cannot find module …/composer.js`.
-- [ ] **Step 3: Implement the four functions in `_lib/composer.js`** — `sendFirst` re-runs every check server-side,
+- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/first-email.test.mjs` → `Cannot find module …/first-email.js`.
+- [ ] **Step 3: Implement the four functions in `_lib/first-email.js`** — `sendFirst` re-runs every check server-side,
   then claims the lead with `UPDATE prospects SET email, greet_name, mailbox_id, subject, updated_at WHERE place_id = ?
   AND stage = 'ready' AND NOT EXISTS (SELECT 1 FROM messages WHERE place_id = ? AND kind = 'first' AND status IN
   ('queued','sending','sent'))`; `meta.changes === 0` → 409 `queued_already`; then `queueMessage`. To options come from
   `research.emails` + `research.best_email`, lower-cased and de-duplicated.
 - [ ] **Step 4: Run tests to verify they pass** — → PASS.
-- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/composer.js control-room/tests/composer.test.mjs` + `git commit -m "Composer: checks, mailbox pick and queueing Nik's first email"`.
+- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/first-email.js control-room/tests/first-email.test.mjs` + `git commit -m "First email: checks, mailbox pick and queueing Nik's first email"`.
 
 ### Task 10: Compose routes
 
@@ -976,8 +985,11 @@ test("bad example input", async () => { /* kind "x" → 400 "Pick Example reply 
 
 ### Task 13: Composer and thread in the lead drawer (front end)
 
-**Files:** Create `control-room/public/js/compose.js`. Modify `control-room/public/js/leads.js` (drawer mount point
-`<div id="d-email"></div>` under the demo card; call `mountEmail`), `control-room/public/style.css` (`.compose`,
+**Files:** Create `control-room/public/js/compose.js`. Modify `control-room/public/js/leads.js` (stage 3's
+`drawerHtml` already renders the empty mount `<div id="d-email"></div>`, and its **Write first email** button already
+does `import("./compose.js").then(m => m.mountEmail(document.getElementById("d-email"), id))` and scrolls to it; this
+task only adds: when the drawer opens for a lead whose prospect has a first email (queued, sent or failed), call
+`mountEmail` the same way so the thread shows without a click), `control-room/public/style.css` (`.compose`,
 `.compose-help`, `.preview-mail`, `.checks`, `.thread`, `.msg`, `.badge.you/.claude/.system/.them`). Test
 `control-room/tests/compose-ui.test.mjs`.
 
@@ -1037,26 +1049,38 @@ test("banner and word label", () => {
 light). Test `control-room/tests/followups-db.test.mjs`.
 
 **Interfaces:**
+Consumes: `registerLight(fn)` and `healthFromDb(DB, env, now) → Promise<{lights, gaps}>` from `_lib/health.js`
+(stage 0; this task does not edit `computeLights`).
 Produces: `followupHealth({overdue: [{mailbox_address, mailbox_status}], approved: boolean, waiting: number}) →
-{name: "followups", light: "green"|"amber"|"red", detail: string}` (pure);
+{name: "followups", level: "green"|"amber"|"red", detail: string, fix: string}` (pure);
 `followupHealthFromDb(DB, now) → Promise<same>` (overdue = queued follow-ups with `due_at` < now − 24 h, plus pending
-`next_followup_at` < now − 24 h when approved).
+`next_followup_at` < now − 24 h when approved);
+at module level in `followups.js`: `registerLight((DB, env, now) => followupHealthFromDb(DB, now))` (the tick imports
+`followups.js` for its step, so the light is registered before `health` runs).
 
 - [ ] **Step 1: Write the failing test**
 ```js
 test("followupHealth", () => {
-  assert.deepEqual(followupHealth({ overdue: [], approved: true, waiting: 0 }), { name: "followups", light: "green", detail: "Follow-ups are on time." });
-  assert.deepEqual(followupHealth({ overdue: [], approved: false, waiting: 4 }), { name: "followups", light: "amber", detail: "4 follow-ups are waiting for you to approve the wording on the Voice page." });
+  assert.deepEqual(followupHealth({ overdue: [], approved: true, waiting: 0 }), { name: "followups", level: "green", detail: "Follow-ups are on time.", fix: "" });
+  assert.deepEqual(followupHealth({ overdue: [], approved: false, waiting: 4 }), { name: "followups", level: "amber",
+    detail: "4 follow-ups are waiting for you to approve the wording on the Voice page.", fix: "Approve them on the Voice page." });
   assert.deepEqual(followupHealth({ overdue: Array(3).fill({ mailbox_address: "nik@aetoswebsites.com", mailbox_status: "paused" }), approved: true, waiting: 0 }),
-    { name: "followups", light: "red", detail: "3 follow-ups are a day late: mailbox nik@aetoswebsites.com is paused." });
-  assert.equal(followupHealth({ overdue: [{ mailbox_address: "a@b", mailbox_status: "active" }], approved: true, waiting: 0 }).detail,
-    "1 follow-up is a day late. Check the mailbox on Setup and the tick light.");
+    { name: "followups", level: "red", detail: "3 follow-ups are a day late: mailbox nik@aetoswebsites.com is paused.",
+      fix: "Open Setup → Mailboxes and fix the paused mailbox." });
+  const one = followupHealth({ overdue: [{ mailbox_address: "a@b", mailbox_status: "active" }], approved: true, waiting: 0 });
+  assert.equal(one.detail, "1 follow-up is a day late.");
+  assert.equal(one.fix, "Check the mailbox on Setup and the tick light.");
+});
+test("the light is registered", async () => {
+  const DB = fakeD1();
+  const { lights } = await healthFromDb(DB, {}, new Date("2026-10-22T10:00:00Z"));
+  assert.equal(lights.find((l) => l.name === "followups").level, "green");
 });
 ```
 - [ ] **Step 2: Run it to verify it fails** — → `followupHealth is not a function`.
-- [ ] **Step 3: Implement both functions; add the light to `health.js`'s list.**
+- [ ] **Step 3: Implement both functions and the `registerLight` call in `followups.js`.**
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/followups-db.test.mjs control-room/tests/health.test.mjs` → PASS.
-- [ ] **Step 5: Commit** — `git add …followups.js control-room/functions/_lib/health.js …followups-db.test.mjs` + `git commit -m "Follow-ups health light"`.
+- [ ] **Step 5: Commit** — `git add …followups.js …followups-db.test.mjs` + `git commit -m "Follow-ups health light"`.
 
 ### Task 16: End-to-end with fake SMTP
 

@@ -533,7 +533,8 @@ photos from {name}'s Google listing and add them on the Site page", dedupe `buil
 ## 11. Chatbot (decision D-6 default: our own, on Cloudflare Workers AI)
 
 **Connection:** Setup → "Client sites" → Cloudflare account ID and an API token made with Cloudflare's "Workers AI"
-token template (`secret:cf_ai:account_id`, `secret:cf_ai:token`), and the model name (setting `chat:model`, default
+token template (`secret:cf_ai:account_id`, `secret:cf_ai:token`; the one exception to overview §2's "no new Cloudflare
+keys for Nik", noted in overview §10 and stored on Setup like every other secret), and the model name (setting `chat:model`, default
 `@cf/google/gemma-3-12b-it`; Nik can change it to the newer Gemma model research.md names when it appears in Workers
 AI's model list). **Test** sends "Reply with the word OK." and shows "Chatbot connection works ✓ (answered in {s} s)",
 or: 401/403 → "Cloudflare rejected the token. Make a new token with the 'Workers AI' template and paste it again." ·
@@ -841,8 +842,9 @@ REST, DNS-over-HTTPS, vendored `qrcode-generator` 1.4.4 (MIT), `node --test` wit
 
 ### Task 1: Schema for client sites
 
-**Files:** Modify `lead-manager/schema.sql`, `control-room/functions/_lib/schema.js` (generated). Test
-`control-room/tests/sites-schema.test.mjs`.
+**Files:** Modify `lead-manager/schema.sql`, `control-room/functions/_lib/schema.js` (generated),
+`lead-manager/tests/test_schema_sync.py` (stage 0's `test_rebuild_tables_present`). Test
+`control-room/tests/sites-schema.test.mjs`. (Stage 0's statement-count test is `>= 52`, so it needs no change.)
 
 **Interfaces:** Produces tables `client_sites`, `site_leads`, `chat_usage`, `site_files`, `rate_hits` (exact SQL in
 Cross-stage interfaces).
@@ -852,15 +854,18 @@ Cross-stage interfaces).
   domain: "{}", created_at, updated_at}`; assert a second row with the same `host` throws `/UNIQUE/`; insert two
   `site_leads` with `session = NULL` (both succeed) and two with the same `(client_id, session)` (second throws);
   insert `chat_usage (c1, "2026-10-19")` twice → second throws; `site_files` accepts a `Uint8Array([1,2,3])` in `bytes`
-  (with `width = 3, height = 2`) and reads back length 3; `rate_hits (k, w)` primary key enforced.
+  (with `width = 3, height = 2`) and reads back length 3; `rate_hits (k, w)` primary key enforced. In
+  `test_schema_sync.py`, add `"client_sites","site_leads","chat_usage","site_files","rate_hits"` to the table list of
+  `test_rebuild_tables_present`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/sites-schema.test.mjs` → fails: no such
-  table `client_sites`.
+  table `client_sites`; `cd lead-manager && python -m pytest -q tests/test_schema_sync.py` → fails on `client_sites`.
 - [ ] **Step 3: Implement** — paste the SQL from Cross-stage interfaces into `lead-manager/schema.sql` after
   `onboarding`; run `python scripts/sync_schema.py`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/sites-schema.test.mjs && (cd
   lead-manager && python -m pytest -q)` → PASS.
 - [ ] **Step 5: Commit** — `git add lead-manager/schema.sql control-room/functions/_lib/schema.js
-  control-room/tests/sites-schema.test.mjs && git commit -m "Client site tables (stage 10)"`
+  lead-manager/tests/test_schema_sync.py control-room/tests/sites-schema.test.mjs && git commit -m "Client site tables
+  (stage 10)"`
 
 ### Task 2: Site content validator
 
@@ -1008,7 +1013,8 @@ Rendering: `renderSite(siteData(...), {mode: "live", page: "/services/roof-repai
 (fetch only). Test `control-room/tests/sites-hosts.test.mjs`.
 
 **Interfaces:** Produces `OUR_HOSTS` (Set: `aetoswebsites.com`, `www.aetoswebsites.com`, `localhost`, `127.0.0.1`);
-`normaliseHost(raw) → string`; `isOurHost(host, env) → boolean`; `wwwTwin(host) → string`;
+`normaliseHost(raw) → string`; `isOurHost(host) → boolean` (`OUR_HOSTS` or any `*.pages.dev`; no env variable);
+`wwwTwin(host) → string`;
 `canonicalHost(domainInput) → {ok, host?, domain?, error?}`; `CF_IPV4` (array of the 15 Cloudflare IPv4 CIDRs from
 cloudflare.com/ips-v4); `inCloudflare(ip) → boolean`; `dnsVerdict({cname: string[], a: string[]}, pagesHost) → {ok,
 detail}`; `nsIsCloudflare(ns: string[]) → boolean`; in `dns.js`: `checkHost(host, pagesHost, {fetchImpl}) → Promise<{ok,
@@ -1016,9 +1022,9 @@ detail}>` (DoH CNAME, then A; detail prefixed with the host as in section 7) and
 Promise<boolean>`.
 
 - [ ] **Step 1: Write the failing test** — `normaliseHost("WWW.Smith.co.uk.:443") === "www.smith.co.uk"`;
-  `isOurHost("goldbarwebsites.pages.dev", {})`, `isOurHost("abc.goldbarwebsites.pages.dev", {})`,
-  `isOurHost("localhost", {})`, `isOurHost("app.example.com", {APP_HOST: "app.example.com"})` true;
-  `isOurHost("site-test.aetoswebsites.com", {})` false; `wwwTwin("smith.co.uk") === "www.smith.co.uk"` and back;
+  `isOurHost("goldbarwebsites.pages.dev")`, `isOurHost("abc.goldbarwebsites.pages.dev")`,
+  `isOurHost("localhost")`, `isOurHost("aetoswebsites.com")` true; `isOurHost("site-test.aetoswebsites.com")` and
+  `isOurHost("control.aetoswebsites.com")` false (both go through the `client_sites` lookup); `wwwTwin("smith.co.uk") === "www.smith.co.uk"` and back;
   `canonicalHost(" https://Smith.co.uk/ ")` → `{ok: true, host: "www.smith.co.uk", domain: "smith.co.uk"}`;
   `canonicalHost("bücher.de").host === "www.xn--bcher-kva.de"`; `canonicalHost("smith")` → error "That doesn't look
   like a web address. Type it like smithroofing.co.uk."; `inCloudflare("104.21.3.4")` true, `"1.2.3.4"` false;
@@ -1074,7 +1080,8 @@ NULL, onboarding status `review`); `setSiteStatus(DB, client_id, status, now, {a
 **Files:** Create `control-room/functions/_lib/sites/countdown.js`. Test `control-room/tests/sites-countdown.test.mjs`.
 
 **Interfaces:** Consumes `ukParts` (ukTime.js). Produces `dueFrom(submittedAtIso) → iso`;
-`countdown(dueIso, liveIso|null, now) → {label, colour: "red"|"amber"|"green"|"grey", hoursLeft}`;
+`countdown(dueIso, liveIso|null, now) → {label, level: "red"|"amber"|"green"|"grey", hoursLeft}` (same `level`
+words as the health lights);
 `ukShortDay(iso) → "Sat 31 Oct"`.
 
 - [ ] **Step 1: Write the failing test** —
@@ -1082,12 +1089,12 @@ NULL, onboarding status `review`); `setSiteStatus(DB, client_id, status, now, {a
   assert.equal(dueFrom("2026-10-24T22:30:00Z"), "2026-10-31T22:30:00Z");
   assert.equal(ukShortDay("2026-10-31T22:30:00Z"), "Sat 31 Oct");
   assert.deepEqual(countdown("2026-10-31T22:30:00Z", null, new Date("2026-10-25T10:00:00Z")),
-    {label: "Due live Sat 31 Oct · 6 days left", colour: "grey", hoursLeft: 156.5});
-  assert.equal(countdown(due, null, new Date("2026-10-29T23:00:00Z")).colour, "red");     // 47.5 h
+    {label: "Due live Sat 31 Oct · 6 days left", level: "grey", hoursLeft: 156.5});
+  assert.equal(countdown(due, null, new Date("2026-10-29T23:00:00Z")).level, "red");      // 47.5 h
   assert.equal(countdown(due, null, new Date("2026-10-31T10:00:00Z")).label, "Due live Sat 31 Oct · less than a day left");
   assert.equal(countdown(due, null, new Date("2026-11-02T23:00:00Z")).label, "2 days late");
   assert.deepEqual(countdown(due, "2026-10-30T09:00:00Z", now).label, "Live Fri 30 Oct · on time");
-  assert.equal(countdown(due, "2026-11-01T09:00:00Z", now).colour, "amber");               // "Live Sun 1 Nov · 1 day late"
+  assert.equal(countdown(due, "2026-11-01T09:00:00Z", now).level, "amber");                // "Live Sun 1 Nov · 1 day late"
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/sites-countdown.test.mjs` → module not
   found.
@@ -1105,6 +1112,8 @@ string|null`; `reviewMessages({business, owner, link}) → {sms, email: {subject
 `enquiryEmail({lead, site, business, when}) → {subject, body}`; `goLiveEmail({first, host, leadsEmail, chatOn,
 fullPackage, reviewUrl, nik}) → {subject, body}`; `nameserverEmail({first, domain, registrar, ns, emailOnIt, nik})`;
 `cnameEmail({first, domain, registrar, pagesHost, nik})`; `oneLine(s) → string` (strips CR/LF, trims, ≤ 200 chars).
+`nik` is always the sign name `sendClientMail` passes to `compose` (the `business:sender_name` setting). Every subject
+goes through `oneLine()` before queueing (stage 0's `composeEmail` throws on CR/LF rather than stripping).
 
 - [ ] **Step 1: Write the failing test** — `checkReviewLink("https://g.page/r/abc/review").ok`;
   `checkReviewLink("https://evil.com/x").error === "That isn't a Google review link."`;
@@ -1172,8 +1181,9 @@ Produces `formDefaults({lead, research, client}) → form` (section 4 JSON); `va
 ### Task 12: Onboarding routes and Send
 
 **Files:** Create `control-room/functions/onboard/[token].js` (GET), `control-room/functions/onboard/[token]/save.js`,
-`control-room/functions/onboard/[token]/submit.js`, `control-room/functions/_lib/sites/onboard.js`. Modify
-`control-room/functions/_middleware.js` (public prefix `/onboard/`). Test `control-room/tests/sites-onboard.test.mjs`.
+`control-room/functions/onboard/[token]/submit.js`, `control-room/functions/_lib/sites/onboard.js`. Check
+`control-room/functions/_middleware.js` lets `/onboard/` through without login (stage 0 already lists it as public).
+Test `control-room/tests/sites-onboard.test.mjs`.
 
 **Interfaces:** Consumes Tasks 7, 8, 10, 11; `fireRoutine`, `addTodo`, `getSetting`. Produces
 `submitOnboarding(DB, env, token, form, now, {fire = fireRoutine}) → Promise<{status: 200|400|404|409, errors?,
@@ -1200,7 +1210,9 @@ due_live_at?}>`; `startTodos(DB, site, form, client, now)` (domain + GBP + `gpho
 
 **Files:** Create `control-room/functions/_lib/sites/files.js`, `control-room/functions/s/f/[id].js`,
 `control-room/functions/api/sites/[client_id]/photos.js`, `control-room/tests/fixtures/img/3x2.{jpg,png,webp,gif}`.
-Modify `_middleware.js` (public prefix `/s/f/`). Test `control-room/tests/sites-files.test.mjs`.
+Modify `_middleware.js` (public prefix `/s/f/`) and stage 0's `control-room/tests/site.test.mjs` (stage 0's rule for
+new public prefixes: add "`/s/f/abc` on the root host → `next()` with no cookie needed"). Test
+`control-room/tests/sites-files.test.mjs`.
 
 **Interfaces:** Produces `imageSize(bytes: Uint8Array, mime) → {w, h}|null` (reads JPEG SOF, PNG IHDR, WebP
 VP8/VP8L/VP8X and GIF headers; pure); `copyPhotos(DB, client_id, content, {fetchImpl, now}) → Promise<{content,
@@ -1217,13 +1229,14 @@ now) → Promise<{ok, id?, error?}>`; `serveFile(DB, id, {cache}) → Promise<Re
   and `cache-control: public, max-age=31536000, immutable`; unknown id → 404; `saveUpload` of 400,001 bytes → error
   "That photo is still over 400 KB after shrinking. Try a smaller one."; `image/svg+xml` upload refused; the photos
   route returns 401 without the login cookie (middleware).
-- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/sites-files.test.mjs` → module not found.
+- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/sites-files.test.mjs
+  control-room/tests/site.test.mjs` → module not found.
 - [ ] **Step 3: Implement** — fetch with `AbortSignal.timeout(8000)`, read `arrayBuffer()`, check size and type, store
   `new Uint8Array(buf)` as BLOB; `serveFile` uses `caches.default` when present (match → return; else read D1, `put`).
 - [ ] **Step 4: Run tests to verify they pass** — same command → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/sites/files.js control-room/functions/s
-  control-room/functions/api/sites control-room/functions/_middleware.js control-room/tests/sites-files.test.mjs && git
-  commit -m "Copy client photos into D1 and serve them"`
+  control-room/functions/api/sites control-room/functions/_middleware.js control-room/tests/sites-files.test.mjs
+  control-room/tests/site.test.mjs && git commit -m "Copy client photos into D1 and serve them"`
 
 ### Task 14: Build Routine API
 
@@ -1403,10 +1416,12 @@ Promise<{ok, text?, status?, error?}>`; `testModel(DB, {fetchImpl}) → Promise<
 ### Task 22: Host routing for client sites
 
 **Files:** Create `control-room/functions/_lib/sites/serve.js`. Modify `control-room/functions/_middleware.js` (first
-check: `if (!isOurHost(host, env)) return serveClientHost(context)`). Test `control-room/tests/sites-serve.test.mjs`.
+check: `if (!isOurHost(host)) { const r = await serveClientHost(context); if (r) return r; }`, then stage 0's routing
+as before). Test `control-room/tests/sites-serve.test.mjs`.
 
 **Interfaces:** Consumes Tasks 4–7, 13, 16, 18, 19–21, `getSetting`. Produces `serveClientHost({request, env,
-waitUntil}, now = new Date()) → Promise<Response>`.
+waitUntil}, now = new Date()) → Promise<Response|null>` (`null` = `siteByHost` found no row: not a client site, so the
+middleware carries on into stage 0's routing; no 404, no `APP_HOST` variable).
 
 - [ ] **Step 1: Write the failing test** — fakeD1 with a live site `www.smithroofing.co.uk` (fixture content) and a
   `review` site `www.other.co.uk`: `https://www.smithroofing.co.uk/` → 200 HTML with the home title, security headers
@@ -1417,8 +1432,10 @@ waitUntil}, now = new Date()) → Promise<Response>`.
   false` or the package is `website`); `/s/chat.js` →
   `application/javascript`; POST `/s/contact` → 303; `/nope` is built by `renderMissingPage`; `https://www.other.co.uk/`
   (status review) → 404 "This website
-  isn't set up yet."; `https://unknown.example/` → same 404; `goldbarwebsites.pages.dev/` → middleware calls `next()`
-  (no D1 site lookup); the client host works when `CONTROL_ROOM_PASSWORD` is unset; no response sets a cookie.
+  isn't set up yet."; `https://control.x/` (no `client_sites` row) → `serveClientHost` returns `null` and the
+  middleware answers as stage 0 does: 303 to `/login` without a cookie, the Control Room with one;
+  `goldbarwebsites.pages.dev/` → middleware calls `next()` (no D1 site lookup); the client host works when
+  `CONTROL_ROOM_PASSWORD` is unset; no response sets a cookie.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/sites-serve.test.mjs` → module not found.
 - [ ] **Step 3: Implement** — section 7's routing table top to bottom; one D1 read for the site plus one `settings`
   read (`SELECT key, value FROM settings WHERE key IN (…)`) per request.
@@ -1430,7 +1447,9 @@ waitUntil}, now = new Date()) → Promise<Response>`.
 ### Task 23: Preview and temporary link
 
 **Files:** Create `control-room/functions/c/[slug]/[[path]].js`, `control-room/functions/w/[slug]/[[path]].js`. Modify
-`_middleware.js` (public prefix `/w/`). Test `control-room/tests/sites-preview.test.mjs`.
+`_middleware.js` (public prefix `/w/`) and stage 0's `control-room/tests/site.test.mjs` (add "`/w/abc/` on the root
+host → `next()` with no cookie needed", stage 0's rule for new public prefixes). Test
+`control-room/tests/sites-preview.test.mjs`.
 
 **Interfaces:** Consumes Tasks 4, 7. Produces the two routes of section 7.
 
@@ -1438,7 +1457,8 @@ waitUntil}, now = new Date()) → Promise<Response>`.
   200 containing "Preview of Smith Roofing's site", `noindex`, links prefixed `/c/<slug>/`; site with no content → 404
   "Claude hasn't written this site yet."; `/w/<slug>/` for a `review` site → 404, for a `live` site → 200 with
   `noindex` and `<link rel="canonical" href="https://www.smithroofing.co.uk/">`.
-- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/sites-preview.test.mjs` → 404s.
+- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/sites-preview.test.mjs
+  control-room/tests/site.test.mjs` → 404s.
 - [ ] **Step 3: Implement** — both call `renderSite(siteData(content, {lead, host, base, noindex: true, previewBar,
   files}), {mode: "live", page})`; `/c/` passes `previewBar` and an empty form action, `/w/` passes neither.
 - [ ] **Step 4: Run tests to verify they pass** — same command → PASS.

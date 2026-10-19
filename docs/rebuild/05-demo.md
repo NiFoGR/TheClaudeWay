@@ -899,9 +899,10 @@ Then run the Part A "Perfect when" live checks 6–12 on the deployed site.
 ## Cross-stage interfaces
 
 **Produced here (others use):**
-- `ensureDemo(DB, place_id, now = new Date()) → Promise<{ok, reason, demo, created}>` — `_lib/demo-db.js`. **Stage 2**
-  calls it right after storing research (`POST /api/agent/leads/:id`). It also creates the `prospects` row
-  (stage `ready`). Signature changed from the old `ensureDemo(DB, lead, at)`.
+- `ensureDemo(DB, place_id, now = new Date()) → Promise<{ok, reason, demo, created}>` — `_lib/demo-db.js`. Stage 2's
+  route `POST /api/agent/research/:place_id` (`api/agent/research/[id].js`) calls it right after `saveResearch`; this
+  stage adds that call (Task 8). It also creates the `prospects` row (stage `ready`) through `applyStageEvent`.
+  Signature changed from the old `ensureDemo(DB, lead, at)`.
 - `demoReady(DB, place_id, now = new Date()) → Promise<{ok, reason, url, slug}>` — **stage 5/6** must refuse a first
   email when `ok` is false and show `reason`; the first email's only link is `url`. **Stage 3** can show `reason` on
   the shortlist.
@@ -914,34 +915,46 @@ Then run the Part A "Perfect when" live checks 6–12 on the deployed site.
   `order_click`; the preview bar's "Order this site" links to `/d/<slug>/order` (stage 9 owns that page;
   `renderOrder` stays in `_lib/demo.js` until then).
 - `renderExpired({name, contact_email})`, `renderNotFound()` — stage 9's order page should use them too.
-- `_lib/session.js`: `SESSION_COOKIE`, `sessionToken(password)`, `isOwnerRequest(request, env)` — **stage 0's**
-  middleware imports these instead of keeping its own copy.
+- `_lib/session.js`: `SESSION_COOKIE` (stays `cr_session`), `sessionToken(password)` (stage 0's derivation,
+  unchanged), `isOwnerRequest(request, env)` — **stage 0's** middleware imports these instead of keeping its own copy.
+- `GET /api/demo/preview?template=<id>&place_id=<id>` — **stage 3's** lead drawer frames this for its demo preview
+  (it allows `frame-ancestors 'self'`; the public `/d/<slug>` page never can be framed and has no `?preview=1`).
+- `demoCardHtml(info)` — mounted into stage 3's `<div id="d-demo"></div>` in the lead drawer.
 - Tick step `hot` (position 5, every 5 minutes) is fully owned here, including what overview §8 lists as "stage 4/6";
   stage 6 doesn't add another hot step. It also runs `syncDemoExpiry` and the missing-demo safety net.
 - `checkDemoHtml(html, data, {mode, now})` — stage 10 can reuse it as a pre-launch check for client sites.
 
 **Needed from other stages (not defined in the overview):**
-- `_lib/offer.js`: `offerNow(now) → { weekend: boolean, full: { build, monthly, freeDays }, website: { build } }`
-  (pence; `freeDays` 60 or 90). If the stage that builds `offer.js` names it differently, only Task 4/10 call sites
-  change.
-- `stages.js`: `nextStage(null, "demo_ready") === "ready"` and `nextStage("emailed", "demo_view") === "viewed"`
-  (and `nextStage(s, "demo_view") === s` for every other stage).
+- Stage 0's `_lib/offer.js` (01 Task 6 owns it): `offerFor(date) → {weekend, full, website, banner}` where `full` is
+  `PACKAGES.full` or `PACKAGES.weekend` (pence; `full.freeDays` 60 or 90), and `GUARANTEE = {headline, section}`.
+  This stage defines no offer or guarantee constants of its own.
+- Stage 0's `prospects.js`: `applyStageEvent(DB, placeId, event, now, {email, greet_name})` (the option inserts a
+  new row); with `stages.js` giving `nextStage(null, "demo_ready") === "ready"`, `nextStage("ready", "demo_ready")
+  === "ready"`, `nextStage("emailed", "demo_view") === "viewed"` and `nextStage(s, "demo_view") === s` for every
+  other stage.
+- Stage 3's `_lib/shortlist.js`: `isHot(prospect, now)` with the Part A §9 rule (only `emailed`/`viewed`).
+- Stage 0's `runTick`: `ctx.budget` (queries left in this invocation).
 - **Stage 0 middleware host routing:** `/d/*` must be public and served on the root domain `aetoswebsites.com` (not
   replaced by the landing page), and `/robots.txt` should disallow `/d/`.
 - **Stage 2:** `research.copy` is `{headline, intro, services: string[], areas: string[], about}`; `research.owner` is
   `{first, full, source_url, confident}`; `research.best_email` is a single address.
-- **Stage 3 / file 11:** the lead drawer keeps a slot for `demoCardHtml`; the nav keeps the "Demo" item under "Sell".
+- **Stage 3 / file 11:** the lead drawer keeps the `#d-demo` mount point for `demoCardHtml`; file 11's `routeFor`
+  keeps the `demo` route (there is no nav item for it).
+- **Stage 9:** its payment-page todos use dedupe `checkout:<place_id>` (never `hot:…`), so the `hot` step can't close
+  them.
 - **Stage 0 sending:** outbound rows in `messages` have `direction = 'out'`, `status = 'sent'`, `sent_at` and
   `place_id` (read by `syncDemoExpiry`).
 
 ## Questions for Nik
 
-1. **Price on the demo?** The guarantee strip shows the free days and "No contract", and the "Order this site" button
-   leads to the prices. *Default: no price on the demo itself; prices only on the order page.*
-2. **Check each demo before its first email?** The look is approved once per template, and you see the demo link
-   next to each lead when you write the first email. *Default: no extra per-lead approval step.*
-3. **Their colour is too pale for white text:** use a darker shade of their colour, or always switch to Charcoal?
-   *Default: darker shade of their colour (up to 50% darker), Charcoal only if even that is unreadable.*
+- **Q-H. Landscaper template look (D-5).** Send example sites you like, or let Claude design it? *Default: Claude
+  designs v1; you approve it on the Demo page before any email can link to it.*
+- **Q-V. Price on the demo?** The guarantee strip shows the free days and "No contract", and the "Order this site"
+  button leads to the prices. *Default: no; prices only on the order page.*
+- **Q-W. Approve each demo before its first email?** The look is approved once per template, and you see the demo
+  link next to each lead when you write the first email. *Default: no; one approval per template.*
+- **Q-X. Their colour is too pale for white text:** use a darker shade of their colour, or always switch to
+  Charcoal? *Default: darker shade of their colour (up to 50% darker), then Charcoal if even that is unreadable.*
 
 <!-- Self-review (writing-plans): spec coverage — Part A rules 1–10 map to Tasks 1–14 (truth/reviews 1,4; escaping 2,6;
 colour 3; contract 4; checks 5; templates 6–7; ensureDemo/prospect 8; gate 9; route/expiry page 10; beacon 11; hot +

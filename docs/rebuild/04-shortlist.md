@@ -100,55 +100,61 @@ has `mailboxCap > 0`.
 Opens from a row click or `/#/lead/<place_id>`. Loads with one request (`GET /api/leads/:id`). Sections, top to
 bottom:
 
-1. **Head:** name, "trade · town", grade badge, stage badge (+ "Hot" when hot), close ×.
+1. **Head:** name, "trade · town", grade badge, stage badge (+ "Hot" when hot), "Do not email" tag when suppressed,
+   close ×.
 2. **Actions:**
    - **Write first email** (primary): only when the stage is `ready`. Disabled with "No room left today" when room = 0,
-     or "Add a mailbox first" when there's no mailbox. Opens the stage 6 composer.
-   - **Call** (tel link, when a phone exists), **Website**, **Google** (maps), **Open demo** (when a live demo exists).
+     or "Add a mailbox first" when there's no mailbox. Opens stage 6's composer in the `#d-email` slot (section 6)
+     and scrolls to it.
+   - **Call** (tel link, when a phone exists), **Website**, **Google** (maps), **Open demo** (when a live demo exists;
+     the relative link `/d/<slug>` on the Control Room host, so Nik's own visits are never counted).
    - **Not a fit**: only when there's no prospect row or the stage is `ready`.
-   - **Research again**: always.
-3. **Grade card:** big grade, `grade_reason`, four bars out of 5: Need ("Needs help online"), Means ("Can afford
-   it"), Reach ("We can reach the owner"), Fit ("Our kind of business"), each with its one-line reason when stage 2
-   stored one. Not researched: "Not graded yet. Claude researches new leads every morning at 06:47."
-4. **Angle and opener:** each angle fact with a "source" link; the opener in a box with **Copy**.
-5. **Owner and emails:** owner's full name with source link; "Emails greet them as {first}" when confident, else
-   "Name not confirmed: emails say \"Hi,\"". Best email + why; other emails with where/source. "Do not email" tag
-   when suppressed.
-6. **Demo:** link, expiry date, views; **Preview** toggle that loads the demo in a small frame only when pressed.
-   No live demo: "No demo yet. It's made automatically once the trade's template is approved."
-7. **Their website (Claude's review):** verdict, summary, problems, what's good.
-8. **Google Maps:** average rank, top-3 % of town, found %, "Heatmap" link. None: "Not scanned yet."
-9. **Top reviews:** up to 3 (stars, author, text).
-10. **Conversation:** every message, oldest first, read-only, plain text (who, when, subject, body). None:
-    "Nothing sent yet."
-11. **Call script** (collapsed; open by default when there's no email).
-12. **Business facts:** phone, address, website, company number, rating, "Found searching {trade} in {town},
-    {date}".
-13. **Notes** (saves on blur, as now).
+3. **Claude's research:** stage 2's research card (`researchCard` from `public/js/researchcard.js`), unchanged: grade,
+   `grade_reason`, the four points out of 5 with their one-line reasons (`points.reasons`), angle facts with source
+   links, the opener with **Copy**, owner (greets by first name only when confident, else "not confirmed: emails say
+   \"Hi,\""), best email and the others, Claude's review of their website, and the **Research is wrong** button
+   with its note box. Its empty states ("Not queued for research", "Waiting for Claude") are stage 2's.
+4. **Demo:** link, expiry date, views; **Preview** toggle that loads stage 4's preview
+   (`/api/demo/preview?template=<id>&place_id=<id>`) in a small frame only when pressed; then the `#d-demo` slot
+   that stage 4 fills with its demo card. No live demo: "No demo yet. It's made automatically once the trade's
+   template is approved."
+5. **Google Maps:** average rank, top-3 % of town, found %, "Heatmap" link. None: "Not scanned yet."
+6. **Email:** the empty `#d-email` slot (stage 6 mounts the composer or the thread here), then the read-only
+   **Conversation**: every message, oldest first, plain text (who, when, subject, body). None: "Nothing sent yet."
+7. **Top reviews:** up to 3 (stars, author, text).
+8. **Call script** (collapsed; open by default when there's no email), then the empty `#d-call` slot (stage 8 mounts
+   its call box here).
+9. **Business facts:** phone, address, website, company number, rating, "Found searching {trade} in {town},
+   {date}".
+10. **Notes** (saves on blur, as now).
 
 **Not a fit:** a small dialog "Why isn't it a fit?" with choices "Too big (not owner-run)", "Front-desk business",
 "Wrong trade", "Already doing well online", "Other" + a text box; button **Hide this lead**. Sets
-`research.status = 'skipped'`, prefixes `research.notes` with `Not a fit (Nik): {reason}\n`, deletes a `ready`
-prospects row. Toast: "Marked not a fit. It won't show in Ready to email." Refused once emailed (409: "Already
-emailed. Stop the follow-ups from the conversation instead.").
+`research.status = 'skipped'`, puts the line `[Nik YYYY-MM-DD] Not a fit: {reason}` (UK date) on top of
+`research.notes` (the same `[Nik …]` format stage 2's `mergeNotes` keeps), deletes a `ready` prospects row. Toast:
+"Marked not a fit. It won't show in Ready to email." Refused once emailed (409: "Already emailed. Stop the
+follow-ups from the conversation instead.").
 
-**Research again:** sets `research.status = 'queued'`, `queued_at = now` (keeps the old findings visible until
-Claude overwrites them; the lead leaves Ready meanwhile). Fires the research Routine with
-`research queued: 1 lead (Nik asked)` unless a research fire was logged in the last 30 minutes. Toast:
+**Research is wrong** (stage 2's button and route, `POST /api/research/:place_id/wrong {note}`): re-queues the lead
+(old findings stay visible until Claude re-posts; the lead leaves Ready meanwhile) and wakes the research Routine at
+most once per 30 minutes. Stage 2's route returns the message the drawer toasts:
 - fired: "Queued. Claude has been asked to research it now. Check back in 15 minutes."
 - recent fire: "Queued. Claude will pick it up on its current or next run."
 - fire failed: "Queued, but Claude couldn't be started ({error}). It will be researched at 06:47 tomorrow."
 
 ### Call script
 
-`public/js/callscript.js` stays (pure, tested). Changes: prices and the weekend deal come from `offerFor(now)` (sent in
-the drawer payload as `offer`); the guarantee is said with the exact wording from overview §9; the owner's first name
-is used only when research marked it confident; the first angle fact appears in "Before you dial". Pitch line:
+`public/js/callscript.js` stays (pure, tested). Changes: prices and the weekend deal come from stage 0's
+`offerFor(now)` (sent in the drawer payload as `offer`, shape `{weekend, full: {label, build, monthly, freeDays,
+wasBuild?}, website, banner}`, money in pence); the guarantee comes from stage 0's `GUARANTEE` (sent in the payload
+as `guarantee`), said with the exact wording from overview §9; the owner's first name is used only when research
+marked it confident; the first angle fact appears in "Before you dial". Pitch line:
 
-> "We build it, and it's live in 7 days, guaranteed. {offer.guarantee.headline} {offer.guarantee.section}"
+> "We build it, and it's live in 7 days, guaranteed. {guarantee.headline} {guarantee.section}"
 
 The objection answers that quoted the old guarantee ("front page of Google in 90 days or we work for free until you
-are") say `{offer.guarantee.section}` instead.
+are") say `{guarantee.section}` instead. On a weekend the spoken anchor is "around £2,000": `offer.full.wasBuild`
+(£1,950) rounded to the nearest £100. That is true of £1,950, and only ever said, never written (Q-A).
 
 ### Morning `pick` todo
 
@@ -171,7 +177,8 @@ Tick step `pick`, every 30 minutes. From 07:00 UK, when room > 0 and ready leads
 - A website or source URL that isn't http(s) (`javascript:`) is shown as text, never a link.
 - Lead deleted between list and drawer → 404 "That lead isn't in the database any more. Close this panel and refresh."
 - Before stage 4/6 ship: Ready is empty (no `ready` prospects); **Write first email** says "Writing emails arrives
-  with the next stage." if the composer module isn't there.
+  with the next stage." if stage 6's `compose.js` isn't there; the `#d-demo`, `#d-email` and `#d-call` slots stay
+  empty, and the demo has no **Preview** until stage 4's preview route exists.
 
 ## What Nik sees
 
@@ -199,7 +206,7 @@ None new. A throwing `pick` step shows in the tick result and the `tick` heartbe
 
 ## Perfect when
 
-1. `node --test control-room/tests/*.test.mjs` passes, including the new files `offer`, `shortlist`,
+1. `node --test control-room/tests/*.test.mjs` passes, including the new files `shortlist`,
    `followups-due`, `shortlist-db`, `leads-api`, `pick`, `leadview` and the updated `callscript` tests; `for f in
    control-room/public/js/*.js; do node --check "$f"; done` is clean.
 2. **Grade filter on real data:** after deploy, the chip counts in All leads (Show excluded on) add up to the total,
@@ -211,7 +218,8 @@ None new. A throwing `pick` step shows in the tick result and the `tick` heartbe
    wrangler; every row has an email and its demo opens.
 4. **Capacity matches the outbox:** test `shortlist-db › capacity` gives room 3 for cap 10 / 7 follow-ups due /
    nothing sent, and room 0 after 2 sends and 1 queued first email (10 − 2 − 7 − 1). Live: with no mailbox the banner shows the Setup
-   text; after stage 0's mailbox exists the number equals cap − sent − due − queued from SQL.
+   text; after stage 0's mailbox exists the number equals cap − sent − due − queued from SQL (from stage 6, the
+   smaller of that and `roomForFirsts(...).total`).
 5. **Drawer under 1 second:** test `leadDetail` runs ≤ 4 statements with 40 messages seeded (no N+1). Live: DevTools
    → Network, `GET /api/leads/<id>` under 1,000 ms for 5 random leads.
 6. **List under D1 limits:** test `listLeads` runs ≤ 12 statements for a 50-row page. Live: `GET /api/leads` under
@@ -221,8 +229,8 @@ None new. A throwing `pick` step shows in the tick result and the `tick` heartbe
    containing `</p><script>` as inert text.
 9. **Pick todo:** tests at 06:59 / 07:00 UK in BST (20 Oct) and GMT (26 Oct). Live: the morning after deploy, the
    `todos` table has `pick:<date>` only if room > 0 and Ready isn't empty.
-10. **Actions:** tests: Not a fit removes the lead from Ready and is refused once emailed; Research again requeues and
-    doesn't fire twice in 30 minutes.
+10. **Actions:** tests: Not a fit removes the lead from Ready, writes `[Nik <date>] Not a fit: <reason>` on top of the
+    notes, and is refused once emailed. (Research is wrong and its 30-minute fire guard are stage 2's tests.)
 11. **Call script:** contains the exact §9 guarantee lines, weekday £1,950 / 60 days, weekend around £2,000 → £1,750 /
     90 days by UK time, and `callscript.js` has no `£` followed by a digit.
 12. Live: `/#/lead/<place_id>` opened in a fresh tab shows the Leads page with that lead's panel open.
@@ -237,8 +245,8 @@ None new. A throwing `pick` step shows in the tick result and the `tick` heartbe
 **Goal:** Rebuild the Leads page and its API so Nik filters by grade, sees only emailable leads by default, knows
 today's first-email room, and gets everything about a lead in one fast panel.
 
-**Architecture:** Pure logic (filter parsing, room maths, banner text, pick title, hot flag, prices) lives in
-`_lib/shortlist.js` and `_lib/offer.js`; D1 access in `_lib/shortlist-db.js` (one list query with correlated
+**Architecture:** Pure logic (filter parsing, room maths, banner text, pick title, hot flag) lives in
+`_lib/shortlist.js`; prices and guarantee wording come from stage 0's `_lib/offer.js` (not changed here); D1 access in `_lib/shortlist-db.js` (one list query with correlated
 subqueries, one batched detail read). Thin routes under `functions/api/leads/`. The browser splits into a pure,
 tested renderer (`public/js/leadview.js`) and a DOM/binding file (`public/js/leads.js`).
 
@@ -258,70 +266,32 @@ plain browser JS.
   Grade counts and facets run only when `page = 1`.
 - API responses never include `leads.audit` or any HTML; message bodies cut to 5,000 characters, review text to 600.
 - `pick` step: `everyMinutes: 30`, acts from 07:00 UK, dedupe `pick:YYYY-MM-DD`.
-- Research again: at most one research Routine fire per 30 minutes from this button.
+- Re-queuing research is stage 2's "Research is wrong" route (it holds the 30-minute fire guard); this stage adds no
+  research button or route of its own.
+- Stored timestamps and todo `due_at` use the shared `iso(date)` format (`YYYY-MM-DDTHH:MM:SSZ`, no milliseconds),
+  never `.toISOString()`. In-app links use `/#/…`.
 - Commits: `TRAILER=$'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_017h4iwgwaGCvQ5f9mmF4rDY'`
   then `git commit -m "<subject>" -m "$TRAILER"`. No push until all of Perfect when 1 passes.
 
 ## Review Focus
 
-1. **`A+` in URLs:** a raw `+` decodes to a space, so `grade=A+` silently becomes `A`. Test in Task 2
+1. **`A+` in URLs:** a raw `+` decodes to a space, so `grade=A+` silently becomes `A`. Test in Task 1
    (`parseLeadFilters` maps `ap`→`A+`, drops `A ` and unknown tokens).
-2. **Search input with SQL wildcards/quotes** (`100%`, `o'neill`, `a_b`, 500 chars): Task 2 tests `likePattern`;
-   Task 4 tests that `q=100%` matches only names containing "100%".
-3. **Duplicate rows from joins** (two demos, many messages, two calls per lead): Task 4 test "a lead with two demos
+2. **Search input with SQL wildcards/quotes** (`100%`, `o'neill`, `a_b`, 500 chars): Task 1 tests `likePattern`;
+   Task 3 tests that `q=100%` matches only names containing "100%".
+3. **Duplicate rows from joins** (two demos, many messages, two calls per lead): Task 3 test "a lead with two demos
    and three messages appears once"; total stays correct.
 4. **Scraped/inbound text as HTML** (names, review text, message bodies, `javascript:` URLs, quotes in attributes):
-   Task 8 escaping tests.
-5. **UK clock boundaries** (weekend price at 00:30 Saturday BST = Friday UTC; 07:00 pick across the 25 Oct 2026
-   clock change): Task 1 and Task 7 tests.
+   Task 7 escaping tests.
+5. **UK clock boundaries** (weekend price at 00:30 Saturday BST = Friday UTC, which stage 0's `offer.test.mjs`
+   covers and Task 7's call-script tests rely on; 07:00 pick across the 25 Oct 2026 clock change): Task 6 tests.
 
 ---
 
-### Task 1: Prices and guarantee in one place (`offer.js`)
+Prices, `GUARANTEE` and `offerFor` are stage 0's `_lib/offer.js` (01 Task 6). This file never creates or edits
+`offer.js` or `offer.test.mjs`; it only imports `offerFor`, `GUARANTEE` and `formatPounds`.
 
-**Files:** Create `control-room/functions/_lib/offer.js`; Test `control-room/tests/offer.test.mjs`.
-
-**Interfaces:**
-- Consumes: `isWeekendUK(date)` from `_lib/ukTime.js`.
-- Produces:
-  - `WEBSITE_ONLY_PENCE = 175000`, `FULL_BUILD_PENCE = 195000`, `FULL_ANCHOR_PENCE = 200000`,
-    `WEEKEND_BUILD_PENCE = 175000`, `MONTHLY_PENCE = 24900`, `FREE_DAYS = 60`, `WEEKEND_FREE_DAYS = 90`,
-    `LIVE_DAYS = 7`
-  - `GUARANTEE = {headline: "Top 3 in Google search results in 90 days. GUARANTEED.", section: "The guarantee: we will work for FREE if you aren't in the top 3 of Google results within 90 days."}`
-  - `offerFor(date) → {weekend, website_only_pence, build_pence, anchor_pence, monthly_pence, free_days, live_days, guarantee}`
-  - `gbp(pence) → "£1,950"` (no pennies when whole pounds)
-
-- [ ] **Step 1: Write the failing test** — `offer.test.mjs`:
-  ```js
-  test("weekday offer", () => {
-    const o = offerFor(new Date("2026-10-21T09:00:00Z")); // Wed
-    assert.deepEqual([o.weekend, o.build_pence, o.anchor_pence, o.monthly_pence, o.free_days, o.website_only_pence, o.live_days],
-      [false, 195000, 200000, 24900, 60, 175000, 7]);
-  });
-  test("weekend offer follows UK time", () => {
-    assert.equal(offerFor(new Date("2026-10-23T23:30:00Z")).weekend, true);   // Sat 00:30 BST
-    assert.equal(offerFor(new Date("2026-10-23T22:59:00Z")).weekend, false);  // Fri 23:59 BST
-    assert.equal(offerFor(new Date("2026-10-25T23:30:00Z")).weekend, true);   // Sun 23:30 GMT
-    assert.equal(offerFor(new Date("2026-10-26T00:30:00Z")).weekend, false);  // Mon 00:30 GMT
-    const w = offerFor(new Date("2026-10-24T12:00:00Z"));
-    assert.deepEqual([w.build_pence, w.free_days], [175000, 90]);
-  });
-  test("guarantee wording and money format", () => {
-    assert.equal(GUARANTEE.headline, "Top 3 in Google search results in 90 days. GUARANTEED.");
-    assert.equal(GUARANTEE.section, "The guarantee: we will work for FREE if you aren't in the top 3 of Google results within 90 days.");
-    assert.equal(gbp(195000), "£1,950"); assert.equal(gbp(24900), "£249"); assert.equal(gbp(12345), "£123.45");
-  });
-  ```
-- [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/offer.test.mjs` → fails: cannot find
-  module `../functions/_lib/offer.js`.
-- [ ] **Step 3: Implement `offerFor(date)` and `gbp(pence)` in `control-room/functions/_lib/offer.js`** — constants
-  above; `weekend = isWeekendUK(date)` picks weekend build/free days. If a previous stage already created `offer.js`,
-  add only what's missing and keep these exact names.
-- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/offer.test.mjs` → PASS (3 tests).
-- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/offer.js control-room/tests/offer.test.mjs` +
-  `git commit -m "Shortlist: one module for prices and guarantee wording" -m "$TRAILER"`.
-
-### Task 2: Pure shortlist rules (`shortlist.js`)
+### Task 1: Pure shortlist rules (`shortlist.js`)
 
 **Files:** Create `control-room/functions/_lib/shortlist.js`; Test `control-room/tests/shortlist.test.mjs`.
 
@@ -340,8 +310,8 @@ plain browser JS.
   - `capacityBanner(c) → {tone: "warn"|"info"|"ok", text: string, link: {href, label}|null}` where
     `c = {mailboxes, paused: [{address, reason}], cap, sent, followupsDue, firstQueued, room, warmupFrom}`
   - `pickTitle({top, b, room, bIncluded}) → string|null`
-  - `isHot(prospect, now) → boolean` (overview §5: stage not won/lost, no `last_inbound_at`, and views ≥ 2 or a
-    view in the last 24 h)
+  - `isHot(prospect, now) → boolean`: the one hot rule for every stage (stage 4's `hotStep` imports it): stage is
+    `emailed` or `viewed`, no `last_inbound_at`, and views ≥ 2 or a view in the last 24 h
 
 - [ ] **Step 1: Write the failing test** — `shortlist.test.mjs`:
   ```js
@@ -401,6 +371,9 @@ plain browser JS.
     assert.equal(isHot({ stage: "viewed", views: 1, last_view_at: "2026-10-19T02:00:00Z" }, now), false);
     assert.equal(isHot({ stage: "replied", views: 5, last_view_at: "2026-10-21T02:00:00Z", last_inbound_at: "2026-10-21T03:00:00Z" }, now), false);
     assert.equal(isHot({ stage: "won", views: 5, last_view_at: "2026-10-21T02:00:00Z" }, now), false);
+    assert.equal(isHot({ stage: "emailed", views: 2, last_view_at: "2026-10-10T00:00:00Z" }, now), true);
+    assert.equal(isHot({ stage: "call_booked", views: 5, last_view_at: "2026-10-21T02:00:00Z" }, now), false);
+    assert.equal(isHot({ stage: "needs_nik", views: 5, last_view_at: "2026-10-21T02:00:00Z" }, now), false);
   });
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/shortlist.test.mjs` → fails: cannot

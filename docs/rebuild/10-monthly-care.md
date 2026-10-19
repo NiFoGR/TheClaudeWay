@@ -17,12 +17,13 @@ without Nik having to remember it, and keep them paying.
 
 - A client with a monthly fee (`clients.monthly_pence > 0`, packages `full` and `weekend`) whose `onboarding.status`
   becomes `live` gets a care record (status `waiting_access`).
-- Nik ticks **"I'm a Manager on their Google profile"** on the client page: that UK date is **day 0** of the care plan
-  and of the 90-day guarantee clock.
-- Everything after that is driven by the tick step `care` (overview §8, position 9), the weekly review check, the
-  monthly scan, and the `monthly-care` Routine.
-- Website Only clients (`monthly_pence = 0`) get no care record. Their site stays hosted; the Clients list shows them as
-  "Website only: no monthly care".
+- Nik ticks **"I'm a Manager on their Google profile"** on the client page, or **"Invite accepted"** on stage 10's Site
+  page (09-build.md; it calls the same `access` action): that UK date is **day 0** of the care plan and of the 90-day
+  guarantee clock.
+- Everything after that is driven by the tick step `care` (overview §8, slot 11, after `sites` and before `health`),
+  the weekly review check, the monthly scan, and the `monthly-care` Routine.
+- Website Only clients (`monthly_pence = 0`) get no care record. Their site stays hosted; file 11's client card shows
+  them as "Website only".
 
 ## Who does what
 
@@ -38,8 +39,9 @@ without Nik having to remember it, and keep them paying.
 
 - Guarantee wording, wherever it appears, is exactly: "Top 3 in Google search results in 90 days. GUARANTEED." and
   "The guarantee: we will work for FREE if you aren't in the top 3 of Google results within 90 days." (overview §9).
-- **Keyword:** `"<service> <town>"`, lower case, e.g. `landscaper warrington`. `service` = onboarding form
-  `main_service`, else `leads.trade`; `town` = onboarding form `town`, else `leads.town`, else `leads.search_town`.
+- **Keyword:** `"<service> <town>"`, lower case, e.g. `landscaper warrington`. `service` = the first ticked service in
+  the onboarding form (`services[].name` where `on`), else `leads.trade`; `town` = onboarding form `areas[0]`, else
+  `leads.town`, else `leads.search_town`.
   Nik can edit service and town on the client page **until day 0**. From day 0 the keyword is locked (the guarantee is
   measured against it); the page shows "Locked: the 90-day guarantee is measured against this keyword."
 - **Care scan:** Map Rank (existing `map-rank.yml` + `aetos_leads/maprank.py`) searching the full keyword, **7×7 grid,
@@ -53,6 +55,9 @@ without Nik having to remember it, and keep them paying.
   missed several, only the latest due day is scanned. "Run scan now" makes a **manual** scan: shown on the page,
   never changes the guarantee. A failed scheduled scan can be retried from the client page ("Retry the day-N scan"),
   which stays scheduled.
+- **Stuck scans:** care owns its own scans. Stage 1's `stale_jobs` step skips `scans.source = 'care'`; the `care` step
+  marks a care scan still `running` 45 minutes after it started as `failed` with "Google scan didn't finish: open their
+  page and press Retry the day-N scan." and the `care_scans` light turns red.
 - **Care day** = whole UK calendar days from `gbp_access_on` to today's UK date (day 0 = the access date). Shown as
   "Day 34 of 90" while `guarantee = running`.
 
@@ -69,10 +74,12 @@ without Nik having to remember it, and keep them paying.
   reported to the client but don't end the clock.
 - While `working_free`, every later scheduled scan is checked; the first Top 3 one moves it to `met` and resumes the fee.
 - Once `met`, it stays `met` (later drops are reported honestly in the monthly report, not re-litigated).
-- If no scheduled scan with day ≥ 90 has been scored by care day 92, a `health` todo: "Day-90 check for <name> is
-  waiting on a scan: open their page and press Retry the day-90 scan."
+- If no scheduled scan with day ≥ 90 has been scored by care day 92, a `health` todo (dedupe
+  `health:day90:<client_id>`, shown in Today because no light has that name): "Day-90 check for <name> is waiting on a
+  scan: open their page and press Retry the day-90 scan."
 
-**Stripe calls (exact; `stripe()` from `_lib/stripe.js`, header `Stripe-Version: 2024-06-20`, form-encoded):**
+**Stripe calls (exact; stage 9's `stripeApi(key, "POST", "subscriptions/<id>", params, fetchImpl)` with `key` from
+`stripeKey(env, DB)`, both in `_lib/stripe.js`; API version pinned 2024-06-20, form-encoded):**
 
 ```
 Pause (day-90 check not Top 3):
@@ -95,16 +102,20 @@ POST https://api.stripe.com/v1/subscriptions/{client_links.stripe_subscription}
   (resume text: "… → Resume payment collection. Then press 'I've resumed it'.")
 - No `stripe_subscription` (a client added by hand): no Stripe call; `payment` todo "No Stripe subscription for
   <name>: don't charge their monthly fee until they're in the top 3." and `paused` is set to 1 so resume asks again.
+- Stripe not connected (`stripeKey` returns null): treated as a Stripe error, with the reason "Stripe isn't connected:
+  connect it on Setup."
 
 ### R3. Before day 0 (from go-live)
 
 | key | Due (UK date) | Who | Todo title | Instructions shown |
 | --- | --- | --- | --- | --- |
-| `pre.access_email` | live_on | Nik sends template A | "Send <name> the Google access email" | Template A filled in; press Send. |
+| `pre.access_email` | live_on (only when the onboarding form's `gbp.invite_sent` is false) | Nik sends template A | "Send <name> the Google access email" | Template A filled in; press Send. |
 | `pre.access_confirm` | live_on + 3 | Nik | "Are you a Manager on <name>'s Google profile yet?" | "When their invite arrives, accept it, then press 'I'm a Manager on their Google profile' on their page. The 90 days start that day." |
-| `pre.access_call` | live_on + 7 | Nik | "Call <name>: still no Google profile access after 7 days" | Their phone from the onboarding form. |
+| `pre.access_call` | live_on + 7 | Nik | "Call <name>: still no Google profile access after 7 days" | Their phone from the onboarding form (`business.phone`). |
 
-All three close (status `done`) the moment day 0 is set. No other care task, scan or email happens before day 0.
+Stage 10's onboarding form already walks the client through sending the Manager invite. When `gbp.invite_sent` is
+true, `pre.access_email` isn't created and template A is never sent; the other two rows still are. All of them close
+(status `done`) the moment day 0 is set. No other care task, scan or email happens before day 0.
 If the client has no Google Business Profile, Nik presses "They don't have one": `pre.access_*` close and one task
 `pre.create_gbp` (Nik, due today) "Create and verify <name>'s Google Business Profile" opens, with: "Create it at
 business.google.com with their business name, phone, website <site_url> and service area. Verification can take days.
@@ -174,7 +185,8 @@ Monthly tasks for a month are created by the tick on the 1st from 06:00 UK, and 
   task first). Monthly batch tasks (`m.*`) are not fired for until 06:00 UK on the day after their due date (the
   08:47 scheduled run does them). `review.*` tasks fire at once.
 - **No retries:** a task `drafting` for more than 24 h shows on the client page as "Claude hasn't written this yet"
-  with an **Ask Claude again** button (fires the Routine once) and turns the `routine:monthly-care` light amber.
+  with an **Ask Claude again** button (fires the Routine once) and turns the `care_drafts` light amber. (Whether the
+  Routine runs at all is stage 0's `routine:monthly-care` heartbeat light, 768 h cadence.)
 - **Tokens (the only way numbers reach a client):** drafts for emails, posts and review replies may contain no digits
   except inside `{{tokens}}` and the phrases "top 3", "90 days", "90-day", "day 90". The word "SEO" is rejected. An
   unknown token, or a token whose fact is missing this month, is rejected ("{{site_leads}} has no data this month:
@@ -182,8 +194,8 @@ Monthly tasks for a month are created by the tick on the 1st from 06:00 UK, and 
 
 | Token | Renders as (example) | From |
 | --- | --- | --- |
-| `{{greeting}}` | "Hi Mark," / "Hi," | onboarding contact first name |
-| `{{nik_name}}`, `{{name}}`, `{{keyword}}`, `{{site_url}}`, `{{domain}}`, `{{phone}}`, `{{review_link}}` | "Nik Papadopoulos", "Green Leaf Landscapes", "landscaper warrington", … | settings / clients / care / onboarding; review link `https://search.google.com/local/writereview?placeid=<place_id>` |
+| `{{greeting}}` | "Hi Mark," / "Hi," | `research.owner.first` when `owner.confident`, else "Hi," |
+| `{{nik_name}}`, `{{name}}`, `{{keyword}}`, `{{site_url}}`, `{{domain}}`, `{{phone}}`, `{{review_link}}` | "Nik Papadopoulos", "Green Leaf Landscapes", "landscaper warrington", … | `{{nik_name}}` = setting `business:sender_name` (the one sign-off name for every email); clients / care / onboarding form `business.phone`; domain from `client_sites`; review link `client_sites.review_url`, else `https://search.google.com/local/writereview?placeid=<place_id>` |
 | `{{rank_now}}`, `{{rank_start}}`, `{{rank_last}}` | "2nd" / "outside the top 20" | centre rank of the latest / day-0 / previous scheduled scan |
 | `{{share_now}}`, `{{share_start}}` | "51%" | `top3_share` |
 | `{{reviews_total}}`, `{{rating}}` | "37", "4.8" | latest review check |
@@ -191,7 +203,7 @@ Monthly tasks for a month are created by the tick on the 1st from 06:00 UK, and 
 | `{{site_leads}}` | "no enquiries" / "4 enquiries" | stage 10 `site_leads` last calendar month |
 | `{{care_day}}`, `{{days_left}}` | "34", "56" | R1 |
 | `{{month}}` | "October" | the month the report covers |
-| `{{monthly_price}}`, `{{next_payment}}` | "£249", "12 March" | `gbp(MONTHLY_PENCE)` from `offer.js`; Stripe `current_period_end` |
+| `{{monthly_price}}`, `{{next_payment}}` | "£249", "12 March" | `formatPounds(MONTHLY_PENCE)` from `offer.js`; Stripe `current_period_end` |
 | `{{services_list}}` | one service per line | the draft's `services` array |
 
 - **Limits per format** (rejected with a plain reason if broken): email subject ≤ 80 chars, body 40–250 words;
@@ -203,9 +215,11 @@ Monthly tasks for a month are created by the tick on the 1st from 06:00 UK, and 
 
 ### R7. Client emails
 
-- Sent from the `system` mailbox (overview `mailboxes.role = 'system'`), plain text, `messages.kind = 'system'`,
-  `author = 'nik'` (he approved it) or `'system'` (templates B and C), `client_id` set, to `client_links.email`
-  (else the onboarding form's email). No cold footer; every email ends with Nik's name and "Aetos Websites".
+- Sent through stage 9's `sendClientMail` (`_lib/client-mail.js`): the `system` mailbox, else a cold one (stage 9
+  then adds its `setup:system_mailbox` todo). Plain text, `messages.kind = 'system'`, `author = 'nik'` (he approved
+  it) or `'system'` (templates B and C), `client_id` set, to `client_links.email` (else the onboarding form's
+  `business.email`). No cold footer; every email ends with `{{nik_name}}` (`business:sender_name`) and "Aetos
+  Websites".
 - Nik can edit any draft before Send; his edits aren't digit-checked (he's the human).
 - Templates B (referral) and C (review nudge) go out automatically only after Nik approves their wording once on
   **Clients → Care settings**; until then a `setup` todo "Approve the 2 automatic client emails" stays open and those
@@ -311,8 +325,9 @@ Aetos Websites
 ```
 
 Template D/E/F become the draft of a `d90.email` / `back.email` task (Nik sends); B/C are sent by the system.
-`{{nik_google_email}}` is a setting (`care:nik_google_email`) Nik fills on Care settings; until it is set,
-template A can't be sent and the todo says "Add your Google account email on Clients → Care settings first."
+`{{nik_google_email}}` is a setting (`care:nik_google_email`, shared with stage 10's Setup field) Nik fills on Care
+settings; until it is set, template A can't be sent and the todo says "Add your Google account email on Clients → Care
+settings first." Template A is only used when the onboarding form's `gbp.invite_sent` is false (R3).
 
 ### R8. Reviews
 

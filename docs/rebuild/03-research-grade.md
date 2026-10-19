@@ -695,35 +695,54 @@ routes `GET /api/research/:place_id`, `POST /api/research/:place_id/wrong` → `
 - [ ] **Step 1: Write the failing test** — `research-owner.test.mjs`:
   - `"GET returns parsed research and waiting count"`: a done row + 3 queued → `research.points.need` is a number,
     `research.emails` an array, `waiting === 3`; unknown place → `{research: null, waiting: 3}`.
-  - `"wrong re-queues with Nik's note on top"`: POST `{note: "Owner is Sue, not Dave"}` at `2026-10-19T09:00:00Z` →
-    `{ok: true}`; row `status "queued"`, `queued_at` = now, notes start `"[Nik 2026-10-19] Owner is Sue, not Dave"`,
-    old `grade`/`emails` kept; the claim setting deleted.
+  - `"wrong re-queues with Nik's note on top"`: `requeueResearch(DB, id, "Owner is Sue, not Dave",
+    new Date("2026-10-19T09:00:00Z"), {fire: stub})` with a stub returning `{ok: true}` → `{fired: true, message:
+    "Queued. Claude has been asked to research it now. Check back in 15 minutes."}`; the stub was called once with
+    `(DB, "research", "research queued: 1 lead (Nik asked)")`; row `status "queued"`, `queued_at ===
+    "2026-10-19T09:00:00Z"`, notes start `"[Nik 2026-10-19] Owner is Sue, not Dave"`, old `grade`/`emails` kept; the
+    claim setting deleted.
+  - `"one fire per 30 minutes"`: with a `routine_fires` row for `research` at `2026-10-19T08:45:00Z` → `fired ===
+    false`, message `"Queued. Claude will pick it up on its current or next run."`, stub not called; the row is still
+    re-queued. A fire row at `08:29:00Z` (31 min earlier) → the stub is called.
+  - `"fire failed"`: stub returning `{ok: false, error: "HTTP 400"}` → `fired === false`, message `"Queued, but Claude
+    couldn't be started (HTTP 400). It will be researched at 06:47 tomorrow."`; row still `queued`.
+  - `"route returns the message"`: POST `/api/research/<id>/wrong` `{note: "Owner is Sue, not Dave"}` → 200
+    `{ok: true, fired: <boolean>, message: <string>}`.
   - `"note length"`: `"bad"` and 501 chars → 400 `"Say what's wrong in a few words (5 to 500 characters)."`.
   - `"nothing to re-check"`: no row → 404 `"This lead hasn't been researched yet, so there's nothing to re-check."`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/research-owner.test.mjs` → import error.
 - [ ] **Step 3: Implement `getResearch`, `requeueResearch` and both routes** — the note date is `ukDate(now)`; the new
-  line is prepended via `mergeNotes`-compatible formatting (`[Nik <date>] <note>` as the first line).
+  line is prepended via `mergeNotes`-compatible formatting (`[Nik <date>] <note>` as the first line). After the
+  re-queue (one `DB.batch`: update the row, delete the claim), check `routine_fires` for `routine = 'research' AND at
+  > iso(now − 30 min)`; if none, call `fire(DB, "research", "research queued: 1 lead (Nik asked)")` and pick the
+  message from Part A. The route passes `new Date()` and the default `fireRoutine`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/research-owner.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/research-db.js control-room/functions/api/research control-room/tests/research-owner.test.mjs` +
-  `git commit -m "Lead research for the drawer, and Research is wrong" (+ trailers)`.
+  `git commit -m "Lead research for the drawer, and Research is wrong (fires Claude at most every 30 min)" (+ trailers)`.
 
 ### Task 7: Research health facts wired into the health lights
 
-**Files:** Modify `control-room/functions/_lib/research-db.js`, `control-room/functions/_lib/health.js` (stage 0's
-`healthFromDb`: add the research light); Test `control-room/tests/research-health.test.mjs` (db section).
-**Interfaces:** Consumes `researchLight` (Task 3), `healthFromDb` (stage 0). Produces
+**Files:** Modify `control-room/functions/_lib/research-db.js` (register the light); Test
+`control-room/tests/research-health.test.mjs` (db section). `computeLights` and the rest of stage 0's `health.js` are
+not edited; if stage 0 loads registered lights from a list of modules, add `research-db.js` to that list (the only
+change allowed outside this stage's files).
+**Interfaces:** Consumes `researchLight` (Task 3), `registerLight(fn)` and `healthFromDb(DB, env, now) → Promise<{lights,
+gaps}>` (stage 0). Produces
 `researchFacts(DB) → Promise<{queued, lastPostAt, oldestQueuedAt, recent: [{best_email, too_big}]}>` (recent = last 20
-`done` rows by `researched_at` desc, too_big included so `emailHitRate` can drop them).
+`done` rows by `researched_at` desc, too_big included so `emailHitRate` can drop them), and the registration
+`registerLight(async (DB, env, now) => researchLight(await researchFacts(DB), now))` at module load of
+`_lib/research-db.js`.
 
 - [ ] **Step 1: Write the failing test** — append to `research-health.test.mjs`:
   - `"facts from the db"`: seed 4 queued (oldest `queued_at` 2026-10-18T05:00:00Z) + 22 done (7 of the newest 20 with
     `best_email`) → `queued 4`, `oldestQueuedAt "2026-10-18T05:00:00Z"`, `recent.length 20`, `lastPostAt` = newest `researched_at`.
-  - `"healthFromDb includes research"`: with that data and `now` 27 h after the newest post →
-    `lights.find(l => l.name === "research").level === "red"`.
+  - `"healthFromDb includes research"`: after `import "../functions/_lib/research-db.js"`, with that data and `now`
+    27 h after the newest post → `(await healthFromDb(DB, env, now)).lights.find(l => l.name === "research").level ===
+    "red"`, and no light is named `research_queue`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/research-health.test.mjs` → `researchFacts is not exported`.
-- [ ] **Step 3: Implement `researchFacts` (three small queries in one `DB.batch`) and add `researchLight(await researchFacts(DB), now)` to `healthFromDb`'s lights.**
-- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS (stage 0's health tests still pass).
-- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/research-db.js control-room/functions/_lib/health.js control-room/tests/research-health.test.mjs` +
+- [ ] **Step 3: Implement `researchFacts` (three small queries in one `DB.batch`) and register the light with `registerLight` at the bottom of `research-db.js`.**
+- [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS (stage 0's health tests, including `computeLights(...).length === 10` and "no light name is a prefix of another", still pass).
+- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/research-db.js control-room/tests/research-health.test.mjs` (plus stage 0's light-module list if Step 3 touched it) +
   `git commit -m "Research health light: stalled queue and email hit rate" (+ trailers)`.
 
 ### Task 8: Research card in the lead drawer
@@ -747,39 +766,48 @@ with the research card + its button handler), `control-room/public/style.css` (`
   - `"escapes hostile text"`: `grade_reason: "<img src=x onerror=alert(1)>"`, angle source `"javascript:alert(1)"` →
     output has no `<img`, contains `&lt;img`, and no `href="javascript:`.
   - `"owner not confident"`: `confident: false` → contains `not confirmed: emails say "Hi,"` (escaped quotes).
+  - `"Not a fit reason"`: skipped row with notes `"[Nik 2026-10-19] Not a fit: Wrong trade"` → contains
+    `"Skipped: you marked it not a fit (Wrong trade)."`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/researchcard.test.mjs` → import error.
 - [ ] **Step 3: Implement `researchCard` and `capLine` in `control-room/public/js/researchcard.js`, then wire it in
   `leads.js`** — the drawer fetches `/api/research/<id>` when opened and renders the card in the old `aiCard` spot;
-  "Research is wrong" toggles the textarea; Re-check posts the note and re-renders from the response, showing route
-  errors (or the network message from Part A) under the box. Copy button uses `navigator.clipboard.writeText(opener)`.
+  "Research is wrong" toggles the textarea; Re-check posts the note, shows the response's `message` as a toast and
+  re-renders the card as "Being re-checked…", showing route errors (or the network message from Part A) under the box. Copy button uses `navigator.clipboard.writeText(opener)`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/researchcard.test.mjs && for f in control-room/public/js/*.js; do node --check "$f"; done` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/public/js/researchcard.js control-room/public/js/leads.js control-room/public/style.css control-room/tests/researchcard.test.mjs` +
   `git commit -m "Lead drawer: Claude's research card and Research is wrong" (+ trailers)`.
 
 ### Task 9: The research Routine prompt
 
-**Files:** Create `routines/research.md` (the prompt text from Part A, verbatim, under a short header with model,
-triggers and environment); Modify `routines/README.md` (the "research" section from Part A); Delete
-`docs/lead-research-routine.md`; Modify `CLAUDE.md` (point the AI-research bullet at `routines/research.md` and this
-stage's grade; drop `audit.ai_research`), `control-room/public/js/roadmap.js` (mark research + grade built);
-Test `control-room/tests/research-prompt.test.mjs`.
+**Files:** Create `routines/research.md` (the prompt text from Part A, verbatim and nothing else, so it starts with
+stage 0's preamble; model, triggers and environment live in the README); Modify `routines/README.md` (the "research"
+section from Part A); Delete `docs/lead-research-routine.md`; Modify `CLAUDE.md` (point the AI-research bullet at
+`routines/research.md` and this stage's grade; drop `audit.ai_research`); Test
+`control-room/tests/research-prompt.test.mjs`.
 **Interfaces:** Consumes `RESEARCH_FIELDS`, `validateResearch` (Task 2). Produces nothing new.
 
 - [ ] **Step 1: Write the failing test** — `research-prompt.test.mjs`: read `routines/research.md`, extract the first
   ```` ```json ```` block, `JSON.parse` it:
+  - `"prompt starts with the standard preamble"`: the file starts with stage 0's preamble with `<name>` =
+    `research`, i.e. `First POST /api/agent/heartbeat {"routine":"research"}. Act on the text inside
+    \`<routine-fire-payload>\`` … `Never commit or push.` (compare after collapsing whitespace), and contains
+    `'Test from the Control Room'`.
+  - `"prompt uses $CONTROL_ROOM_URL"`: every `curl` line uses `"$CONTROL_ROOM_URL/api/agent/`; the text contains no
+    `{APP_URL}`, `{APP}` or bare `CONTROL_ROOM/`.
   - `"prompt JSON has exactly the API's fields"`: `Object.keys(block)` deep-equals `RESEARCH_FIELDS`.
   - `"prompt states the rubric thresholds"`: text contains `"≥ 17 with reach ≥ 4 = A+"`, `"≥ 14 with reach ≥ 3 = A"`,
-    `"06:47"` is in README's research section, and the five minimum steps (`facebook`, `/officers`, `email`, `yell`,
-    `checkatrade`).
+    `"06:47"` and `aetos-research` are in README's research section, and the five minimum steps (`facebook`,
+    `/officers`, `email`, `yell`, `checkatrade`).
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/research-prompt.test.mjs` → `ENOENT … routines/research.md`.
 - [ ] **Step 3: Write `routines/research.md` and the README section** — copy Part A's prompt block exactly; README
-  steps: create Routine "Aetos research", model Sonnet, schedule daily 06:47 Europe/London, add API trigger → Generate
-  token → paste URL and token into Setup → Routines → research, environment = the Control Room environment from
-  stage 0.
+  steps: create Routine `aetos-research`, model Sonnet, schedule daily 06:47 Europe/London, add API trigger → Generate
+  token → paste URL and token into Setup → Claude → research → Save → Test fire, environment = stage 0's shared
+  "Aetos" environment (network secret `AETOS_AGENT` and the `CONTROL_ROOM_URL` variable).
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS.
-- [ ] **Step 5: Commit** — `git add routines/research.md routines/README.md CLAUDE.md control-room/public/js/roadmap.js control-room/tests/research-prompt.test.mjs && git rm docs/lead-research-routine.md` +
+- [ ] **Step 5: Commit** — `git add routines/research.md routines/README.md CLAUDE.md control-room/tests/research-prompt.test.mjs && git rm docs/lead-research-routine.md` +
   `git commit -m "Research Routine prompt: minimum steps, rubric, strict output" (+ trailers)`.
-  Then do the live checks in Part A "Perfect when" 4–10 with Nik (he creates the Routine and presses Run now).
+  Then do the live checks in Part A "Perfect when" 4–11 with Nik (he creates the Routine, presses Test fire, then
+  Run now).
 
 ## Cross-stage interfaces
 

@@ -170,7 +170,8 @@ Ignored unless `payment_status` is `paid` or `no_payment_required` and `metadata
    `paid_on` as above; on conflict update `name` only. (`invoice.paid` uses the same id for the build line, so
    whichever arrives first, there is one row.)
 5. `onboarding` (INSERT OR IGNORE): `token` = 24 random bytes base64url (32 chars), `status` `sent`.
-   **Only the runner whose insert created this row** queues the welcome email and records the `ordered` demo event.
+   **Only the runner whose insert created this row** queues the welcome email (after steps 6–7) and records the
+   `ordered` demo event.
 6. Prospect: `applyStageEvent(DB, place_id, "paid", now, {email, greet_name: null})` (stage 0's `prospects.js`;
    `paid` goes from any stage to `won`, so a `lost` prospect becomes `won`). No prospect row → the `{email,
    greet_name}` option inserts one in `won` with the checkout email. Then `next_followup_at = NULL` and queued
@@ -574,8 +575,9 @@ ukLongDate("YYYY-MM-DD") → "Friday 18 December 2026"
 
 - [ ] **Step 1: Write the failing test** — `order-page.test.mjs` (offer from `offerFor(new Date("2026-10-19T10:00:00Z"))`
   unless stated):
-  - `weekday page`: contains `£1,950`, `then £249/month. First 60 days free.`, `Recommended`, the five exact
-    wording constants, `Nothing more to pay until day 61. Cancel any time.`, `name="package" value="full"`,
+  - `weekday page`: contains `£1,950`, `then £249/month. First 60 days free.`, `Recommended`, `GUARANTEE.headline`,
+    `GUARANTEE.section`, `` `${BUILD_GUARANTEE} ${BUILD_GUARANTEE_NOTE}` ``, `NO_CONTRACT`,
+    `Nothing more to pay until day 61. Cancel any time.`, `name="package" value="full"`,
     `name="seen" value="weekday"`, `action="/d/smith-roofing/checkout"`; does not contain `Weekend price — ends`
     or `Most popular`.
   - `weekend page`: offer at `2026-10-24T12:00:00Z` → contains `Weekend price — ends Sunday midnight`,
@@ -586,7 +588,8 @@ ukLongDate("YYYY-MM-DD") → "Friday 18 December 2026"
   - `notices hide buttons`: `notice: "already_client"` → contains `Smith Roofing is already with us.` and no
     `<button`; `notice: "busy"` → notice text and buttons present.
   - `escaping`: `lead.name = "<script>x</script>"` → output has no `<script>x` and has `&lt;script&gt;`.
-  - `thanks done (full)`: `renderThanks({state: "done", onboardUrl: "https://x.test/onboard/T", terms: termsFor("full", false), amountPaid: 195000, firstChargeOn: "2026-12-18"})`
+  - `trader line`: `trader: "Nik P, trading as Aetos Websites, 1 High St"` → the footer contains it (escaped);
+    `trader: ""` → the footer has only the Stripe line.  - `thanks done (full)`: `renderThanks({state: "done", onboardUrl: "https://x.test/onboard/T", terms: termsFor("full", false), amountPaid: 195000, firstChargeOn: "2026-12-18"})`
     contains `Thank you, you're all set`, `Your payment of £1,950 has gone through.`, `href="https://x.test/onboard/T"`,
     `The first £249 is taken on Friday 18 December 2026.`
   - `thanks website`: no `monthly plan`. `thanks not_found`: `We couldn't find that payment` and a link to
@@ -594,7 +597,7 @@ ukLongDate("YYYY-MM-DD") → "Friday 18 December 2026"
   - `ukLongDate("2026-12-18") === "Friday 18 December 2026"`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/order-page.test.mjs` → module not found.
 - [ ] **Step 3: Implement `renderOrder(...)` / `renderThanks(...)` in `_lib/order-page.js`** — Part A copy and
-  layout, charcoal `#1A1C20` / gold accent per docs/brand.md, mobile-first; the `order_page` beacon is a 4-second
+  layout (amounts via `formatPounds`, the weekend `<s>` from `offer.full.wasBuild`), charcoal `#1A1C20` / gold accent per docs/brand.md, mobile-first; the `order_page` beacon is a 4-second
   `navigator.sendBeacon("/d/<slug>/e", '{"kind":"order_page"}')`; FAQ extras joined with commas and a final "and".
 - [ ] **Step 4: Run tests to verify they pass** — same command → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/order-page.js control-room/tests/order-page.test.mjs`
@@ -608,12 +611,13 @@ Test `control-room/tests/checkout-route.test.mjs`.
 **Interfaces:**
 Consumes `demoBySlug(DB, slug) → {demo, lead}|null`, `recordEvent(DB, demo, kind, at)` (stage 4's demo-db),
 `getSetting`, `addTodo`, `beat`, `stripeKey`, `webhookSecret`, `stripeApi`, `checkoutParams`, `offerFor`,
-`checkoutWeekend`, `renderOrder`, stage 4's expired page renderer, `page()`.
+`checkoutWeekend`, `renderOrder`, stage 0's `traderLine(business) → string|""` (landing module; `business` read
+from the `business:*` settings the same way the landing page reads them), stage 4's expired page renderer, `page()`.
 Produces:
 ```js
 CHECKOUT_LIMIT = 5                       // per slug per 60 minutes
 loadOrder(DB, env, slug, now) → Promise<null | {lead, demo, expired: boolean, prospect: {email, greet_name}|null,
-          alreadyClient: boolean, connected: boolean, extras: {chatbot, reviews}}>
+          alreadyClient: boolean, connected: boolean, extras: {chatbot, reviews}, trader: string}>
 orderPage(DB, env, {slug, back: boolean, now}) → Promise<{status, html}>
 startCheckout(DB, env, {slug, pkg, seen, origin, now, fetchImpl}) → Promise<{redirect: string} | {status, html}>
 ```
@@ -636,7 +640,8 @@ startCheckout(DB, env, {slug, pkg, seen, origin, now, fetchImpl}) → Promise<{r
   - `Stripe refuses`: route returns `{status: 400, error: "Invalid email"}` → `{status: 502}` with the `failed`
     text, todo `payment:checkout:p1`, `heartbeats` row `stripe` with `ok 0`.
   - `order page extras`: setting `offer:chatbot_live = '1'` → `orderPage` html contains `chat assistant`;
-    `back: true` → contains `No payment was taken.`; unknown slug → `status 404`.
+    `back: true` → contains `No payment was taken.`; unknown slug → `status 404`; setting
+    `business:legal_name` filled → the html contains `traderLine`'s output for those settings.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/checkout-route.test.mjs` → `startCheckout is not a function`.
 - [ ] **Step 3: Implement `startCheckout(...)` in `_lib/checkout.js`** — order of checks: package valid (400) →
   demo found (404) / live (410) → connected (503 + todo) → already client (409) → count `order_click` for the slug
@@ -651,12 +656,13 @@ startCheckout(DB, env, {slug, pkg, seen, origin, now, fetchImpl}) → Promise<{r
 
 **Files:** Create `control-room/functions/_lib/client-mail.js`. Test `control-room/tests/client-mail.test.mjs`.
 **Interfaces:**
-Consumes `queueMessage(DB, msg)`, `mailboxCap`, `sentToday`, `addTodo`, `pounds`, `ukLongDate`.
+Consumes `queueMessage(DB, msg)`, `mailboxCap`, `sentToday`, `addTodo`, `getSetting`, `formatPounds`, `ukLongDate`.
 Produces:
 ```js
 welcomeEmail({business, greetName, terms, amountPaid, onboardUrl, firstChargeOn, signName}) → {subject, body}
 paymentFailedEmail({business, greetName, amountDue, payUrl, signName}) → {subject, body}
 systemMailbox(DB, now) → Promise<{mailbox, fallback: boolean} | null>   // system role first, else cold with most room left
+senderName(DB) → Promise<string>                                         // setting business:sender_name, else "Nik"
 sendClientMail(DB, {client_id, place_id, to, business, compose: (signName) => {subject, body}, now})
   → Promise<{queued: string|null, fallback: boolean}>
 ```
@@ -669,17 +675,19 @@ sendClientMail(DB, {client_id, place_id, to, business, compose: (signName) => {s
   - `welcome website, no name`: `greetName null`, `terms website` → starts `Hi,\n\n`, no `monthly plan`.
   - `failed email`: contains `Your monthly payment of £249 for Smith Roofing didn't go through.` and the pay URL on
     its own line; subject `Your Aetos Websites payment didn't go through`.
-  - `uses the system mailbox`: mailboxes `sys` (role system) and `cold1` → `sendClientMail` queues one `messages`
-    row `kind 'system'`, `author 'system'`, `mailbox_id 'sys'`, `client_id`, `to_addr`; `fallback false`; no todo.
+  - `uses the system mailbox`: mailboxes `sys` (role system, `display_name "Aetos Team"`) and `cold1`, setting
+    `business:sender_name = "Nik P"` → `sendClientMail` queues one `messages` row `kind 'system'`,
+    `author 'system'`, `mailbox_id 'sys'`, `client_id`, `to_addr`; the body ends `Nik P\nAetos Websites` (not the
+    mailbox name); `fallback false`; no todo.
+  - `sign-off fallback`: no `business:sender_name` → `senderName(DB) === "Nik"`.
   - `falls back to cold`: only `cold1` → `mailbox_id 'cold1'`, `fallback true`, todo `setup:system_mailbox`.
   - `no mailbox`: none → `queued null`, no `messages` row, todo `setup:welcome:<client_id>` whose `draft` contains
     the onboarding URL.
   - `paused mailboxes ignored`: only a paused system mailbox → behaves as `no mailbox`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/client-mail.test.mjs` → module not found.
-- [ ] **Step 3: Implement `sendClientMail(...)` in `_lib/client-mail.js`** — `systemMailbox` → `compose(mailbox.display_name)`
+- [ ] **Step 3: Implement `sendClientMail(...)` in `_lib/client-mail.js`** — `systemMailbox` → `compose(await senderName(DB))`
   → `queueMessage(DB, {place_id, client_id, mailbox_id, direction: "out", kind: "system", author: "system", to_addr, from_addr: mailbox.address, subject, body, due_at: now})`;
-  todo titles exactly as Part A; for the no-mailbox draft, compose with `signName` = the cold/system display name
-  if any row exists, else `"Nik"`.
+  todo titles exactly as Part A; the no-mailbox draft is composed with `senderName(DB)` too.
 - [ ] **Step 4: Run tests to verify they pass** — same command → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/client-mail.js control-room/tests/client-mail.test.mjs`
   `git commit -m "Order and pay: welcome and payment-failed emails from the system mailbox"`
@@ -687,11 +695,12 @@ sendClientMail(DB, {client_id, place_id, to, business, compose: (signName) => {s
 ### Task 7: Fulfil a paid checkout
 
 **Files:** Modify `control-room/functions/_lib/stripe-events.js` (rewrite), `control-room/functions/_lib/todo.js`
-(add `closeLeadTodos`), `control-room/functions/_lib/stages.js` (only if `nextStage("lost", "paid")` isn't `won`).
-Test `control-room/tests/stripe-fulfil.test.mjs`.
+(add `closeLeadTodos`). Test `control-room/tests/stripe-fulfil.test.mjs`. (`stages.js` is not touched: stage 0's
+table already has `paid`: any stage → `won`.)
 **Interfaces:**
-Consumes `termsFor`, `nextStage(current, event)`, `addTodo`, `recordEvent`, `sendClientMail`, `welcomeEmail`,
-`ukDate`, `addUkDays`, `now()`.
+Consumes `termsFor`, `applyStageEvent(DB, placeId, event, now, {lost_reason, email, greet_name})` and
+`isSuppressed(DB, email)` (stage 0's `prospects.js`; the `{email, greet_name}` option inserts the row when none
+exists), `addTodo`, `recordEvent`, `sendClientMail`, `welcomeEmail`, `ukDate`, `addUkDays`, `now()`.
 Produces:
 ```js
 closeLeadTodos(DB, place_id, {exceptKinds = []} = {}) → Promise<number>        // in todo.js
@@ -718,17 +727,22 @@ fulfilCheckout(DB, session, {now}) → Promise<{status: "ok"|"ignored", reason?,
   - `unpaid ignored`: `payment_status "unpaid"` → `{status: "ignored"}`, no rows.
   - `legacy link`: `metadata {aetos_package: "weekend"}`, `client_reference_id "p1"` → `package 'weekend'`.
   - `no prospect row`: delete it → a prospect `p1` is inserted with `stage 'won'`, `email 'mark@smithroofing.co.uk'`.
-  - `lost then paid`: prospect stage `lost` → `won` (and `nextStage("lost", "paid") === "won"`).
+  - `lost then paid`: prospect stage `lost` → `won` via `applyStageEvent` (stage 0 already has
+    `nextStage("lost", "paid") === "won"`).
+  - `opt-out lifted on payment`: `suppress(DB, "mark@smithroofing.co.uk", "email", "opt_out", now)` before the call →
+    afterwards `isSuppressed(DB, "mark@smithroofing.co.uk") === null` and the welcome `messages` row is `queued`.
   - `paid twice`: an existing client `cl_other` for `p1` → todo `payment:double:p1:cs_1`.
   - `no mailbox`: no mailboxes → no `messages` row; todo `setup:welcome:cl_cs_1`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/stripe-fulfil.test.mjs` → `fulfilCheckout is not a function`.
-- [ ] **Step 3: Implement `fulfilCheckout(DB, session, {now})` in `_lib/stripe-events.js`** — the 8 steps of
+- [ ] **Step 3: Implement `fulfilCheckout(DB, session, {now})` in `_lib/stripe-events.js`** — the 9 steps of
   Part A in that order: one `DB.batch` for clients/client_links/payments (payments `ON CONFLICT(id) DO UPDATE SET name = excluded.name`),
-  then the onboarding `INSERT OR IGNORE … .run()` whose `meta.changes === 1` sets `created`; email + `ordered` only
-  when `created`; prospect/follow-ups/todos always (idempotent). Token: 24 bytes from `crypto.getRandomValues`,
-  base64url without padding.
+  then the onboarding `INSERT OR IGNORE … .run()` whose `meta.changes === 1` sets `created`; the prospect step
+  (`applyStageEvent(DB, place_id, "paid", now, {email, greet_name: null})`, then clear `next_followup_at` and
+  cancel queued follow-ups) and `DELETE FROM suppression WHERE kind = 'email' AND value = ?` (lower-cased checkout
+  email) run before the welcome email is queued; email + `ordered` only when `created`; prospect/suppression/todos
+  always (idempotent). Token: 24 bytes from `crypto.getRandomValues`, base64url without padding.
 - [ ] **Step 4: Run tests to verify they pass** — same command → PASS.
-- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/stripe-events.js control-room/functions/_lib/todo.js control-room/functions/_lib/stages.js control-room/tests/stripe-fulfil.test.mjs`
+- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/stripe-events.js control-room/functions/_lib/todo.js control-room/tests/stripe-fulfil.test.mjs`
   `git commit -m "Order and pay: a paid checkout becomes a client, onboarding row and welcome email, once"`
 
 ### Task 8: Webhook route, idempotency and invoice.paid
