@@ -39,9 +39,11 @@ without Nik having to remember it, and keep them paying.
 
 - Guarantee wording, wherever it appears, is exactly: "Top 3 in Google search results in 90 days. GUARANTEED." and
   "The guarantee: we will work for FREE if you aren't in the top 3 of Google results within 90 days." (overview §9).
-- **Keyword:** `"<service> <town>"`, lower case, e.g. `landscaper warrington`. `service` = the first ticked service in
-  the onboarding form (`services[].name` where `on`), else `leads.trade`; `town` = onboarding form `areas[0]`, else
-  `leads.town`, else `leads.search_town`.
+- **Keyword:** `"<service> <town>"`, lower case, e.g. `landscaper warrington`; the same keyword stage 10 built the site
+  for. `town` = onboarding form `areas[0]`, else `leads.town`, else `leads.search_town`. `service` = the site's main
+  keyword (`client_sites.content.keyword`, e.g. "roofer Swindon") with the trailing town removed (case-insensitive),
+  when it is set and ends with that town; otherwise the first ticked service in the onboarding form
+  (`services[].name` where `on`), else `leads.trade`.
   Nik can edit service and town on the client page **until day 0**. From day 0 the keyword is locked (the guarantee is
   measured against it); the page shows "Locked: the 90-day guarantee is measured against this keyword."
 - **Care scan:** Map Rank (existing `map-rank.yml` + `aetos_leads/maprank.py`) searching the full keyword, **7×7 grid,
@@ -139,7 +141,7 @@ requested **2 days before** their due day (R6) and open as Nik's todo on the due
 | 3 | `w3.photos` | 15 | Nik | "Upload every photo they sent at onboarding (aim for 10+). Real job photos beat stock." | "Upload <name>'s photos to their Google profile" |
 | 3 | `w3.email` | 16 | Claude → Nik sends | Profile done; asks one thing: send a few photos of their work every week (reply to this email or WhatsApp). | "Approve week 3 update to <name>" |
 | 4 | `w4.email` | 23 | Claude → Nik sends | Overview: what's done on the profile (from tasks done), what's next (the website). | "Approve week 4 update to <name>" |
-| 5 | `w5.onpage_check` | 28 | System | Fetch the site home page and check: title has service + town; H1 has service + town; business name, phone and postcode on the page; LocalBusiness JSON-LD; a Google Maps embed. All pass → done, no todo. Any fail → a site task `w5.site_fixes` (due the same day) listing the failures. | (on fail) "Fix <n> things on <name>'s site" |
+| 5 | `w5.onpage_check` | 28 | System | Fetch the site home page and check: title has service (or the site's primary category, `client_sites.content.primary_category`) + town; H1 has service (or primary category) + town; business name, phone and postcode on the page; LocalBusiness JSON-LD; a Google Maps embed. All pass → done, no todo. Any fail → a site task `w5.site_fixes` (due the same day) listing the failures. | (on fail) "Fix <n> things on <name>'s site" |
 | 5 | `w5.email` | 30 | Claude → Nik sends | Website basics done (what was checked, in plain words). | "Approve week 5 update to <name>" |
 | 6 | `w6.inventory` | 35 | Claude → Nik approves | Pages the site has; pages Google has indexed (Claude searches `site:<domain>`; number or "unknown"); plan: one page per core service (≤ 5), an "Areas we serve" page + 5 area pages (from onboarding areas; if fewer than 5, say so), the interlinking map. Target 30+ indexed pages over time. | "Approve the new pages plan for <name>'s site" |
 | 6 | `w6.email` | 37 | Claude → Nik sends | What we mapped (playbook week 6/7 wording); asks one thing: confirm the 5 areas. | "Approve week 6 update to <name>" |
@@ -986,8 +988,10 @@ CREATE TABLE IF NOT EXISTS care_reviews (
   - `validateDraft(task, draft, ctx) → string[]` (empty = valid) applying every R6 limit for `task.key`'s format;
     `ctx = {facts, slots: string[], newReviewIds: string[]}`
   - `checkInterlinks(pages: [{slug, kind: "service"|"area"|"home"|"contact", links: [{to_slug, anchor}]}]) → string[]`
-  - `onPageCheck(html, {service, town, name, phone, postcode}) → {passed: string[], failed: string[]}` with the five
-    checks named `"title"`, `"h1"`, `"nap"`, `"schema"`, `"map"`
+  - `onPageCheck(html, {service, town, name, phone, postcode, primary_category}) → {passed: string[], failed:
+    string[]}` with the five checks named `"title"`, `"h1"`, `"nap"`, `"schema"`, `"map"`; `"title"` and `"h1"` pass
+    when they contain the town and either `service` or `primary_category` (stage 10's home H1 is "<Primary category>
+    in <Town>")
   - `wordCount(text) → number`
 
 - [ ] **Step 1: Write the failing test** — `care-drafts.test.mjs`:
@@ -1000,7 +1004,10 @@ CREATE TABLE IF NOT EXISTS care_reviews (
   - `onPageCheck(fixture, {service:"landscaper", town:"Warrington", name:"Green Leaf", phone:"01925 123456",
     postcode:"WA1 1AA"})` on an HTML string with title "Best Landscaper Warrington | Green Leaf", H1 "Landscaper in
     Warrington", footer NAP, `application/ld+json` with `"@type":"LocalBusiness"` and an iframe `google.com/maps` →
-    `failed: []`; removing the iframe → `failed: ["map"]`; phone matched ignoring spaces.
+    `failed: []`; removing the iframe → `failed: ["map"]`; phone matched ignoring spaces. A stage-10-style page
+    (title "Landscaping company in Warrington | Green Leaf – Patios, Turfing", H1 "Landscaping company in
+    Warrington") with `service: "landscaper"`, `primary_category: "Landscaping company"` → `failed: []`; the same
+    page without `primary_category` → `failed` includes `"title"` and `"h1"`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/care-drafts.test.mjs` → cannot find module.
 - [ ] **Step 3: Implement `validateDraft`, `checkInterlinks`, `onPageCheck`, `wordCount` in `care-drafts.js`** —
   regex-based HTML reading (no DOM); case-insensitive matching; `validateDraft` calls `copyProblems` on every
@@ -1047,7 +1054,7 @@ CREATE TABLE IF NOT EXISTS care_reviews (
 - Consumes: everything in `care.js`, `care-plan.js`; `ukDate`, `ukParts` (ukTime).
 - Produces: `careActions(state, now) → Action[]` in R11 priority order, where
   `state = {newClients: [{client_id, name, place_id, service, town, live_on, invite_sent}], care: [CareRow + {name,
-  cancelled_on, stripe_subscription, email}], tasks: [TaskRow + {draft, requested_at}], scans: [{scan_id, client_id,
+  cancelled_on, stripe_subscription, email, primary_category}], tasks: [TaskRow + {draft, requested_at}], scans: [{scan_id, client_id,
   day, kind, status, scored_at, ranks, created_at}], reviews: {[client_id]: {checked_on, review_count, reviews}[]},
   settings: {"care:reviews:last": "YYYY-MM-DD", "care:template:referral:approved"?, "care:template:nudge:approved"?},
   doneTodos: [{dedupe, status}]}` and `Action` is one of `{type: "create_care"|"stop_care"|"score_scan"|"scan_failed"|
@@ -1092,9 +1099,12 @@ CREATE TABLE IF NOT EXISTS care_reviews (
   compose, now})` (`_lib/client-mail.js`), `getSetting`/`setSetting` (settings.js), `now()`/`iso()` (util.js), stage
   10's `setSiteFeature(DB, client_id, feature, on, now)` (`_lib/sites/db.js`).
 - Produces:
-  - `loadCareState(DB, now) → Promise<state>` (≤ 7 statements, one `DB.batch`). New clients' `service` = first
-    `onboarding.form.services[]` with `on` (its `name`), else `leads.trade`; `town` = `form.areas[0]`, else
-    `leads.town`, else `leads.search_town`; `invite_sent` = `form.gbp.invite_sent === true`.
+  - `loadCareState(DB, now) → Promise<state>` (≤ 7 statements, one `DB.batch`; new clients and care rows LEFT JOIN
+    `client_sites`). New clients' `town` = `form.areas[0]`, else `leads.town`, else `leads.search_town`; `service` =
+    `client_sites.content.keyword` with the trailing town removed (case-insensitive) when it is set and ends with
+    that town (R1), else the first `onboarding.form.services[]` with `on` (its `name`), else `leads.trade`;
+    `invite_sent` = `form.gbp.invite_sent === true`. Care rows carry `primary_category` =
+    `client_sites.content.primary_category` (or null) for `onPageCheck`.
   - `applyCareAction(ctx, action, deps) → Promise<number>` (D1 statements used); `deps = {fire = fireRoutine, start =
     startWorkflow, pause = pauseFee, resume = resumeFee, fetchImpl = fetch}`
   - `runCare(ctx, deps = {}) → Promise<string>` (summary line; stops applying at 20 statements or when
@@ -1117,7 +1127,9 @@ CREATE TABLE IF NOT EXISTS care_reviews (
     "Landscaper", on: true}], areas: ["Warrington"], gbp: {has: "yes", invite_sent: false}}` → `runCare` at
     2026-11-09T09:00Z creates `care` (`waiting_access`, keyword `"landscaper warrington"`) and the `pre.access_email`
     todo (dedupe `care:c1:pre.access_email`); running again adds nothing. Same with `invite_sent: true` → no
-    `pre.access_email` task or todo.
+    `pre.access_email` task or todo. With a `client_sites` row whose `content.keyword` is "Garden landscaper
+    Warrington" (form's first ticked service still "Landscaper") → `service` "Garden landscaper", keyword
+    `"garden landscaper warrington"`; a `content.keyword` not ending with the town → falls back to "Landscaper".
   - care active, day 0 2026-11-11, at 2026-11-11T09:00Z → `start` called once with `place_id` and `grid: "7"`,
     a `scans` row `source = 'care'`, a `care_scans` row `{day: 0, kind: "scheduled"}`.
   - scoring: mark that scan `done` with `scan_businesses` having no row for the client → `care_scans` scored
@@ -1400,12 +1412,15 @@ the guarantee before paying or right after says so.
 **Interfaces:**
 - Consumes: `renderOrder`, `welcomeEmail` (stage 9), `renderLanding` (stage 0), `GUARANTEE` (offer.js).
 - Produces: `CLOCK_START = "Your 90 days start the day you give us access to your Google Business Profile."`
-  exported from `care.js` (pure) and used by all three. FAQ 5 becomes `…we work for free until you are. Your 90 days
-  start the day you give us access to your Google Business Profile.`; the welcome email's Full Package paragraph gains
+  exported from `care.js` (pure) and used by all three. FAQ 5's answer becomes `On Google's results for your main
+  service and town (for example "roofer Leeds"), searched from your area. The map results at the top count. ` +
+  `GUARANTEE.section` + `" "` + `CLOCK_START` (the old "we work for free until you are" sentence is gone: overview §9
+  forbids it); the welcome email's Full Package paragraph gains
   that sentence as its last line; the landing's guarantee paragraph gains it after "The map results at the top
   count." The guarantee wording itself (`GUARANTEE.headline`/`.section`) doesn't change.
 
-- [ ] **Step 1: Write the failing test** — order page (weekday and weekend) contains `CLOCK_START`; `welcomeEmail`
+- [ ] **Step 1: Write the failing test** — order page (weekday and weekend) contains `CLOCK_START` and
+  `GUARANTEE.section` in FAQ 5, and `assert.doesNotMatch(html, /work for free until you are/)`; `welcomeEmail`
   full contains it, website-only doesn't; `renderLanding` contains it once; the existing exact-wording tests stay
   green.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/order-page.test.mjs
@@ -1437,7 +1452,9 @@ the guarantee before paying or right after says so.
   `{name, level, detail, fix}`. No second light for the Routine (stage 0's `routine:monthly-care` covers it). Health
   todos `health:day90:<client_id>` and `health:care_scan:<client_id>:<day>` match no light, so file 11 shows them in
   Today.
-- Money: no retainer in the forecast or monthly total while `care.guarantee = 'working_free'` (Task 18, `money.js`).
+- Money: no retainer in the forecast or monthly total while `care.guarantee = 'working_free'`; `clientStatus` key
+  `working_free`, rendered by the Money page ("Working free: fee paused") and file 11's `clientCards` Monthly line
+  ("Fee paused: working free") (Task 18).
 - `CLOCK_START` (`care.js`) on stage 9's order-page FAQ 5 and Full Package welcome email and stage 0's landing
   guarantee paragraph (Task 19, Q-B default).
 - `scans.source = 'care'` (stage 1's `stale_jobs` skips these; care fails its own scans at 45 min) and
@@ -1474,11 +1491,14 @@ the guarantee before paying or right after says so.
   fetchImpl)` and `stripeKey(env, DB)`, API pinned to 2024-06-20 (`subscription.current_period_end` top-level);
   `tests/helpers/fakeStripe.mjs`; `_lib/client-mail.js` `systemMailbox(DB, now)` and `sendClientMail(DB, {client_id,
   place_id, to, business, compose, now})` (owns `setup:system_mailbox`); `_lib/order-page.js` `renderOrder` (FAQ 5)
-  and `welcomeEmail`; `fulfilCheckout` deletes the client's `suppression` row.
+  and `welcomeEmail` (Task 19 rewrites FAQ 5 to `… The map results at the top count. ` + `GUARANTEE.section` + `" "` +
+  `CLOCK_START`); `fulfilCheckout` deletes the client's `suppression` row.
 - Stage 10 (09-build.md): `onboarding.status = 'live'`, `live_at`, `site_url` as overview §4; onboarding `form` keys
   `business.{name, phone, email}`, `services[] {name, on}` (service = first with `on`), `areas[]` (town =
   `areas[0]`), `gbp.{has, invite_sent}`; contact first name = `research.owner.first` (only when confident); photos =
-  count of `photos[]` in `client_sites.content`; `client_sites` row per client with `domain` JSON, `host` and
+  count of `photos[]` in `client_sites.content`; `client_sites.content.keyword` ("<main service> <Town>", the site's
+  main keyword, which care's guarantee keyword reuses) and `content.primary_category` (home title/H1 "<Primary
+  category> in <Town>"); `client_sites` row per client with `domain` JSON, `host` and
   `review_url`; `site_leads (id, client_id, created_at, …)` for enquiries (care treats a missing table as "no data",
   never as zero); `setSiteFeature(DB, client_id, feature, on, now)` (`_lib/sites/db.js`) switching `chatbot` (and the
   review booster) off; the "Invite accepted" checkbox calls care's `access` action; the client site's home page

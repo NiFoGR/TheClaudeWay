@@ -397,7 +397,7 @@ messages, applies stops, closes finished sequences and queues due follow-ups. Tw
    `queued_already`, one message row).
 4. **Pasted text** from Gmail/Word: smart quotes, a signature with "www.", a bare "greenleaf.co.uk", an email address,
    the raw demo URL pasted instead of the placeholder. Test in Task 5 (`findLinks` / `firstEmailIssues`).
-5. **D1's 50-query limit per tick** with 40 due prospects. Test in Task 8 (counting round trips: ≤ 18, exactly 3
+5. **D1's 50-query limit per tick** with 40 due prospects. Test in Task 8 (stage 0's `countingDB`: ≤ 18 queries, exactly 3
    queued, the rest on later runs).
 
 ---
@@ -1068,9 +1068,12 @@ Consumes: `registerLight(fn)` and `healthFromDb(DB, env, now) → Promise<{light
 Produces: `followupHealth({overdue: [{mailbox_address, mailbox_status}], approved: boolean, waiting: number}) →
 {name: "followups", level: "green"|"amber"|"red", detail: string, fix: string}` (pure);
 `followupHealthFromDb(DB, now) → Promise<same>` (overdue = queued follow-ups with `due_at` < now − 24 h, plus pending
-`next_followup_at` < now − 24 h when approved);
-at module level in `followups.js`: `registerLight((DB, env, now) => followupHealthFromDb(DB, now))` (the tick imports
-`followups.js` for its step, so the light is registered before `health` runs).
+`next_followup_at` < now − 24 h when approved; exactly one D1 statement: a single SELECT whose subqueries return
+the overdue rows' mailbox address/status, the approved-template count and the waiting count, so the light fits stage
+0's one-statement cap per registered light);
+at module level in `followups.js`: `registerLight((DB, env, now) => followupHealthFromDb(DB, now))` (`tick.js` imports
+`followups.js` for its step, so the light is also registered in the separate `?reason=health` invocation that runs
+only `health`).
 
 - [ ] **Step 1: Write the failing test**
 ```js
@@ -1089,6 +1092,9 @@ test("the light is registered", async () => {
   const DB = fakeD1();
   const { lights } = await healthFromDb(DB, {}, new Date("2026-10-22T10:00:00Z"));
   assert.equal(lights.find((l) => l.name === "followups").level, "green");
+  const c = countingDB(DB);
+  await followupHealthFromDb(c.DB, new Date("2026-10-22T10:00:00Z"));
+  assert.equal(c.used(), 1);                                             // one statement per registered light
 });
 ```
 - [ ] **Step 2: Run it to verify it fails** — → `followupHealth is not a function`.

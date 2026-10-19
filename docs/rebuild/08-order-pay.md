@@ -326,8 +326,11 @@ will arrive by email in the next few minutes.`, status 200.
 | `setup` | `setup:stripe` | `Connect Stripe: {name} tried to order` | `/#/setup` |
 | `setup` | `setup:system_mailbox` | `Add a system mailbox for client emails (welcome emails are going from a cold mailbox)` | `/#/setup` |
 | `setup` | `setup:welcome:<client_id>` | `Send {name} their onboarding link yourself (no mailbox yet)` + `draft` = the welcome email | `/#/money` |
+| `setup` | `setup:client-mail:<client_id>:payment-failed:<invoice id>` | `Send {name} this email yourself (no mailbox yet)` + `draft` = the payment-failed email | `/#/money` |
 
-`setup:stripe` closes when Connect Stripe succeeds. `build:new:<client_id>` is closed by stage 10 when the form is
+`sendClientMail`'s `noMailboxTodo` option picks which no-mailbox todo is filed: the welcome todo by default, the
+`setup:client-mail:<client_id>:<kind>` form for every other client email (stage 10 passes its own kinds, and `null`
+for enquiry emails). `setup:stripe` closes when Connect Stripe succeeds. `build:new:<client_id>` is closed by stage 10 when the form is
 submitted.
 
 ### Health light
@@ -431,8 +434,12 @@ Pages routes only wire requests to them.
 **Files:** Modify `control-room/functions/_lib/offer.js` (stage 0 created it; do not create or overwrite it, and
 do not touch `tests/offer.test.mjs`). Modify `control-room/functions/_lib/money.js` (add `packages` to `summarise()`;
 stage 0 already re-exports `PACKAGES`), `control-room/public/js/money.js` (use `summary.packages`, drop the
-"Payment links" card for the hint text). Create `control-room/tests/offer-order.test.mjs`. Test also
-`control-room/tests/money.test.mjs`.
+"Payment links" card for the hint text), `control-room/public/js/setup.js` (stage 0's Setup page imports
+`paymentLinks` from `money.js` and renders the old payment-links Stripe card: remove that import and that card in
+this task, so Setup keeps loading until Task 11 adds the new "Payments (Stripe)" card). Create
+`control-room/tests/offer-order.test.mjs`. Test also `control-room/tests/money.test.mjs`.
+`summary.packages` stays the Money page's package source (decision R2-8); other pages use file 11's `getOffer()`.
+Both are serialisations of `offer.js`, so there is still one source of truth.
 **Interfaces:**
 Consumes from stage 0's `_lib/offer.js` (exact names; no renames, no second copy):
 ```js
@@ -471,9 +478,12 @@ Produces (added to `offer.js`): `BUILD_GUARANTEE_NOTE = "(clock starts when your
   `money.js`: `summarise` returns `packages: PACKAGES` (import from `./offer.js`; the re-export is stage 0's).
   `public/js/money.js`: replace the local `PACKAGES` with `state.money.summary.packages`, delete `linksCard` /
   `paymentLinks` and the `/api/stripe/setup` fetch, add the hint card text from Part A.
+  `public/js/setup.js`: delete the `paymentLinks` import and the old Stripe payment-links card (and its
+  `/api/stripe/setup` fetch); nothing replaces it until Task 11. Then
+  `grep -rn "paymentLinks\|linksCard" control-room/public/js` → no matches.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS (stage 0's
-  `offer.test.mjs` included); `node --check control-room/public/js/money.js`.
-- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/offer.js control-room/functions/_lib/money.js control-room/public/js/money.js control-room/tests/offer-order.test.mjs control-room/tests/money.test.mjs`
+  `offer.test.mjs` included); `for f in control-room/public/js/*.js; do node --check "$f"; done` → clean.
+- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/offer.js control-room/functions/_lib/money.js control-room/public/js/money.js control-room/public/js/setup.js control-room/tests/offer-order.test.mjs control-room/tests/money.test.mjs`
   `git commit -m "Order and pay: build-guarantee note and server-side packages for Money"`
 
 ### Task 2: Stripe client helpers
@@ -669,8 +679,15 @@ welcomeEmail({business, greetName, terms, amountPaid, onboardUrl, firstChargeOn,
 paymentFailedEmail({business, greetName, amountDue, payUrl, signName}) → {subject, body}
 systemMailbox(DB, now) → Promise<{mailbox, fallback: boolean} | null>   // system role first, else cold with most room left
 senderName(DB) → Promise<string>                                         // setting business:sender_name, else "Nik"
-sendClientMail(DB, {client_id, place_id, to, business, compose: (signName) => {subject, body}, now})
+sendClientMail(DB, {client_id, place_id, to, business, compose: (signName) => {subject, body}, now,
+                    noMailboxTodo = WELCOME_TODO})
   → Promise<{queued: string|null, fallback: boolean}>
+// noMailboxTodo: {dedupe, title, link?} | null — the setup todo filed (with the composed email as its draft) when
+// there is no active mailbox at all. `{name}` in title is replaced by `business`; link defaults to "/#/money".
+// Default WELCOME_TODO =
+// {dedupe: "setup:welcome:<client_id>", title: "Send {name} their onboarding link yourself (no mailbox yet)"}.
+// null = no todo (stage 10's enquiry emails). Any other client email passes
+// {dedupe: "setup:client-mail:<client_id>:<kind>", title: "Send {name} this email yourself (no mailbox yet)"}.
 ```
 
 - [ ] **Step 1: Write the failing test** — `client-mail.test.mjs`:
@@ -689,11 +706,18 @@ sendClientMail(DB, {client_id, place_id, to, business, compose: (signName) => {s
   - `falls back to cold`: only `cold1` → `mailbox_id 'cold1'`, `fallback true`, todo `setup:system_mailbox`.
   - `no mailbox`: none → `queued null`, no `messages` row, todo `setup:welcome:<client_id>` whose `draft` contains
     the onboarding URL.
+  - `no mailbox, other email`: none, `noMailboxTodo: {dedupe: "setup:client-mail:c1:go-live", title: "Send {name} this email yourself (no mailbox yet)"}`
+    → todo `setup:client-mail:c1:go-live` titled `Send Smith Roofing this email yourself (no mailbox yet)` with the
+    composed body as `draft`; no `setup:welcome:c1` todo. A second call with `noMailboxTodo: {dedupe: "setup:client-mail:c1:domain-cname", …}`
+    files its own todo (not swallowed by the first).
+  - `no mailbox, no todo`: none, `noMailboxTodo: null` → `queued null`, no `messages` row, no `todos` row.
   - `paused mailboxes ignored`: only a paused system mailbox → behaves as `no mailbox`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/client-mail.test.mjs` → module not found.
 - [ ] **Step 3: Implement `sendClientMail(...)` in `_lib/client-mail.js`** — `systemMailbox` → `compose(await senderName(DB))`
   → `queueMessage(DB, {place_id, client_id, mailbox_id, direction: "out", kind: "system", author: "system", to_addr, from_addr: mailbox.address, subject, body, due_at: now})`;
-  todo titles exactly as Part A; the no-mailbox draft is composed with `senderName(DB)` too.
+  todo titles exactly as Part A; with no mailbox, `addTodo(DB, {kind: "setup", dedupe: noMailboxTodo.dedupe, title:
+  noMailboxTodo.title.replace("{name}", business), draft, client_id, place_id, link: noMailboxTodo.link ?? "/#/money"})` unless
+  `noMailboxTodo` is `null`; the no-mailbox draft is composed with `senderName(DB)` too.
 - [ ] **Step 4: Run tests to verify they pass** — same command → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/client-mail.js control-room/tests/client-mail.test.mjs`
   `git commit -m "Order and pay: welcome and payment-failed emails from the system mailbox"`
@@ -819,6 +843,9 @@ Produces nothing new (cases inside `handleEvent`).
     `Card failed: Smith Roofing (£249). They've been emailed a link to pay; Stripe will retry.`; one new system
     message containing `https://invoice.stripe.com/i/x`. Same invoice again (new event id, `attempt_count 2`) → no
     second message.
+  - `card failed, no mailbox`: no mailboxes → todo `setup:client-mail:cl_cs_1:payment-failed:in_3` titled
+    `Send Smith Roofing this email yourself (no mailbox yet)` with the pay URL in its `draft`; no
+    `setup:welcome:` todo is added by this event.
   - `unknown customer`: `customer "cus_zz"` → result `unknown customer`, no todo, no message.
   - `stopped`: `customer.subscription.deleted` `{id: "sub_1", ended_at: <2027-01-15>}` → `cancelled_on '2027-01-15'`;
     todo `payment:stopped:cl_cs_1` titled `Smith Roofing stopped the monthly plan: switch off the extras (their site stays up)`;
@@ -829,7 +856,9 @@ Produces nothing new (cases inside `handleEvent`).
     → todo kind `hot`, dedupe `checkout:p2`, titled `Call Green Leaf: they opened the payment page but didn't pay`; for `p1`
     (already a client) → no todo.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/stripe-events.test.mjs` → the new cases fail (`ignored`).
-- [ ] **Step 3: Implement the four cases in `handleEvent`** — email only when `addTodo` returned an id; refund paid_on
+- [ ] **Step 3: Implement the four cases in `handleEvent`** — email only when `addTodo` returned an id, via
+  `sendClientMail(DB, {…, noMailboxTodo: {dedupe: "setup:client-mail:" + client_id + ":payment-failed:" + invoice.id,
+  title: "Send {name} this email yourself (no mailbox yet)"}})`; refund paid_on
   = `ukDate(event.created)`, upsert `amount_pence`.
 - [ ] **Step 4: Run tests to verify they pass** — same command → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/stripe-events.js control-room/tests/stripe-events.test.mjs`
@@ -916,9 +945,14 @@ Then run the live checks 3–12 of "Perfect when" in Stripe test mode before sta
 **Produced here, used elsewhere**
 - `_lib/offer.js`: only `BUILD_GUARANTEE_NOTE` (the order page's build-guarantee note). Everything else in the
   module is stage 0's.
-- `_lib/client-mail.js`: `sendClientMail(DB, {...})`, `systemMailbox(DB, now)`, `senderName(DB)` for any client
-  email in stages 10–11 (stage 10's `sendCareEmail` wraps `sendClientMail`). This stage owns the
-  `setup:system_mailbox` todo.
+- `summarise().packages` (`_lib/money.js`): the Money page's package source (R2-8). `paymentLinks`/`linksCard` are
+  gone from `public/js/money.js` and `setup.js` after Task 1; file 11 must not bring them back (its other pages use
+  `getOffer()`, also a serialisation of `offer.js`).
+- `_lib/client-mail.js`: `sendClientMail(DB, {..., noMailboxTodo})`, `systemMailbox(DB, now)`, `senderName(DB)`
+  for any client email in stages 10–11 (stage 11's `sendCareEmail` wraps `sendClientMail`). This stage owns the
+  `setup:system_mailbox` todo. Callers other than the welcome email must pass `noMailboxTodo`: `null` (no todo, e.g.
+  enquiries) or `{dedupe: "setup:client-mail:<client_id>:<kind>", title: "Send {name} this email yourself (no mailbox yet)", link?}`;
+  leaving it out files the welcome todo, which is only right for the welcome email.
 - `_lib/stripe.js`: `stripeApi(key, method, path, params, fetchImpl)`, `stripeKey(env, DB)` (the old
   `stripe(env, …)` is gone; stage 10's `pauseFee` uses these) and `tests/helpers/fakeStripe.mjs`.
 - Order page FAQ 5 (`…The map results at the top count. ` + `GUARANTEE.section`) and the welcome email's Full

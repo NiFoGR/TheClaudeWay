@@ -951,7 +951,7 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
 **Interfaces:**
 - Consumes:
   - Tasks 4–5;
-  - `requireAgent(request, env, DB)`, `addTodo`, `ukToUtc`, `addUkDays`, `iso` (stage 0).
+  - `requireAgent(request, env, DB)`, `addTodo`, `ukToUtc`, `addUkDays` (stage 0); `iso` from `_lib/util.js`.
 - Produces:
   - `loadKpiRows(DB) → Promise<rows>`. It reads all lead-linked `messages` (including `intent`, a stage 0 column
     set by stage 7), `demo_events` views, `calls`, clients with a `place_id` as orders, `research` grades and rows,
@@ -1241,12 +1241,15 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
 **Interfaces:**
 - Consumes: `PACKAGES`, `MONTHLY_PENCE` and `formatPounds` from `_lib/offer.js` (stage 0; `money.js` already
   re-exports `PACKAGES`, `{full, weekend, website}` each `{label, build, monthly, freeDays}`, weekend also
-  `wasBuild`).
+  `wasBuild`); `summarise(...).packages` (stage 9, 08 Task 1).
 - Produces:
   - `packageNote(p) → string` (`_lib/money.js`, using `formatPounds`)
   - `GET /api/offer` → `{packages: PACKAGES}`
-  - `getOffer()` in `lib.js` (cached fetch)
-  - `paymentLinks(links, packages)` (new second argument)
+  - `getOffer()` in `lib.js` (cached fetch), for every page except Money
+- Money page source (R2-8): the Money page keeps reading packages from 08's `state.money.summary.packages`; it does
+  not call `getOffer()`. Both are serialisations of `offer.js`, so there is still one source of truth. 08 already
+  removed the local `PACKAGES`, `linksCard`/`paymentLinks` and the Setup page's old Stripe card, so this task
+  doesn't touch them.
 
 - [ ] **Step 1: Write the failing test.** Add to `money.test.mjs`:
   ```js
@@ -1271,11 +1274,10 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
   - The `loadMoney` pipeline query becomes `SELECT SUM(stage = 'call_booked') AS callsBooked, SUM(stage IN
     ('replied','needs_nik')) AS replied FROM prospects WHERE place_id NOT LIKE 'drill:%' AND place_id NOT LIKE
     'test:%'`; `value = callsBooked × PACKAGES.full.build`.
-  - Front-end `money.js` drops its local `PACKAGES` and the literal `24900`. It uses `await getOffer()`, and
-    `goalCard` uses `packages.full.monthly`.
-  - Call sites of `paymentLinks` pass the packages, including Setup's Stripe card if it exists.
+  - Front-end `money.js`: any literal price left after 08 (for example `24900` in `goalCard`) is replaced by
+    `state.money.summary.packages` (`goalCard` uses `summary.packages.full.monthly`). It doesn't import `getOffer`.
 - [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/money.test.mjs` passes, and `grep -n
-  "24900\|1950\|1750" control-room/public/js/money.js` prints nothing.
+  "24900\|1950\|1750\|getOffer\|paymentLinks" control-room/public/js/money.js` prints nothing.
 - [ ] **Step 5: Commit.** `git add control-room/functions/_lib/money.js control-room/functions/api/offer.js
   control-room/public/js/money.js control-room/public/js/lib.js control-room/tests/money.test.mjs` then `git commit -m
   "Money: prices from offer.js, pipeline from prospects" -m "$TRAILER"`.
@@ -1288,6 +1290,8 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
   - `control-room/public/js/app.js`
   - `control-room/public/js/html.js` (icons `chart`, `mic`, and `mail` if stage 7 didn't add it)
   - `CLAUDE.md` (replace the Home / What to do / Roadmap / Outreach-page lines with Todo, Replies and KPIs)
+  - `control-room/tests/shell.test.mjs` (stage 0: delete the assertion that the `PAGES` routes include stage 0's
+    five; keep "no `soon`, no roadmap/outreach routes" and the `setup.js` checks)
 - Delete:
   - `control-room/public/js/home.js`
   - `control-room/public/js/roadmap.js`
@@ -1334,17 +1338,20 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
   - `nav.js` holds `NAV` and `routeFor`. `id` is `decodeURIComponent`'d. A leading `/` before `#` is ignored.
   - `app.js`:
     - renders the flat nav (Log out under it);
-    - routes via `routeFor`, replacing stage 0's `PAGES` registry and the separate routes stage 7 added. `lead` runs
+    - routes via `routeFor`, replacing stage 0's `PAGES` registry (with the `nav: false` entries 05 and 07 added)
+      and the dispatch through 04's `leadview.js` `parseRoute`. `lead` runs
       `leadsPage(params)` then `openLeadDrawer(id)`; `replies` runs `threadPage(id)` with an id, else
       `repliesPage()`; `call` runs `callPage(id)`;
     - calls `stopTodoPoll()` on every route change;
     - after each route, fetches `/api/todo/count` into `#todo-badge`: the due count, plus a red dot when `red > 0`,
       and hidden at 0 and 0. A failed count fetch leaves the badge hidden.
-  - Delete the files listed above.
+  - Delete the files listed above, and the `PAGES`-routes assertion in `shell.test.mjs` (`app.js` has no `PAGES` any
+    more; `nav.test.mjs` now owns the route list).
   - `grep -rn "api/today\|api/overview\|roadmap\|homePage\|outreachPage" control-room/public control-room/functions`
     must print nothing.
 - [ ] **Step 4: Run tests to verify they pass.**
-  - `node --test control-room/tests/*.test.mjs` passes (today.test is gone; nothing else breaks).
+  - `node --test control-room/tests/*.test.mjs` passes (today.test is gone, shell.test no longer checks `PAGES`;
+    nothing else breaks).
   - `for f in control-room/public/js/*.js; do node --check "$f"; done` passes.
 - [ ] **Step 5: Commit.** `git add -A control-room/public/js control-room/functions control-room/tests CLAUDE.md` then
   `git commit -m "Nav: Todo home, Replies, KPIs; remove Home, What to do, Roadmap, Outreach pages" -m "$TRAILER"`.
@@ -1357,8 +1364,8 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
 - Test: `control-room/tests/purge.test.mjs`
 
 **Interfaces:**
-- Consumes: `getSetting`, `setSetting`, `ukDate`, `ukToUtc`, `iso` (stage 0); `runTick`'s `ctx = {DB, env, now,
-  reason, results, budget}` (stage 0; `budget` = the queries this step may still use).
+- Consumes: `getSetting`, `setSetting`, `ukDate`, `ukToUtc` (stage 0); `iso` from `_lib/util.js`; `runTick`'s
+  `ctx = {DB, env, now, reason, results, budget}` (stage 0; `budget.left()` = the queries this step may still use).
 - Produces:
   - `PURGE_BATCH = 90`
   - `purgeCutoff(now) → ISO string`: UK midnight at the start of the same UK calendar date one year earlier (29 Feb →
@@ -1395,11 +1402,13 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
     assert.deepEqual(await purgeOld(DB, NOW, { maxRounds: 1 }), { purged: 5, done: true });
   });
   test("runs once a month", async () => {
-    const ctx = { DB, env: {}, now: NOW, budget: 30 };
+    const ctx = { DB, env: {}, now: NOW, budget: { left: () => 30 } };
     assert.equal(await purgeStep.run(ctx), "nothing to purge");
     assert.equal(await getSetting(DB, "purge:month"), "2026-10");
     assert.equal(await purgeStep.run({ ...ctx, now: new Date("2026-10-30T12:00:00Z") }), "done this month");
-    assert.equal(await purgeStep.run({ ...ctx, budget: 3 }), "done this month");
+    assert.equal(await purgeStep.run({ ...ctx, budget: { left: () => 3 } }), "done this month");
+    await setSetting(DB, "purge:month", "2026-09");
+    assert.equal(await purgeStep.run({ ...ctx, budget: { left: () => 5 } }), "deferred");   // floor((5 - 2) / 4) = 0 rounds
   });
   ```
 - [ ] **Step 2: Run it to verify it fails.** `node --test control-room/tests/purge.test.mjs` fails with "Cannot find
@@ -1419,7 +1428,7 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
   - Delete with one `DB.batch` of `DELETE FROM prospects|messages|research WHERE place_id IN (…)`. Never touch
     `suppression`, `clients`, `client_links` or `leads`.
   - `run(ctx)`: `month = ukDate(now).slice(0, 7)`; if `purge:month` equals it, return "done this month" (1 query).
-    Otherwise `maxRounds = min(5, floor((ctx.budget - 2) / 4))`; with 0 rounds return "deferred". Run `purgeOld`;
+    Otherwise `maxRounds = Math.min(5, Math.floor((ctx.budget.left() - 2) / 4))`; with 0 rounds return "deferred". Run `purgeOld`;
     when `done`, set `purge:month = month`. Return "nothing to purge", "purged <n> leads" or "purged <n> leads, more
     next tick".
 - [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/purge.test.mjs` passes (3 tests),
@@ -1464,8 +1473,7 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
   - `public/js/nav.js` (`NAV`, `routeFor`): the final route list; this file owns routing once it ships. Pages added
     later (09's `sites`/`site/<id>`, 10's `client/<id>`/`client/settings`) add their routes to `routeFor` and
     `nav.test.mjs`, not to `PAGES`.
-  - `getOffer()` in `lib.js`.
-  - `paymentLinks(links, packages)` now takes the packages.
+  - `getOffer()` in `lib.js`, used by every page except Money (Money keeps 08's `summary.packages`; R2-8).
 - **No health light of its own.** Stage 0's `routine:weekly-kpis` light (192 h cadence) covers the weekly review.
 
 **Needed from other stages (exact shapes this file relies on)**
@@ -1483,7 +1491,10 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
     variable, and Setup → Claude for each Routine's URL and token.
   - `_lib/offer.js`: `PACKAGES` (re-exported by `money.js`), `MONTHLY_PENCE`, `formatPounds`.
   - `util.now()`/`iso()` (UTC ISO without milliseconds).
-  - `runTick` gives each step `ctx.budget` (queries it may still use) and keeps 6 for `health`.
+  - `runTick` gives each step `ctx.budget`, an object whose `left()` is the queries it may still use. `health` runs
+    on its own `/api/tick?reason=health` invocation with the full 50-query budget and every other reason skips it
+    (R2-7), so no queries are reserved for it.
+  - `iso(d = new Date())` in `_lib/util.js` (UTC ISO without milliseconds), next to `now()`.
   - `messages.intent TEXT` in the schema.
 - **Stage 3:**
   - `isHot`, `STAGE_LABELS` (`_lib/shortlist.js`; `isHot` is true only for `emailed`/`viewed`);

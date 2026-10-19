@@ -15,8 +15,8 @@ Setup, the relay Worker and the landing page.
 
 ## Trigger
 
-- **Tick:** the relay Worker's cron calls `/api/tick` every 5 minutes. It also calls `/api/tick?reason=inbound`
-  after saving each inbound email.
+- **Tick:** the relay Worker's cron calls `/api/tick?reason=cron` every 5 minutes, then `/api/tick?reason=health`
+  once that returns. It also calls `/api/tick?reason=inbound` after saving each inbound email.
 - **Setup:** Nik's buttons on the Setup page.
 - **Deploy:** a push to `mail-relay/**` redeploys the relay Worker. Every push redeploys Pages.
 
@@ -175,9 +175,15 @@ Setup, the relay Worker and the landing page.
 - Steps run in the order of overview §8. `everyMinutes` is checked against the setting `tick:last:<step>`. A step
   that throws becomes `{error}` and the rest still run.
 - **D1 budget:** a tick makes at most 50 D1 queries (the free plan's limit per invocation). `runTick` wraps `DB` in a
-  counter that counts every statement, including the runner's own, and gives each step `ctx.budget`. 6 queries are
-  always kept for `health`. A step other than `health` is not started with fewer than 10 left: it reports
-  `"deferred"` and runs on a later tick. `inbound` stops at 30.
+  counter that counts every statement, including the runner's own, and gives each step `ctx.budget`, an object
+  whose `left()` returns the queries still available (50 − used). A step is not started with fewer than 10 left: it
+  reports `"deferred"` and runs on a later tick. `inbound` stops at 30.
+- **Health runs on its own.** The relay's cron makes two calls every 5 minutes, one after the other:
+  `/api/tick?reason=cron`, then `/api/tick?reason=health`. With `reason=health`, `runTick` runs only the `health`
+  step, with the full 50-query budget. Every other reason skips `health`. The health call has its own gap and lease
+  keys (`tick:health:last`, `tick:health:lock`, same 20 s and 50 s), so a stuck or slow main tick never blocks it.
+- **Heartbeats:** a non-health tick beats `tick` as its last query, with the steps summary as the detail. The health
+  call beats `health` with `"G green, A amber, R red"`. The `tick` light watches both.
 - The public response is only `{ran, steps: {name: "ok" | "error" | "skipped" | "deferred"}}`. Details go to the
   `tick` heartbeat.
 - Stage 0 steps:
@@ -186,7 +192,7 @@ Setup, the relay Worker and the landing page.
   | --- | --- | --- |
   | `inbound` | every tick | processes up to 10 `inbound_raw` rows, stopping at 30 D1 queries |
   | `send` | every tick | `dispatchDue` |
-  | `health` | every tick | lights, todos, beat `tick` |
+  | `health` | only the `?reason=health` call (every 5 min) | lights, todos, beat `health` |
 
 ### Health lights
 One shape everywhere: `{name, level: "green"|"amber"|"red"|"grey", detail, fix}`, worked out purely from numbers.
@@ -200,7 +206,7 @@ the registered ones (e.g. 02 `lead_search`, 03 `research`, 06 `followups`, 07 `r
 
 | name | red when | amber when | Detail (red / amber / green) | Fix |
 | --- | --- | --- | --- | --- |
-| `tick` | no `tick` heartbeat, or older than 15 min | | "The heartbeat has stopped: no timed work for N min" / – / "Heartbeat ran N min ago" | "Check the relay light below. If it's green, open GitHub → Actions → Deploy mail relay and run it again." |
+| `tick` | no `tick` heartbeat, or older than 15 min; or no `health` heartbeat, or older than 15 min | | "The heartbeat has stopped: no timed work for N min" (tick) or "Health checks have stopped: lights and todos not updated for N min" (health) / – / "Heartbeat ran N min ago" | "Check the relay light below. If it's green, open GitHub → Actions → Deploy mail relay and run it again." |
 | `relay` | no `relay` heartbeat, or older than 15 min | | "The mail relay hasn't checked in for N min" / – / "Mail relay checked in N min ago" | "GitHub → Actions → Deploy mail relay → open the latest run. If it's red, its last step says what to fix." |
 | `routine:<name>` (5 of them) | last fire failed and is newer than the last heartbeat; or a heartbeat older than the cadence | not connected; connected but never checked in; last heartbeat `ok=0` | "Claude's <label> Routine hasn't run for N days" / "Claude's <label> Routine isn't connected" / "Claude's <label> Routine last ran N h ago" | "Setup → Claude → <label>: paste its URL and token, then press Test fire." or for failures: the fire's error text |
 | `mailboxes` | any mailbox paused | no mailbox | "<address> is paused: <reason>" / "No mailbox yet" / "N mailbox(es) sending" | "Read the reason, fix it, then press Resume on Setup → Mailboxes." / "Buy one Namecheap Private Email mailbox and add it on Setup → Mailboxes." |
@@ -214,6 +220,10 @@ the registered ones (e.g. 02 `lead_search`, 03 `research`, 06 `followups`, 07 `r
   link `/#/setup`). Any other level, grey included, closes it. The health step closes by exact dedupe
   (`WHERE dedupe = ?`), never by prefix, so it can't close another stage's `health:…` todos (e.g. stage 1's
   `health:find:towns`).
+- **Todo sync is batched:** the health step reads the open `health:`/`setup:` todos once, adds every new one with a
+  single multi-row `INSERT OR IGNORE` (split every 15 rows, because D1 allows 100 bound parameters per statement),
+  and closes every resolved one with a single `UPDATE … WHERE status='open' AND dedupe IN (…)`. Its whole run,
+  including the facts and the registered lights, stays far under 50 queries.
 - **Freeing the dedupe:** when the system closes a todo, its dedupe gets `@<done_at>` added, so the same problem
   can come back later as a new item. A todo Nik dismisses keeps its dedupe.
 
@@ -283,7 +293,8 @@ stages' `setup:` todos (05 `demo-template`, 06 `followups`, 08, 09, 10) are thei
 ## Edge cases
 
 - **A tick lands while another runs**, or within 20 s (the relay's inbound call right after a cron tick): it returns
-  early, and the mail is picked up by the next cron tick, at most 5 min later.
+  early, and the mail is picked up by the next cron tick, at most 5 min later. The health call has its own gap and
+  lease, so it isn't turned away by the cron tick just before it.
 - **CPU limit (Error 1102):** Cloudflare kills the request mid-tick. The lease expires after 50 s, and a message
   left in `sending` becomes `failed` after 10 min with the "check the Sent folder" text. Nothing is ever resent on
   its own.
@@ -662,7 +673,8 @@ calls `/api/tick`. SMTP goes through vendored worker-mailer over `cloudflare:soc
 - Secrets are only ever stored as `settings` keys starting `secret:`. No API response, log line, heartbeat detail or
   error text contains a secret value.
 - Tick bounds:
-  - D1: 50 queries a tick, 6 kept for `health`, no step started with fewer than 10 left;
+  - D1: 50 queries a tick, no step started with fewer than 10 left; `health` runs alone in the `?reason=health`
+    call with the full 50 (registered lights 1 statement each);
   - `dispatchDue` limit 2;
   - inbound 10 rows and 30 queries;
   - lease 50 s;
@@ -1378,12 +1390,15 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
     stage 6), `send` (0), `hot` (5, stage 4/6), `pick` (30, stage 3), `daily_find` (5, stage 1), `stale_jobs` (15,
     stage 1), `calls` (5, stage 8), `sites` (5, stage 10), `care` (10, stage 11), `purge` (monthly, file 11),
     `health` (0). Each later stage inserts its step at its marker.
-  - `TICK_BUDGET = {total: 50, healthReserve: 6, minToStart: 10}`.
+  - `TICK_BUDGET = {total: 50, minToStart: 10}`.
   - `runTick(env, reason, now = new Date(), {steps = STEPS} = {}) → Promise<{ran, why?, steps}>`. `ctx` is
     `{DB, env, now, reason, results, budget}`, where `DB` is the counted wrapper, `results` holds the steps so far
-    and `budget.left()` is the queries this step may still make (50 − used, minus 6 for every step but `health`).
-    A step other than `health` with `budget.left() < 10` isn't started and reports `"deferred"` (its
-    `tick:last:<step>` is not updated, so it runs on the next tick). `health` always runs.
+    and `budget` is an object (never a number) whose `left()` is the queries this step may still make (50 − used).
+    A step with `budget.left() < 10` isn't started and reports `"deferred"` (its `tick:last:<step>` is not updated,
+    so it runs on the next tick).
+  - `reason === "health"` runs only the `health` step, with the full budget, using the gap key `tick:health:last`
+    and the lease `tick:health:lock`. Every other reason runs every step except `health`, using `tick:last` and
+    `tick:lock`, and ends by beating `tick` with the steps summary.
   - `onRequestGet` and `onRequestPost` for `/api/tick`.
   - Middleware: `/api/tick`, `/onboard/*` and `/s/*` are public.
 
@@ -1395,8 +1410,13 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
     runs, because the lease has expired.
   - "everyMinutes": a step with `everyMinutes:60` runs at t0 and is `"skipped"` at t0 + 30 min (with the 20 s rule
     satisfied).
-  - "budget": steps `a` (makes 40 queries through `ctx.DB`), `b` and `health`: `b` is `"deferred"` and `health`
-    runs. A step sees `ctx.budget.left()` that already excludes health's 6.
+  - "budget": steps `a` (makes 40 queries through `ctx.DB`) and `b`: `b` is `"deferred"`. `a` sees
+    `typeof ctx.budget.left() === "number"` and `ctx.budget.left() === 50 − (queries used so far)`.
+  - "health on its own call": steps `a` and `health` (both recording that they ran). `reason "cron"` runs `a` only
+    (`health` is absent from `steps`) and leaves a `tick` heartbeat. `reason "health"` runs `health` only, whose
+    `ctx.budget.left()` is at least 45. With `tick:lock` held (now + 30 s), `reason "health"` still runs; with
+    `tick:health:lock` held, it returns `{ran:false, why:"locked"}`. A `cron` call followed by a `health` call at
+    the same `now` both run (separate gap keys).
   - "markers": `tick.js` source contains a marker comment for each of the 13 slot names, in overview §8 order.
   - "route hides details": `GET /api/tick?reason=<script>` gives a JSON body whose step values are only
     `ok`, `error`, `skipped` or `deferred`, and the reason passed is `unknown`.
@@ -1408,7 +1428,8 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
   - The lease is
     `INSERT INTO settings (key,value) VALUES ('tick:lock',?1) ON CONFLICT(key) DO UPDATE SET value=?1 WHERE settings.value < ?2`,
     with `?1` = the expiry ISO and `?2` = now ISO, and `changes === 1` means acquired.
-  - Set `tick:last` after acquiring. Release with `DELETE … WHERE key='tick:lock' AND value=?1`.
+  - Set `tick:last` after acquiring. Release with `DELETE … WHERE key='tick:lock' AND value=?1`. The health call
+    does the same with `tick:health:lock` and `tick:health:last`.
   - Wrap `DB` with `countingDB` before the lease, so the runner's own queries count towards the 50.
   - Add the paths to the middleware's public checks.
 - [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/tick.test.mjs` passes.
@@ -1442,10 +1463,13 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
     `computeLights`;
   - `healthFromDb(DB, env, now) → Promise<{lights, gaps}>`, where `lights` = `computeLights(...)` followed by each
     registered light, in registration order;
-  - `healthStep = {name:"health", everyMinutes:0, run}`. `run` syncs the `health:<name>` todos for every light
-    (red adds; any other level, grey included, closes) and stage 0's `setup:<key>` todos, closing each by exact
-    dedupe (`UPDATE todos SET status='done', done_at=?, dedupe=dedupe||'@'||? WHERE status='open' AND dedupe=?`),
-    never with `closeTodos`. It beats `tick` with detail `"<steps summary> · G green, A amber, R red"`.
+  - `healthStep = {name:"health", everyMinutes:0, run}`, run only by the `?reason=health` call (Task 16). `run`
+    syncs the `health:<name>` todos for every light (red adds; any other level, grey included, closes) and stage
+    0's `setup:<key>` todos in a fixed number of statements: one SELECT of the open `health:`/`setup:` todos, one
+    multi-row `INSERT OR IGNORE INTO todos …` per 15 new rows, and one
+    `UPDATE todos SET status='done', done_at=?1, dedupe=dedupe||'@'||?1 WHERE status='open' AND dedupe IN (…)`
+    (exact dedupes, never `closeTodos`). It loads its facts and the setup status in at most 8 queries, and each
+    registered light makes at most 1. It beats `health` with detail `"G green, A amber, R red"`.
 - Produces `GET /api/health` → `{lights, gaps}` (login required). It imports `_lib/tick.js` so every stage's
   `registerLight` call has run.
 
@@ -1454,7 +1478,8 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
     routine:build, routine:monthly-care, mailboxes, scrape, setup, each with the keys `name`, `level`, `detail`,
     `fix`.
   - A tick beat 16 min ago is red, with the detail `"The heartbeat has stopped: no timed work for 16 min"`. At
-    15 min it's green.
+    15 min it's green. With a fresh `tick` beat and a `health` beat 16 min ago, it's red with
+    `"Health checks have stopped: lights and todos not updated for 16 min"`.
   - Relay missing: red.
   - Research connected, heartbeat 27 h ago: red, `"Claude's Research Routine hasn't run for 1 day"`.
   - Research connected, last fire `http_status:401` after the last beat: red, with the fire's error as the fix.
@@ -1469,8 +1494,11 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
   `setupGaps`: an empty status gives the keys `first_mailbox`, `agent_token`, `routine:research`…`routine:monthly-care`
   and `business`. A mailbox without a password gives `mailbox_password:<id>`.
 
-  db `healthStep.run`: a red tick light adds the todo `health:tick`. After a fresh beat, the next run closes it.
-  Gap todos appear with the `setup` kind. The `tick` heartbeat row exists afterwards. Also:
+  db `healthStep.run`: a red tick light adds the todo `health:tick`. After fresh `tick` and `health` beats, the next
+  run closes it. Gap todos appear with the `setup` kind. The `health` heartbeat row exists afterwards. Also:
+  - "bounded queries": with 10 registered lights (each making 1 query and returning red), 3 mailboxes without
+    passwords and nothing connected, `const c = countingDB(DB); await healthStep.run({DB: c.DB, env: {}, now,
+    budget: {left: () => 50}})` gives `c.used() <= 30`, and a second identical run adds no todos and closes none.
   - A registered light `{name:"demo_light", level:"red", …}` appears after the 10 in `healthFromDb(...).lights`
     and adds `health:demo_light`; registered as `grey`, it adds nothing and closes an open `health:demo_light`.
   - An open `health:find:towns` todo (another stage's) and an open `setup:demo-template` todo stay open after a run
