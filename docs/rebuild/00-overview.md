@@ -1,0 +1,513 @@
+# Aetos rebuild: overview spec
+
+This is the contract every stage file follows. If a stage file and this file disagree, this file wins. Decisions are
+in [decisions.md](decisions.md); researched facts are in [research.md](research.md); the sales and copy rules are in
+`docs/playbooks/`. Nik reads the "Plain English" boxes; the build reads everything.
+
+> **Plain English:** One website you log into (the Control Room) runs the whole business. It finds businesses, Claude
+> researches and grades them, you pick who to email and write the first email, and the system follows up, answers
+> replies in your style within minutes, books calls into your 11am slots, takes payment, builds the site and looks
+> after the client every month. A "Todo" page shows everything in one place, with red lights if anything breaks.
+
+## 1. Stages and files
+
+| # | Stage | Spec + plan file |
+| --- | --- | --- |
+| 0 | Foundations: setup page, email sending, receiving, the heartbeat ("tick"), health lights, landing page | [01-foundations.md](01-foundations.md) |
+| 1 | Find (filter 1, automatic) | [02-find.md](02-find.md) |
+| 2 | Research and grade A+ to D (filter 2, Claude) | [03-research-grade.md](03-research-grade.md) |
+| 3 | Shortlist (all leads, grade filter) | [04-shortlist.md](04-shortlist.md) |
+| 4 | Demo site per lead | [05-demo.md](05-demo.md) |
+| 5–6 | First email (Nik) + automatic follow-ups | [06-email-followups.md](06-email-followups.md) |
+| 7–8 | Replies (Claude, in Nik's style) + calls | [07-replies-calls.md](07-replies-calls.md) |
+| 9 | Order and pay (Stripe) | [08-order-pay.md](08-order-pay.md) |
+| 10 | Build the client's site (incl. chatbot, review booster setup) | [09-build.md](09-build.md) |
+| 11 | Monthly care | [10-monthly-care.md](10-monthly-care.md) |
+| — | Todo board, weekly KPIs, Money, Map Rank, navigation | [11-todo-kpis.md](11-todo-kpis.md) |
+
+**Build order:** 0 → 1 → 2 → 3 → 4 → 5–6 → 7–8 → 9 → Todo/KPIs → 10 → 11. Each stage ends with its "Perfect when"
+checks passing; the next stage doesn't start until they do. The Todo board is built incrementally: every stage adds
+its own items to it (section 6), and file 11 adds the board page itself after stage 9.
+
+## 2. Architecture
+
+Nothing that already exists in Cloudflare or GitHub changes (Nik's rule: same keys, same database, same project).
+
+```
+                       ┌──────────────────────────── Cloudflare ────────────────────────────┐
+ Prospect's browser ──►│ Pages project (root control-room/, existing)                       │
+ Nik's browser ───────►│   public/            Control Room UI (plain JS, no build step)      │
+                       │   functions/         API + demo sites /d/:slug + landing page       │
+                       │        │  D1 binding DB → database goldbarwebsites (existing)       │
+                       │        ▼                                                           │
+                       │   D1 ◄──────────── mail-relay Worker (NEW, folder mail-relay/)      │
+                       │                     • cron every 5 min → POST {APP_URL}/api/tick    │
+                       │                     • email() handler → saves raw mail to D1,       │
+                       │                       then POST {APP_URL}/api/tick?reason=inbound   │
+                       └────────────────────────────────────────────────────────────────────┘
+ /api/tick (in Pages) does all timed work: send due emails (SMTP to Namecheap over cloudflare:sockets), process
+ inbound mail, fire Claude Routines, start the daily scrape, mark stale jobs, compute health.
+
+ GitHub Actions (existing): scrape-leads.yml, map-rank.yml (Python engine in lead-manager/, writes D1 over the
+ Cloudflare API with the existing secrets). NEW: deploy-relay.yml deploys mail-relay/ with wrangler.
+
+ Claude Routines (Nik's subscription): research, reply, weekly-kpis, build, monthly-care. Prompts live in
+ routines/*.md. They read and write only through /api/agent/* with a bearer token held as an environment
+ network secret (research.md → Routines).
+```
+
+Why this shape:
+- **One codebase for logic.** All business logic lives in Pages Functions (`control-room/functions/_lib/`). The
+  relay Worker is ~60 lines and only exists because Pages can't run cron or receive email.
+- **No new Cloudflare keys for Nik to manage.** The relay Worker binds the existing D1 by `D1_DATABASE_ID` (already a
+  GitHub secret) and is deployed by GitHub Actions with the existing `CLOUDFLARE_API_TOKEN`. If that token lacks
+  "Workers Scripts: Edit" and "Email Routing Rules: Edit", the deploy fails with a plain message telling Nik to add
+  those two permissions to the same token (one-time).
+- **Secrets the app needs are entered on the Setup page**, stored in the `settings` table under keys starting
+  `secret:`, never sent back to the browser (write-only fields that show "saved ✓" and a Test button). This is the
+  existing pattern for the Stripe webhook secret. Nik never edits Cloudflare variables.
+- **`/api/tick` is public but harmless:** it only does work that is already due, takes a D1 lock (`settings`
+  key `tick:lock`, 50 s lease), and returns `{ran: false}` if another tick holds it. Calls more than once per 20 s
+  return early. It never accepts input except `?reason=`.
+- **CPU:** Pages Functions on the free plan get 10 ms CPU per request. Each tick does a bounded amount of work
+  (at most 2 SMTP sends, 10 inbound mails, 3 Routine fires). Stage 0 measures SMTP CPU on the live deploy; if it
+  doesn't fit, Nik decides on the $5/month plan (decisions.md). Nothing else in the design changes either way.
+
+## 3. Folder layout
+
+The current code is copied once, untouched, to `legacy/` (stage 0, task 1) and tagged `old-system`. The rebuild then
+happens in place, so Cloudflare's Pages root (`control-room`) and the workflows keep working.
+
+```
+control-room/
+  functions/
+    _middleware.js           login gate + public paths + host routing (landing page on the root domain)
+    _lib/                    all logic; pure modules have no D1/env access and are unit-tested
+      schema.js              generated from lead-manager/schema.sql by scripts/sync_schema.py
+      util.js                db(), json(), bad(), now(), parseJson() (kept)
+      ukTime.js              UK-time helpers (pure)
+      settings.js            getSetting/setSetting/getSecret/setSecret (db)
+      health.js              health lights (pure) + healthFromDb (db)
+      tick.js                runTick(env, reason) (db)
+      routines.js            fireRoutine(DB, name, text) (db + fetch)
+      agentAuth.js           requireAgent(request, DB) (db)
+      mail/
+        vendor/worker-mailer.js   vendored worker-mailer 1.3.0 (MIT), header kept
+        smtp.js              sendViaSmtp(mailbox, password, message) (sockets)
+        compose.js           composeEmail(...) (pure)
+        capacity.js          dailyCap(mailbox, date) etc. (pure)
+        inbound.js           parseHeaders/classifyInbound (pure)
+        outbox.js            queueMessage/dispatchDue (db)
+      stages.js              prospect stage machine (pure)
+      grade.js               gradeFrom(points) (pure)
+      followups.js           follow-up schedule + stop rules (pure) + db helpers
+      calls.js               nextFreeSlots(...) (pure)
+      demo/                  template engine + trade templates (pure)
+      stripe.js, checkout.js, stripe-events.js
+      kpis.js                weekly numbers (pure) + db query
+      todo.js                todo items (db) + board grouping (pure)
+    api/ ...                 one file per route (see each stage)
+    d/[slug]/ ...            demo site, order page, view beacon, checkout
+  public/                    index.html, login.html, style.css, js/<page>.js (one file per page), js/lib.js
+  tests/                     node --test files; tests/helpers/fakeD1.mjs shared
+lead-manager/                Python engine (kept, extended for grade inputs)
+mail-relay/                  NEW Worker: src/index.js, wrangler.toml
+routines/                    NEW: one prompt file per Claude Routine + README (how to create each one)
+legacy/                      untouched copy of the old system (not deployed, not tested)
+docs/rebuild/                this spec
+```
+
+## 4. Data model
+
+`lead-manager/schema.sql` stays the single source of truth; after editing it run `python scripts/sync_schema.py`.
+Existing tables are kept as they are: `leads`, `jobs`, `job_progress`, `scans`, `scan_points`, `scan_businesses`,
+`lead_map_rank`, `api_usage`, `clients`, `money`, `settings`, `payments`, `client_links`, `suppression`, `demos`,
+`demo_events`. The old outreach tables (`outreach_*`, `owner_questions`) stay in the database untouched and unused.
+`leads` stays owned by the Python scraper; everything the sales pipeline adds lives in new tables keyed by
+`place_id`, so a re-scrape can never overwrite sales state.
+
+New tables (exact columns; types are SQLite):
+
+```sql
+-- Claude's research and grade, one row per lead (stage 2).
+CREATE TABLE IF NOT EXISTS research (
+  place_id      TEXT PRIMARY KEY,
+  status        TEXT NOT NULL,            -- queued | done | skipped
+  grade         TEXT,                     -- A+ | A | B | C | D (computed by grade.js, never sent by Claude)
+  points        TEXT,                     -- JSON {need, means, reach, fit} each 0–5
+  grade_reason  TEXT,                     -- one or two sentences shown to Nik
+  angle         TEXT,                     -- JSON [{fact, source_url}] 1–3 true, specific ways we can help
+  opener        TEXT,                     -- suggested first two lines for Nik's email
+  owner         TEXT,                     -- JSON {first, full, source_url, confident}
+  best_email    TEXT,
+  best_email_why TEXT,
+  emails        TEXT,                     -- JSON [{email, source_url, where}]
+  copy          TEXT,                     -- JSON demo copy {headline, intro, services[], areas[], about}
+  site_review   TEXT,                     -- JSON {verdict, summary, problems[], good[]}
+  too_big       INTEGER NOT NULL DEFAULT 0,
+  notes         TEXT NOT NULL DEFAULT '',
+  searched      TEXT,                     -- JSON [what Claude searched/opened]
+  queued_at     TEXT,
+  researched_at TEXT
+);
+CREATE INDEX IF NOT EXISTS research_status ON research (status, grade);
+
+-- The sales pipeline, one row per lead Nik has emailed (or is about to).
+CREATE TABLE IF NOT EXISTS prospects (
+  place_id        TEXT PRIMARY KEY,
+  stage           TEXT NOT NULL,          -- see stages.js
+  stage_at        TEXT NOT NULL,
+  email           TEXT NOT NULL,          -- the address we write to
+  greet_name      TEXT,                   -- first name only when confident, else NULL ("Hi,")
+  mailbox_id      TEXT,                   -- the mailbox that owns this thread (all messages use it)
+  subject         TEXT,                   -- first email's subject; follow-ups use "Re: " + subject
+  root_message_id TEXT,                   -- Message-ID of Nik's first email (threading)
+  first_sent_at   TEXT,
+  followup_step   INTEGER NOT NULL DEFAULT 0,  -- follow-ups sent so far (0–9)
+  next_followup_at TEXT,                  -- NULL when the sequence is stopped or finished
+  views           INTEGER NOT NULL DEFAULT 0,
+  last_view_at    TEXT,
+  last_inbound_at TEXT,
+  lost_reason     TEXT,
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS prospects_stage ON prospects (stage);
+CREATE INDEX IF NOT EXISTS prospects_followup ON prospects (next_followup_at);
+
+-- Sending mailboxes (Namecheap Private Email). The password is in settings under secret:mailbox:<id>.
+CREATE TABLE IF NOT EXISTS mailboxes (
+  id            TEXT PRIMARY KEY,
+  address       TEXT NOT NULL UNIQUE,
+  display_name  TEXT NOT NULL,            -- Nik's name as he wants it shown in the From line
+  role          TEXT NOT NULL,            -- cold | system (system = onboarding/client mail, never cold)
+  smtp_host     TEXT NOT NULL DEFAULT 'mail.privateemail.com',
+  smtp_port     INTEGER NOT NULL DEFAULT 465,
+  started_on    TEXT NOT NULL,            -- YYYY-MM-DD the mailbox was bought (warm-up clock)
+  cap_override  INTEGER,                  -- NULL = follow the warm-up ramp
+  status        TEXT NOT NULL DEFAULT 'active',  -- active | paused
+  paused_reason TEXT,
+  created_at    TEXT NOT NULL
+);
+
+-- Every email in or out, one row each.
+CREATE TABLE IF NOT EXISTS messages (
+  id           TEXT PRIMARY KEY,
+  place_id     TEXT,                      -- NULL for mail not tied to a lead (e.g. warm-up, client)
+  client_id    TEXT,
+  mailbox_id   TEXT,
+  direction    TEXT NOT NULL,             -- out | in
+  kind         TEXT NOT NULL,             -- first | followup | reply | system | inbound
+  step         INTEGER,                   -- follow-up number 1–9
+  author       TEXT NOT NULL,             -- nik | claude | system | them
+  to_addr      TEXT,
+  from_addr    TEXT,
+  subject      TEXT,
+  body         TEXT NOT NULL,
+  message_id   TEXT,                      -- RFC 5322 Message-ID (ours for out, theirs for in)
+  in_reply_to  TEXT,
+  refs         TEXT,                      -- References header
+  status       TEXT NOT NULL,             -- queued | sending | sent | failed | cancelled | received
+  due_at       TEXT,
+  sent_at      TEXT,
+  received_at  TEXT,
+  error        TEXT,
+  class        TEXT,                      -- inbound only: bounce | auto | opt_out | human
+  needs_reply  INTEGER NOT NULL DEFAULT 0,-- inbound human mail waiting for Claude
+  handled_at   TEXT,                      -- when Claude replied or escalated
+  created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS messages_place ON messages (place_id, created_at);
+CREATE INDEX IF NOT EXISTS messages_due ON messages (status, due_at);
+CREATE INDEX IF NOT EXISTS messages_reply ON messages (needs_reply, received_at);
+CREATE INDEX IF NOT EXISTS messages_msgid ON messages (message_id);
+
+-- Raw inbound mail, written by the relay Worker, processed by the tick.
+CREATE TABLE IF NOT EXISTS inbound_raw (
+  id           TEXT PRIMARY KEY,
+  received_at  TEXT NOT NULL,
+  envelope_from TEXT,
+  envelope_to  TEXT,
+  headers      TEXT NOT NULL,             -- JSON object of lower-cased header → value
+  raw          TEXT NOT NULL,             -- raw MIME, first 256 KB
+  processed_at TEXT,
+  outcome      TEXT
+);
+CREATE INDEX IF NOT EXISTS inbound_raw_todo ON inbound_raw (processed_at);
+
+-- Follow-up wording (9 steps, fixed days), approved once by Nik.
+CREATE TABLE IF NOT EXISTS followup_templates (
+  step        INTEGER PRIMARY KEY,        -- 1–9
+  day_offset  INTEGER NOT NULL,           -- 1, 2, 4, 7, 10, 17, 24, 30, 60
+  body        TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'draft',  -- draft | approved
+  approved_at TEXT
+);
+
+-- Nik's voice: his real emails and his guidance, read by the reply Routine.
+CREATE TABLE IF NOT EXISTS style_examples (
+  id         TEXT PRIMARY KEY,
+  kind       TEXT NOT NULL,               -- example | rule
+  situation  TEXT NOT NULL,               -- e.g. "they ask the price"
+  body       TEXT NOT NULL,
+  source     TEXT NOT NULL,               -- nik_written | nik_sent
+  created_at TEXT NOT NULL
+);
+
+-- Calls in Nik's 11am slots.
+CREATE TABLE IF NOT EXISTS calls (
+  id         TEXT PRIMARY KEY,
+  place_id   TEXT NOT NULL,
+  slot_at    TEXT NOT NULL,               -- ISO time of the slot (UK 11:00 → UTC)
+  status     TEXT NOT NULL,               -- offered | confirmed | done | no_show | cancelled
+  phone      TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS calls_slot ON calls (slot_at, status);
+
+-- Everything Nik has to do, in one list (the Todo page).
+CREATE TABLE IF NOT EXISTS todos (
+  id         TEXT PRIMARY KEY,
+  kind       TEXT NOT NULL,               -- see section 6
+  place_id   TEXT,
+  client_id  TEXT,
+  title      TEXT NOT NULL,
+  detail     TEXT NOT NULL DEFAULT '',
+  link       TEXT,                        -- in-app link, e.g. /#/lead/<place_id>
+  draft      TEXT,                        -- a reply Claude drafted for Nik to send/edit
+  due_at     TEXT,
+  status     TEXT NOT NULL DEFAULT 'open',-- open | done | dismissed
+  dedupe     TEXT UNIQUE,                 -- stops the same item being added twice
+  created_at TEXT NOT NULL,
+  done_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS todos_open ON todos (status, due_at);
+
+-- Health: last time each automatic part checked in.
+CREATE TABLE IF NOT EXISTS heartbeats (
+  name     TEXT PRIMARY KEY,              -- tick | relay | routine:research | routine:reply | ...
+  last_at  TEXT NOT NULL,
+  ok       INTEGER NOT NULL,
+  detail   TEXT NOT NULL DEFAULT ''
+);
+
+-- Every attempt to wake a Claude Routine.
+CREATE TABLE IF NOT EXISTS routine_fires (
+  id         TEXT PRIMARY KEY,
+  routine    TEXT NOT NULL,
+  reason     TEXT NOT NULL,
+  http_status INTEGER,
+  error      TEXT,
+  session_url TEXT,
+  at         TEXT NOT NULL
+);
+
+-- Weekly KPI report (numbers computed by code; analysis written by Claude).
+CREATE TABLE IF NOT EXISTS kpi_reports (
+  week       TEXT PRIMARY KEY,            -- ISO week, e.g. 2026-W44
+  numbers    TEXT NOT NULL,               -- JSON from kpis.js
+  analysis   TEXT NOT NULL DEFAULT '',    -- Claude's markdown
+  created_at TEXT NOT NULL
+);
+
+-- After payment: the onboarding form and the 7-day build clock (stages 9–10).
+CREATE TABLE IF NOT EXISTS onboarding (
+  client_id    TEXT PRIMARY KEY,
+  token        TEXT NOT NULL UNIQUE,      -- unguessable link /onboard/<token>
+  status       TEXT NOT NULL,             -- sent | submitted | building | review | live
+  form         TEXT,                      -- JSON answers
+  submitted_at TEXT,                      -- the 7-day clock starts here
+  due_live_at  TEXT,
+  live_at      TEXT,
+  site_url     TEXT,
+  created_at   TEXT NOT NULL
+);
+```
+
+`clients` gains nothing; the stage files that need client-level state use `onboarding` and `todos`.
+
+## 5. Prospect stages
+
+One pure module, `control-room/functions/_lib/stages.js`, owns the pipeline. Every change of `prospects.stage` goes
+through `nextStage(current, event)`; anything not listed is a no-op (returns `current`).
+
+| Stage | Meaning | Entered on event |
+| --- | --- | --- |
+| `ready` | Graded, has an email and a demo; not emailed yet | `demo_ready` |
+| `emailed` | Nik's first email sent; follow-ups running | `first_sent` |
+| `viewed` | Opened their demo at least once, no reply yet | `demo_view` (from `emailed`) |
+| `replied` | They wrote back; Claude is on it | `inbound_human` (from `emailed`, `viewed`, `call_booked`) |
+| `needs_nik` | Escalated: angry, legal, unclear, or a time outside the slots | `escalate` |
+| `call_booked` | A slot is confirmed | `call_confirmed` |
+| `won` | Paid | `paid` (from any open stage) |
+| `lost` | Said no, opted out, bounced, or sequence ended with no reply | `opt_out`, `bounce`, `said_no`, `sequence_done` |
+
+`hot` is not a stage: it is a flag computed for the board (views ≥ 2, or any view in the last 24 h, with no inbound
+reply). `opt_out` and `bounce` always win, from any stage, and also add the address to `suppression`.
+
+## 6. Todo items (shared by all stages)
+
+`todo.js` exports `addTodo(DB, {kind, title, detail, link, place_id, client_id, draft, due_at, dedupe})` (insert OR
+IGNORE on `dedupe`) and `closeTodos(DB, dedupe_prefix)`. Kinds used across stages:
+
+| kind | Added by | Example title |
+| --- | --- | --- |
+| `setup` | Setup checks (stage 0) | "Add your mailbox password" |
+| `pick` | Shortlist (3) | "8 A-grade leads ready: you can send 3 first emails today" |
+| `hot` | Demo views (4/6) | "Call now: Green Leaf Landscapes opened their site 3 times" |
+| `escalation` | Replies (7) | "Angry reply from …: Claude's draft is ready" |
+| `call` | Calls (8) | "Call Mark (Diamond Kickboxing) Tue 11:00 · 07969…" |
+| `call_time` | Calls (8) | "Confirm a time with … by 6pm (they asked for Thu 3pm)" |
+| `payment` | Stripe (9) | "Card failed: …" |
+| `build` | Build (10) | "Approve …'s site (due live Fri)" |
+| `care` | Monthly care (11) | "Approve …'s monthly report" |
+| `health` | Health (0) | "Claude's research hasn't run for 2 days" |
+
+## 7. Claude Routines
+
+Prompts live in `routines/<name>.md`; `routines/README.md` says, step by step, how Nik creates each one in the web UI
+(name, model, schedule/API trigger, environment with the network secret). Routines never commit or push. Each one
+starts with `POST /api/agent/heartbeat {routine}` and ends with the same call carrying `{ok, summary}`.
+
+| Routine | Model | Trigger | Job |
+| --- | --- | --- | --- |
+| research | Sonnet | daily schedule 06:47 UK + API fire after each scrape | stage 2 |
+| reply | Sonnet | API fire per inbound human email; schedule 07:03 UK daily (overnight catch-up) | stages 7–8 |
+| weekly-kpis | Sonnet | schedule Sun 18:47 UK | KPI analysis |
+| build | Sonnet | API fire when an onboarding form is submitted | stage 10 |
+| monthly-care | Sonnet | schedule 1st of month 08:47 UK | stage 11 |
+
+**API auth:** `/api/agent/*` requires `Authorization: Bearer <agent token>`. The token is generated on the Setup page
+(random 32 bytes, base64url), stored as `secret:agent_token`, shown once, and Nik pastes it into the Claude
+environment as a network secret for the Control Room host. `requireAgent` also accepts the legacy
+`OUTREACH_AGENT_TOKEN` env var if set.
+
+**Firing:** `fireRoutine(DB, name, text)` reads `secret:routine:<name>:url` (the full `/fire` URL) and
+`secret:routine:<name>:token`, POSTs with the headers in research.md, logs a `routine_fires` row, and never retries
+automatically (no idempotency key). A failed fire turns that routine's health light red and adds a `health` todo.
+Payload text is short and factual (`"reply waiting: message <id>"`); the prompt tells Claude to act on
+`<routine-fire-payload>`.
+
+## 8. Shared interfaces (built in stage 0, used by every stage)
+
+Stage files consume these exactly as written. A stage that needs another shared helper defines it in its own task's
+"Produces" block and lists it under "Cross-stage interfaces" at the end of its file.
+
+```js
+// _lib/ukTime.js (pure). Dates are JS Date; strings are UK local "YYYY-MM-DD" / "HH:MM".
+ukParts(date) → {y, m, d, hh, mm, weekday}          // weekday 0 = Sunday, in Europe/London
+ukDate(date) → "YYYY-MM-DD"
+ukToUtc(ukDateStr, "HH:MM") → Date                  // handles BST/GMT
+isWeekendUK(date) → boolean                         // Sat or Sun in UK time
+inUkWindow(date, {start: "HH:MM", end: "HH:MM", days: [0..6]}) → boolean
+nextUkWindowStart(date, window) → Date              // date itself if already inside
+addUkDays(ukDateStr, n) → "YYYY-MM-DD"
+
+// _lib/settings.js (db)
+getSetting(DB, key, fallback = null) → Promise<string|null>
+setSetting(DB, key, value) → Promise<void>
+getSecret(DB, name) → Promise<string|null>          // key "secret:" + name
+setSecret(DB, name, value) → Promise<void>
+secretStatus(DB, names[]) → Promise<{[name]: boolean}>   // for Setup: set or not, never the value
+
+// _lib/todo.js (db + pure)
+addTodo(DB, {kind, title, detail?, link?, place_id?, client_id?, draft?, due_at?, dedupe?}) → Promise<id|null>
+closeTodos(DB, dedupePrefix) → Promise<number>
+groupBoard(rows, now) → {today: [], overdue: [], later: []}        // pure
+
+// _lib/routines.js (db + fetch)
+fireRoutine(DB, name, text, {fetchImpl} = {}) → Promise<{ok, status, error?, session_url?}>
+beat(DB, name, ok, detail = "") → Promise<void>                    // writes heartbeats
+
+// _lib/agentAuth.js
+requireAgent(request, env, DB) → Promise<Response|null>            // null = allowed; else a 401 Response
+
+// _lib/mail/compose.js (pure)
+makeMessageId(domain) → "<uuid@domain>"
+composeEmail({from: {name, address}, to, subject, body, messageId, inReplyTo?, references?}) → {headers, text}
+coldFooter(nikName) → string                                       // name, "Aetos Websites", the "no thanks" line
+
+// _lib/mail/capacity.js (pure)
+rampCap(startedOn, ukToday) → number               // warm-up: 0 for days 0–13, then 3/5/8/10 by week 3/4/5/6+
+mailboxCap(mailbox, ukToday) → number              // cap_override ?? rampCap; 0 if paused
+pickMailbox(mailboxes, sentTodayById, ukToday) → mailbox|null   // most remaining capacity, cold role only
+
+// _lib/mail/outbox.js (db)
+queueMessage(DB, msg) → Promise<id>                // msg matches the messages table; status 'queued'
+dispatchDue(DB, env, now, {limit = 2, send = sendViaSmtp}) → Promise<{sent, failed}>
+sentToday(DB, now) → Promise<{[mailbox_id]: number}>   // counts kind first + followup only (cold sends)
+
+// _lib/tick.js
+STEPS: [{name, everyMinutes, run: async (ctx) => summaryString}]   // ctx = {DB, env, now}
+runTick(env, reason, now = new Date()) → Promise<{ran, steps: {[name]: string|error}}>
+```
+
+Tick step order (each stage appends its step at the position shown; a step that throws is logged in the result and
+the heartbeat detail, and the remaining steps still run):
+
+1. `inbound` (stage 0/7) — parse new `inbound_raw` rows into `messages`, classify, apply stops.
+2. `reply_fire` (stage 7) — fire the reply Routine for human mail waiting, inside reply hours.
+3. `followups` (stage 6) — queue follow-ups that are due.
+4. `send` (stage 0) — `dispatchDue` (respects caps and send windows).
+5. `hot` (stage 4/6) — hot-lead todos.
+6. `daily_find` (stage 1) — once a day from 06:00 UK, start the scrape if the pipeline is low.
+7. `stale_jobs` (stage 1) — mark scrape/scan jobs running > 45 min as failed.
+8. `calls` (stage 8) — expire unconfirmed offers, add call-day todos.
+9. `care` (stage 11) — monthly care checks.
+10. `health` (stage 0) — compute lights, add/close `health` todos, beat `tick`.
+
+## 9. Global rules (every stage)
+
+- **Truth:** everything shown to a prospect must be true. No invented facts, clients, reviews or numbers. Audit
+  claims quoted to prospects are regression-tested.
+- **Escaping:** scraped and inbound text is untrusted: `esc()`/`safeUrl()` in the browser, the template engine's
+  `h()` on the server. Inbound email bodies are shown as text, never HTML.
+- **Copy rules** (CLAUDE.md): results not us, sound human, never insult their site, one goal per message, never
+  say "SEO" to prospects (say "top 3 on Google" / "front page of Google").
+- **Guarantee wording** wherever it appears: "Top 3 in Google search results in 90 days. GUARANTEED." with the
+  section "The guarantee: we will work for FREE if you aren't in the top 3 of Google results within 90 days."
+- **Offer and prices** come from one module (`_lib/offer.js`, pure): Website Only £1,750 one-off; Full Package
+  £1,950 + £249/month with the first 60 days free; weekend (Sat–Sun UK time) £1,750 + 90 days free. Nothing else
+  hard-codes a price.
+- **Time:** all stored times are UTC ISO strings; every rule about days and hours uses UK time via `ukTime.js`.
+- **Email:** plain text only, one link at most in Nik's first email (the demo), no tracking pixels, no link
+  shorteners. Every cold email ends with Nik's name, "Aetos Websites", and the line
+  `If you'd rather not hear from me, just reply "no thanks".`
+- **Errors shown to Nik** say what's wrong and how to fix it in plain English.
+- **Tests:** pure modules get unit tests; routes get tests against `tests/helpers/fakeD1.mjs` (node:sqlite).
+  Python changes get pytest. Commands (all must pass before any push):
+  ```
+  cd lead-manager && python -m pytest -q
+  node --test control-room/tests/*.test.mjs mail-relay/tests/*.test.mjs
+  for f in control-room/public/js/*.js; do node --check "$f"; done
+  ```
+- **Deploys:** every push to `claude/confident-hawking-vi0lgk` redeploys the Pages project; docs-only commits use
+  `[CI Skip]`. Pull with rebase before pushing.
+
+## 10. What Nik does (all of it, in order)
+
+These appear as `setup` todos with a "Test" button where possible, so he never has to remember them.
+
+1. Nothing during the build until the email test (stage 0, task "SMTP proof").
+2. Buy one Namecheap Private Email mailbox on aetoswebsites.com (Launch plan, not the trial).
+3. Paste its password into Setup → Mailboxes. Press Test.
+4. Add the DNS records Setup shows (SPF, DKIM, DMARC) in Cloudflare. Press Test.
+5. Receiving replies: decision D-1 (below), then the steps Setup shows for it.
+6. Add two permissions to the existing Cloudflare API token if the relay deploy says so.
+7. Create the five Routines from `routines/README.md`; paste each one's URL and token into Setup.
+8. Approve the 9 follow-up emails and the landscaper template look.
+9. Pay the ICO fee (£52) and put his name + an address in the website footer (legal requirement).
+10. Daily: open Todo, send first emails to the leads it shows, do the calls it lists.
+
+## 11. Open decisions (Nik decides later; the build has a default so nothing blocks)
+
+| id | Question | Default the build uses until decided |
+| --- | --- | --- |
+| D-1 | How replies reach Cloudflare: a ~£5/yr receive-only domain that Namecheap forwards to, or Cloudflare taking the root MX | Built for either: the relay Worker's `email()` handler is identical. Setup shows both options' steps. |
+| D-2 | Cloudflare $5/month plan | Free plan; stage 0 measures SMTP CPU and reports. |
+| D-3 | Nik's own "How much is it?" reply | Claude answers from `offer.js` in Nik's style until he adds his wording on the Voice page. |
+| D-4 | "Send me more info" link: our site or their demo | Their demo link, with aetoswebsites.com named under it. |
+| D-5 | Landscaper template look (Nik sends example sites) | Claude designs v1; Nik approves on the Demo page before any email can link to it. |
+| D-6 | Chatbot: our own on Cloudflare Workers AI, or Elfsight | Own build (stage 10), behind a switch. |
+| D-7 | Business address in the site footer | Footer shows "Nik [surname], trading as Aetos Websites" and an address field Nik fills on Setup; the landing page shows a red banner in the Control Room until it's filled. |
