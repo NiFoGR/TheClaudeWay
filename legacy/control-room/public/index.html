@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aetos Control Room</title>
+  <link rel="icon" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <meta name="theme-color" content="#1A1C20">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="side">
+      <div class="brand"><img class="brand-mark" src="/logo.png" alt=""><div><b>Aetos</b><span>Control Room</span></div></div>
+      <nav class="nav" id="nav"></nav>
+      <div class="spacer"></div>
+      <nav class="nav" id="nav-bottom"></nav>
+    </aside>
+    <main class="main" id="view"></main>
+  </div>
+  <div id="drawer-root"></div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="/js/app.js" type="module"></script>
+</body>
+</html>

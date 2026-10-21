@@ -1,0 +1,61 @@
+name: Daily autopilot
+
+# Every morning (no AI, free): search the next town on the territory list (Lead Scraper page → Autopilot), which then
+# hands the hard cases to Claude as usual, and write SITREP.md: what happened, what needs Nik, what's next.
+on:
+  # Paused 19 Oct while the system is rebuilt (docs/rebuild/decisions.md). To resume, restore:
+  # schedule:
+  #   - cron: "17 5 * * *"   # 06:17 UK summer time / 05:17 winter (off the hour: GitHub delays :00 jobs)
+  workflow_dispatch:
+
+permissions:
+  contents: write   # to commit SITREP.md
+  actions: write    # to start the Scrape leads workflow
+
+concurrency:
+  group: daily-autopilot
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: lead-manager
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: lead-manager/requirements.txt
+      - run: pip install -r requirements.txt
+      - name: Pick today's town
+        id: pick
+        run: python -m aetos_leads autopilot
+      - name: Start the lead search
+        if: steps.pick.outputs.job_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TRADE: ${{ steps.pick.outputs.trade }}
+          TOWN: ${{ steps.pick.outputs.town }}
+          JOB: ${{ steps.pick.outputs.job_id }}
+          MAX: ${{ steps.pick.outputs.max }}
+        run: gh workflow run scrape-leads.yml --ref "$GITHUB_REF_NAME" -f trade="$TRADE" -f town="$TOWN" -f max="$MAX" -f job_id="$JOB"
+      - name: Write the SITREP
+        run: python -m aetos_leads sitrep --out ../SITREP.md
+      - name: Commit it (without redeploying the Control Room)
+        working-directory: .
+        run: |
+          git config user.name "Aetos autopilot"
+          git config user.email "autopilot@aetoswebsites.com"
+          git add SITREP.md
+          git diff --cached --quiet && exit 0
+          git commit -m "SITREP $(date -u +%Y-%m-%d) [CI Skip]"
+          for i in 1 2 3; do git pull --rebase -q && git push -q && exit 0; sleep 5; done
+          exit 1

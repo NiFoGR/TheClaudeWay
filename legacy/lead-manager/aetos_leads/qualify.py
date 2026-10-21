@@ -1,0 +1,92 @@
+"""Filtering (who we never pitch) and the quality score (how much we can help)."""
+
+import re
+from collections import Counter
+
+from aetos_leads import maprank, scoring
+from aetos_leads.audit import host_of, is_real_website
+from aetos_leads.maprank import Scan
+from aetos_leads.models import Lead
+
+# Front-desk / gatekeeper businesses: the owner won't read our email.
+FRONT_DESK_TYPES = {
+    "dentist", "dental_clinic", "doctor", "hospital", "medical_lab", "physiotherapist", "pharmacy", "drugstore",
+    "veterinary_care", "lawyer", "bank", "insurance_agency", "real_estate_agency",
+    "school", "university", "local_government_office", "supermarket", "department_store", "shopping_mall",
+}
+FRONT_DESK_WORDS = re.compile(r"\b(clinic|surgery|hospital|practice|solicitors|nhs|council)\b", re.I)
+
+# National brands and franchises that show up in local results. Extend as you meet them.
+CHAINS = re.compile(
+    # only unambiguous brand names: a local "Everest Roofing" or "Bark & Bath" must not be caught
+    r"\b(british gas|homeserve|pimlico plumbers|dyno[- ]?(rod|locks|pest|plumbing|electrics)|rentokil|"
+    r"kwik ?fit|halfords|national tyres|ats euromaster|timpson|mr\.? ?electric|fantastic services|"
+    r"anglian home|safestyle|stannah|aspect maintenance|arnold clark|evans halshaw|bristol street motors|"
+    r"stoneacre|motorpoint|carshop|lookers|sytner|vertu motors|jardine motors|marshall motor|"
+    r"pendragon)\b",
+    re.I,
+)
+
+def _phone_key(phone: str) -> str:
+    digits = re.sub(r"\D", "", phone)
+    return digits[-10:] if len(digits) >= 10 else ""
+
+
+def _duplicates(leads: list[Lead]) -> dict[str, str]:
+    """Same phone number = same business listed twice. Keep the listing with a real website (else the most
+    reviewed); return {place_id: name of the listing we kept} for the others."""
+    groups: dict[str, list[Lead]] = {}
+    for lead in leads:
+        if key := _phone_key(lead.phone):
+            groups.setdefault(key, []).append(lead)
+    dupes: dict[str, str] = {}
+    for group in groups.values():
+        if len(group) < 2:
+            continue
+        keep = max(group, key=lambda l: (bool(l.website and is_real_website(l.website)), l.review_count))
+        for lead in group:
+            if lead is not keep:
+                dupes[lead.place_id] = keep.name
+    return dupes
+
+
+def mark_exclusions(leads: list[Lead]) -> None:
+    """Set excluded/exclude_reason in place. Excluded leads are kept (for transparency) but never pitched."""
+    dupes = _duplicates(leads)
+    # the same website across several listings = a chain or multi-branch business
+    site_counts = Counter(
+        host_of(l.website) for l in leads if l.place_id not in dupes and l.website and is_real_website(l.website)
+    )
+    for lead in leads:
+        reason = ""
+        if lead.business_status and lead.business_status != "OPERATIONAL":
+            reason = "Closed"
+        elif lead.place_id in dupes:
+            reason = f"Duplicate listing of {dupes[lead.place_id]}"
+        elif CHAINS.search(lead.name):
+            reason = "Chain / national brand"
+        elif lead.website and is_real_website(lead.website) and site_counts[host_of(lead.website)] > 1:
+            reason = "Multiple branches (chain)"
+        elif FRONT_DESK_TYPES & set(lead.types) or FRONT_DESK_WORDS.search(lead.name):
+            reason = "Front desk / gatekeeper"
+        lead.excluded, lead.exclude_reason = bool(reason), reason
+
+
+def score(leads: list[Lead], scan: "Scan | None" = None) -> None:
+    """Add Google Maps findings from the scan (if any), then score every lead (scoring.py)."""
+    by_id = {b.place_id: b for b in scan.businesses} if scan else {}
+    leaders = [b.review_count for b in (scan.businesses[:3] if scan else []) if b.review_count]
+    for lead in leads:
+        extra: list[tuple[str, str]] = []
+        if scan:
+            b = by_id.get(lead.place_id)
+            avg, top3, found = (b.avg_rank, b.top3_pct, b.found_pct) if b else (float(maprank.NOT_FOUND), 0, 0)
+            lead.map_rank = {"avg_rank": avg, "top3_pct": top3, "found_pct": found, "scan_town": scan.town}
+            extra += scoring.maps_findings(avg, top3, found, scan.town)
+            extra += scoring.reviews_finding(lead.review_count, leaders)
+        for key, text in extra:
+            if key not in lead.findings:
+                lead.findings.append(key)
+                lead.issues.append(text)
+        result = scoring.score(lead.findings)
+        lead.quality_score, lead.score_parts = result.total, result.as_dict()

@@ -2,7 +2,9 @@ name: Tests
 
 on:
   push:
+    paths-ignore: ["legacy/**"]
   pull_request:
+    paths-ignore: ["legacy/**"]
 
 permissions:
   contents: read
@@ -28,5 +30,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: for f in control-room/public/js/*.js control-room/functions/_lib/*.js; do node --check "$f"; done
-      - run: node --test control-room/tests/*.test.mjs
+      - run: for f in control-room/public/js/*.js control-room/functions/_lib/*.js control-room/functions/_lib/mail/*.js mail-relay/src/*.js; do if [ -e "$f" ]; then node --check "$f"; fi; done
+      - run: node --test control-room/tests/*.test.mjs mail-relay/tests/*.test.mjs
