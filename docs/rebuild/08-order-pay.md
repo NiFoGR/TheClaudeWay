@@ -894,8 +894,9 @@ Produces `thanksPage(DB, env, {slug, sessionId, origin, now, fetchImpl}) → Pro
 
 **Files:** Modify `control-room/functions/_lib/stripe.js` (add `connectStripe`), `control-room/functions/api/stripe/setup.js`
 (rewrite), the Setup page file from stage 0 (`control-room/public/js/setup.js`; remove the old `stripeCard` from
-`public/js/app.js` if still there), stage 0's `control-room/functions/_lib/health.js` (one `registerLight(...)` call
-for `stripeLight`; `computeLights` is not edited),
+`public/js/app.js` if still there), stage 0's `control-room/functions/_lib/tick.js` (one side-effect line
+`import "./stripe.js";` beside its step imports, so the `payments` light is registered; stage 0's `health.js` is
+never edited: its tests count the lights importing it registers),
 `docs/setup-domain-email-stripe.md` Part 4 (Connect Stripe instead of payment links; the account-settings checklist).
 Test `control-room/tests/stripe-setup.test.mjs`.
 **Interfaces:**
@@ -924,18 +925,25 @@ stripeStatus(DB, env) → Promise<{key: boolean, key_source: "setup"|"cloudflare
   - `status never leaks`: `JSON.stringify(await stripeStatus(DB, {}))` contains neither `rk_test_abc` nor `whsec_new`;
     `webhook_current false` when the saved `events` differ from `WEBHOOK_EVENTS`.
   - `last event`: a `stripe_events` row → `last_event.type` equals it.
-  - `light is registered`: with a saved key and current webhook, `(await healthFromDb(DB, env, now)).lights.find(l => l.name === "payments").level === "green"`;
+  - `light is registered`: after `await import("../functions/_lib/tick.js")`, with a saved key and current webhook,
+    `(await healthFromDb(DB, env, now)).lights.find(l => l.name === "payments").level === "green"`;
     with no key it is `"grey"` and no `health:payments` todo is open.
+  - `light makes 1 query`: `countingDB(DB)` around `healthFromDb` counts exactly 1 more statement with the light
+    registered than without it (stage 0's rule: a registered light makes at most 1 D1 statement).
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/stripe-setup.test.mjs` → `connectStripe is not a function`.
 - [ ] **Step 3: Implement `connectStripe(...)` in `_lib/stripe.js`** — validate prefix
   (`/^(sk|rk)_(test|live)_[A-Za-z0-9]{10,}$/`) → delete the old endpoint when `key_id` matches → create →
   save secrets/settings (key only when it came from the form) → `closeTodos(DB, "setup:stripe")`. Setup page card
   renders the rows, field, button, checklist and help text from Part A ("What Nik sees") with `esc()`.
-  In `health.js`: `registerLight(async (DB, env, now) => stripeLight({hasKey, webhookCurrent, beat}, now))` with
-  `hasKey` / `webhookCurrent` from `stripeStatus` and `beat` = the `stripe` heartbeat row.
+  At the bottom of `_lib/stripe.js` (module load): `registerLight(async (DB, env, now) => stripeLight({hasKey,
+  webhookCurrent, beat}, now))`, with `registerLight` imported from `./health.js`. Stage 8 has no tick step, so add
+  one side-effect line `import "./stripe.js";` to stage 0's `_lib/tick.js` beside its step imports. `/api/health`
+  and the health tick import tick.js, so the light is registered there. The light makes 1 D1 statement: one
+  SELECT that reads the `stripe` heartbeat, the `stripe:webhook` setting and whether `secret:stripe_key` is set,
+  together (`hasKey` is also true when `env.STRIPE_SECRET_KEY` is set), not a full `stripeStatus` call.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS;
   `for f in control-room/public/js/*.js; do node --check "$f"; done` → clean.
-- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/stripe.js control-room/functions/api/stripe/setup.js control-room/public/js/setup.js control-room/public/js/app.js control-room/functions/_lib/health.js docs/setup-domain-email-stripe.md control-room/tests/stripe-setup.test.mjs`
+- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/stripe.js control-room/functions/api/stripe/setup.js control-room/public/js/setup.js control-room/public/js/app.js control-room/functions/_lib/tick.js docs/setup-domain-email-stripe.md control-room/tests/stripe-setup.test.mjs`
   `git commit -m "Order and pay: Connect Stripe on Setup, status card and Payments health light"`
 
 Then run the live checks 3–12 of "Perfect when" in Stripe test mode before stage "Todo/KPIs" starts.

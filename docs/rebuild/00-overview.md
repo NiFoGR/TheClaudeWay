@@ -77,7 +77,8 @@ Why this shape:
   key `tick:lock`, 50 s lease), and returns `{ran: false}` if another tick holds it. Calls more than once per 20 s
   return early. It never accepts input except `?reason=`.
 - **CPU:** Pages Functions on the free plan get 10 ms CPU per request. Each tick does a bounded amount of work
-  (at most 2 SMTP sends, 10 inbound mails, 3 Routine fires) and at most 50 D1 queries: `runTick` counts them, gives
+  (at most 2 SMTP sends, 10 inbound mails with at most ~100 KB of raw MIME parsed, 3 Routine fires) and at most 50 D1
+  queries: `runTick` counts them, gives
   each step `ctx.budget` (an object; steps read `ctx.budget.left()`) and never starts a step with fewer than 10 left
   (it reports `"deferred"`); `inbound` stops at 30. `health` runs alone in the `?reason=health` invocation with the
   full 50 (its own gap and lease keys), and every other reason skips it, so nothing is reserved for it. Stage 0
@@ -497,7 +498,8 @@ requireAgent(request, env, DB) → Promise<Response|null>            // null = a
 Light = {name, level: "green"|"amber"|"red"|"grey", detail, fix}
 computeLights(facts, now) → Light[]                                 // pure, stage 0's 10 lights only
 registerLight(fn)                                                   // fn(DB, env, now) → Promise<Light>; later stages
-                                                                    // register theirs here, never edit computeLights
+                                                                    // call it from their own module (imported by
+                                                                    // tick.js), never edit health.js
 healthFromDb(DB, env, now) → Promise<{lights: Light[], gaps}>       // lights = computeLights(...) ++ registered
 // Light names are unique and none is a prefix of another (the health todo dedupe is "health:<name>").
 

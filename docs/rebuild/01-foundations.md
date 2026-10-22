@@ -42,9 +42,17 @@ Setup, the relay Worker and the landing page.
   (`messages.intent`, `calls.note`), so no stage ever needs an `ALTER TABLE`. The statement-count test asserts
   `>= 52`, because stages 9, 10 and 11 add tables (overview §4, "Tables added by later stages").
 - `db(env)` creates tables only when the schema has changed. `schema.js` carries `SCHEMA_VERSION`, the first 12 hex
-  characters of the SHA-256 of the statements. `db()` compares it with the setting `schema:version` and runs the
-  batch only when they differ. Each new isolate then costs 1 query instead of 52, which keeps us under the free
-  plan's 50 queries per invocation.
+  characters of the SHA-256 of the statements. `db()` compares it with the setting `schema:version` once per
+  isolate. When they match, a new isolate costs 1 query instead of 52.
+- The migration itself (a mismatch) also stays under the free plan's 50 queries per invocation, counting each
+  statement in a batch as one. `db()` reads `sqlite_master` (1 query), batches only the `CREATE … IF NOT EXISTS`
+  statements whose table or index is missing, at most 40 per call, and writes `schema:version` only once nothing is
+  missing. The live database (the old 29 statements) takes one call of 26 queries (1 + 1 + 23 + 1); a brand-new
+  one finishes over two calls. `db(env, report)` sets `report.migrated` (statements the migration ran) and
+  `report.created` (tables and indexes it created). A tick whose `db()` created any returns
+  `{ran:false, why:"migrated"}` before its gap check and lease, so a tick never stacks its queries on a migration;
+  a version-only write (nothing missing, 2 queries) just counts in the tick's budget. The lead manager's
+  `D1.ensure_schema()` writes `schema:version` too, with the same hash.
 
 ### Time and offer
 - Everything is stored in UTC ISO. UK rules use `Europe/London`.
@@ -104,7 +112,8 @@ Setup, the relay Worker and the landing page.
 - **Send windows:** `first` and `followup` go out only Monday to Saturday, 07:00 to 19:00 UK (19:00 itself is
   outside). `reply` and `system` go any time.
 - **Before every send:** for `first`, `followup` and `reply`, check suppression (the exact address, or its domain).
-  Suppressed means `cancelled`, error `Suppressed: <reason>`. `system` mail (client and onboarding mail) is never
+  Suppressed means `cancelled`, error `Suppressed: <reason>`, checked before any hold (paused mailbox, send window,
+  cap, no password), so a suppressed row is never left `queued`. `system` mail (client and onboarding mail) is never
   checked, so a paying client's welcome and care emails always go. A paused mailbox holds only `first` and
   `followup` (they stay `queued`); `reply` and `system` still go from it.
 - **Order:** due rows are taken follow-ups first, then first emails, then the rest
@@ -115,7 +124,9 @@ Setup, the relay Worker and the landing page.
 - **Status:** `queued` → `sending` (claimed with `UPDATE … WHERE status='queued'`) → `sent` or `failed`, with the
   error text. A row stuck in `sending` for more than 10 minutes becomes `failed` with `The send was interrupted. It
   may or may not have gone: check the Sent folder in Namecheap webmail before sending again.` Nothing is retried
-  automatically.
+  automatically. Every error that means the email may already have gone (that one, the line dropping or going
+  silent after the login, a send that throws) starts with `The send was interrupted` (`INTERRUPTED_PREFIX`), and no
+  definite failure does, so stage 6 can tell the ones it must never retry.
 - **Per tick:** `dispatchDue` attempts at most `limit` (default 2) sends. Held messages don't count towards it.
   `kinds` (default `null` = all) limits it to the listed kinds, e.g. stage 7 sends one reply straight away with
   `{limit:1, kinds:["reply"]}`.
@@ -125,7 +136,9 @@ Setup, the relay Worker and the landing page.
 ### Email in
 - **Relay:** the relay Worker stores the lower-cased headers as JSON and the raw MIME, capped at 262,144 bytes, in
   `inbound_raw`. It then POSTs `APP_URL/api/tick?reason=inbound`. The `inbound` step handles up to 10 rows a tick,
-  oldest first, and doesn't start another row once it has made 30 D1 queries (the rest wait for the next tick).
+  oldest first, and doesn't start another row once it has made 30 D1 queries, or when the next row would take the
+  raw MIME it reads past 100,000 characters (parsing is its CPU cost; the first row read always goes). The rest wait
+  for the next tick.
 - **Body text:** the first `text/plain` part that isn't an attachment, decoded from quoted-printable or base64, in
   its charset (utf-8, iso-8859-1, windows-1252). If there's no text part, the `text/html` part with tags stripped.
   Multipart is followed up to 3 levels deep.
@@ -139,9 +152,14 @@ Setup, the relay Worker and the landing page.
   The body is capped at 20,000 characters.
 - **Classify**, first match wins:
   1. **bounce:** `content-type` is `multipart/report` with `report-type=delivery-status`, or the sender is
-     `mailer-daemon@…` or `postmaster@…`, and it isn't a delay. `Action: delayed` or `Status: 4.x.x` makes it `auto`.
+     `mailer-daemon@…` or `postmaster@…`, and it isn't a delay. `Action: delayed`, or `Status: 4.x.x` without
+     `Action: failed`, makes it `auto`. `Action: failed` is always a bounce (Postfix gives up with it and the last
+     4.x.x status).
   2. **auto:** `auto-submitted` present and not `no`, or `x-autoreply` or `x-autorespond` present, or `precedence`
-     is `bulk`, `auto_reply` or `junk`, or the subject starts with `Automatic reply` or `Out of office` (any case).
+     is `bulk`, `auto_reply` or `junk`, or the subject starts with `Automatic reply` or `Out of office` (any case),
+     or it's list mail (`list-id`, `list-unsubscribe` or `list-post` present, or `precedence` `list`) that isn't a
+     reply (no `in-reply-to` and no `references`). D-1 option A forwards newsletters too; a real reply always has
+     `in-reply-to`, so a prospect whose mail host adds `List-Unsubscribe` is still a person.
   3. **opt_out:** the stripped body is at most 40 words, and one of its first 3 non-empty lines (lower-cased,
      punctuation removed) contains `no thanks`, `unsubscribe`, `remove me`, `stop emailing` or `take me off`.
   4. **human:** everything else.
@@ -166,11 +184,15 @@ Setup, the relay Worker and the landing page.
 
 - Each `inbound_raw` row gets `processed_at` and an `outcome`: `bounce`, `auto`, `opt_out`, `human`, `client`,
   `unknown_sender`, `duplicate` or `error: <message>`. Errors are marked too, so one bad email never blocks the queue.
+  The same write clears `raw` to `''` (D1's 500 MB is shared with the leads; what later stages read is in
+  `messages`, and the original is still in the mailbox), except for an `error:` row, whose real email a regression
+  test needs.
 
 ### Tick
 - `/api/tick` takes GET or POST, is public, and reads nothing but `?reason`. A reason that doesn't match
   `^[a-z_]{1,20}$` becomes `unknown`.
-- It returns early with `{ran:false, why:"too_soon"}` if the last tick started less than 20 s ago. It takes the
+- It returns early with `{ran:false, why:"migrated"}` if its `db()` call created tables or indexes (see Schema).
+  It returns early with `{ran:false, why:"too_soon"}` if the last tick started less than 20 s ago. It takes the
   lease `tick:lock` (expires 50 s after it starts) or returns `{ran:false, why:"locked"}`.
 - Steps run in the order of overview §8. `everyMinutes` is checked against the setting `tick:last:<step>`. A step
   that throws becomes `{error}` and the rest still run.
@@ -207,7 +229,7 @@ the registered ones (e.g. 02 `lead_search`, 03 `research`, 06 `followups`, 07 `r
 | name | red when | amber when | Detail (red / amber / green) | Fix |
 | --- | --- | --- | --- | --- |
 | `tick` | no `tick` heartbeat, or older than 15 min; or no `health` heartbeat, or older than 15 min | | "The heartbeat has stopped: no timed work for N min" (tick) or "Health checks have stopped: lights and todos not updated for N min" (health) / – / "Heartbeat ran N min ago" | "Check the relay light below. If it's green, open GitHub → Actions → Deploy mail relay and run it again." |
-| `relay` | no `relay` heartbeat, or older than 15 min | | "The mail relay hasn't checked in for N min" / – / "Mail relay checked in N min ago" | "GitHub → Actions → Deploy mail relay → open the latest run. If it's red, its last step says what to fix." |
+| `relay` | no `relay` heartbeat, or older than 15 min; or a fresh one with `ok=0` whose detail starts "tick call failed" | a fresh one with any other `ok=0` (e.g. "forward copy failed: …") | "The mail relay hasn't checked in for N min" or "The mail relay can't reach the Control Room, so no timed work runs: <beat detail>" / "Mail relay checked in N min ago with a problem: <beat detail>" / "Mail relay checked in N min ago" | Missing or stale: "GitHub → Actions → Deploy mail relay → open the latest run. If it's red, its last step says what to fix." Tick calls failing with the error 1042 hint: "Set the GitHub repo variable CONTROL_ROOM_URL to the project's *.pages.dev address (GitHub → Settings → Secrets and variables → Actions → Variables), then run Deploy mail relay again." Other tick-call failures: "CONTROL_ROOM_URL must be the Control Room's own address (the *.pages.dev one always works): fix it in GitHub → Settings → Secrets and variables → Actions → Variables, then run Deploy mail relay again." Forward copy failed: "Cloudflare → Email → Email Routing → Destination addresses: verify the address in the GitHub repo variable FORWARD_COPY_TO (or delete that variable), then run Deploy mail relay again. The email itself was saved." |
 | `routine:<name>` (5 of them) | last fire failed and is newer than the last heartbeat; or a heartbeat older than the cadence | not connected; connected but never checked in; last heartbeat `ok=0` | "Claude's <label> Routine hasn't run for N days" / "Claude's <label> Routine isn't connected" / "Claude's <label> Routine last ran N h ago" | "Setup → Claude → <label>: paste its URL and token, then press Test fire." or for failures: the fire's error text |
 | `mailboxes` | any mailbox paused | no mailbox | "<address> is paused: <reason>" / "No mailbox yet" / "N mailbox(es) sending" | "Read the reason, fix it, then press Resume on Setup → Mailboxes." / "Buy one Namecheap Private Email mailbox and add it on Setup → Mailboxes." |
 | `scrape` | | a `jobs` or `scans` row `queued` or `running` with `updated_at` more than 45 min ago (`scans` with `source='care'` are left to stage 11's care light) | – / "A lead search has been running for N min" / "No stuck searches" | "It's probably stuck. Start a new one on Lead Scraper; the old one is marked failed automatically." |
@@ -368,14 +390,17 @@ address aren't on aetoswebsites.com yet. The law needs them: add them on Setup �
      `v=spf1 include:spf.privateemail.com include:_spf.mx.cloudflare.net ~all`. Edit the existing SPF record; never
      add a second one.
    - **DKIM:** TXT, name `privateemail._domainkey`, content "the DKIM value Namecheap shows for your domain
-     (Namecheap → Private Email → Manage → DNS records)".
+     (Namecheap → Private Email → Manage → DNS records)". Subscriptions bought before 2 June 2026 use
+     `default._domainkey`: the check also looks there (a fifth lookup, in parallel) and judges it only when
+     `privateemail._domainkey` has no record, naming whichever selector it judged.
    - **DMARC:** TXT, name `_dmarc`, content `v=DMARC1; p=none; rua=mailto:<site:contact_email>`.
    - **MX line**, informational: "Mail to <domain> goes to Namecheap (mx1/mx2.privateemail.com)", or "Mail to
      <domain> goes to Cloudflare Email Routing", or "No MX records".
    - **Button:** Check again. A failed lookup says: "Couldn't check DNS right now (Cloudflare's DNS lookup didn't
      answer). Try again in a minute."
 5. **Receiving replies (D-1):** status lines "Mail relay checked in N min ago" and "Last email received: <ago>" (or
-   "none yet"), then both options, side by side:
+   "none yet"); when the relay's last beat has `ok=0`, a line under the first one: "The relay reported a problem:
+   <beat detail>". Then both options, side by side:
    - **Option A, a receive-only domain (recommended: Namecheap stays your real inbox):**
      1. Buy a cheap domain at Namecheap (about £5 a year), e.g. `aetos-mail.co.uk`. Never send from it or link to
         it.
@@ -403,7 +428,7 @@ address aren't on aetoswebsites.com yet. The law needs them: add them on Setup �
 6. **Claude:**
    - **Access key:** a Generate button, or "saved ✓ (made 19 Oct)" with a Replace button. The token is shown once,
      with a Copy button and the text: "Copy it now: it won't be shown again. Paste it into the Claude environment as
-     a network secret (routines/README.md, step 3). Replacing it stops every Routine until you paste the new one."
+     a network secret (routines/README.md, section 1). Replacing it stops every Routine until you paste the new one."
    - **One row per Routine:** label, status (Not connected / Connected), "Last ran <ago>", "Last fire: <ok or
      error>", a fire URL field, a token field (write-only), Save, and Test fire.
    - **Save errors:**
@@ -430,6 +455,10 @@ address aren't on aetoswebsites.com yet. The law needs them: add them on Setup �
 4. Do this 10 times. Ten "Sent" results, no `exceeded…` outcomes and all 10 in the inbox means stay on Free (D-2
    closed). Any 1102 or `exceededCpu` means D-2: the Workers Paid plan at $5/month. Nothing else in the design
    changes.
+5. Then ticks that parse inbound mail: forward a few real newsletters (big html ones are the worst case) to the
+   inbox at once, and read the outcome and CPU time of the `/api/tick` lines they set off, plus a
+   `curl -X POST "https://<control host>/api/tick?reason=manual"` straight after (it reads any left waiting, and
+   sends anything queued in the same invocation). Any `exceededCpu` there means D-2, just as a failed test send does.
 
 ## Landing page copy (exact; prices from `offer.js`, `{…}` from settings)
 
@@ -788,7 +817,8 @@ calls `/api/tick`. SMTP goes through vendored worker-mailer over `cloudflare:soc
 - Produces the tables and indexes of overview §4. `schema.js` exports `SCHEMA` and `SCHEMA_VERSION` (12 hex
   characters).
 - `db(env)` runs the schema batch only when the `settings` value `schema:version` differs from `SCHEMA_VERSION`,
-  then writes it.
+  then writes it. The batch holds only the missing tables and indexes (from `sqlite_master`), at most 40 a call,
+  and the version is written once nothing is missing (Part A, Schema).
 
 - [ ] **Step 1: Write the failing tests.**
   - `test_leads.py`: change to `assert len(stmts) >= 52 and all("--" not in s for s in stmts)` (later stages add
@@ -804,8 +834,9 @@ calls `/api/tick`. SMTP goes through vendored worker-mailer over `cloudflare:soc
     ```
     Stages 9, 10 and 11 (files 08, 09, 10) add their own tables to this list.
   - `schema.test.mjs`:
-    - "db() applies the schema once per version": use a `fakeD1({schema:false})` env. After `db(env)`, `todos`
-      exists and `schema:version` equals `SCHEMA_VERSION`.
+    - "db() applies the schema once per version": use a `fakeD1({schema:false})` env. After two `db(env)` calls
+      (a brand-new database needs two), `todos` exists and `schema:version` equals `SCHEMA_VERSION`. Migrating the
+      old 29-statement schema counts 26 queries, and no call counts more than 50.
     - "every overview §4 column exists": `PRAGMA table_info(messages)` includes `needs_reply`, `class`, `refs`,
       `handled_at`, `intent`. `PRAGMA table_info(mailboxes)` includes `cap_override`, `paused_reason`.
       `PRAGMA table_info(calls)` includes `note`.
@@ -1289,7 +1320,7 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
   - `long-mentions-unsubscribe.eml` (60 words, with "unsubscribe" on line 2).
 
 **Interfaces:** Produces:
-- `parseHeaders(headersJson) → {from:{name,address}, to, subject, messageId, inReplyTo, references:[], contentType, autoSubmitted, xAutoreply, xAutorespond, precedence}`.
+- `parseHeaders(headersJson) → {from:{name,address}, to, subject, messageId, inReplyTo, references:[], contentType, autoSubmitted, xAutoreply, xAutorespond, precedence, listId, listUnsubscribe, listPost}`.
   Addresses are lower-cased. `references` is the ids in `<…>` form.
 - `extractText(raw) → string` (quotes stripped, capped at 20,000).
 - `bounceInfo(raw) → {recipient:string|null, messageId:string|null, delayed:boolean}`.
@@ -1342,7 +1373,9 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
 
   The mailbox resume time is read from the setting `mailbox:<id>:resumed_at`. When the linked prospect is `won`, or
   the sender matches only a `client_links.email`, an `opt_out` class is handled as `human` (Part A). Stage 7 calls
-  its `onHumanInbound` from the human branch of `processInbound`.
+  its `onHumanInbound` from the human branch of `processInbound`, only for mail linked to a prospect (outcome
+  `human`): client-only and unknown-sender mail already has its `escalation` todo, and a second one would be a
+  duplicate.
 
 - [ ] **Step 1: Write the failing test.** Seed a prospect `p1` (`emailed`, `email: "bob@x.com"`, mailbox `m1`) and
   an out message with `message_id "<orig@aetoswebsites.com>"`. Insert `inbound_raw` rows from the Task 14
@@ -1453,7 +1486,7 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
     - `agent_token{set,created_at}`;
     - `business{sender_name,legal_name,address,contact_email,ico_number}`;
     - `dns{[domain]: {at, ok, checks}}`;
-    - `receiving{relay_last_at,last_inbound_at}`;
+    - `receiving{relay_last_at,relay_ok,relay_detail,last_inbound_at}` (`relay_ok`/`relay_detail` from the relay beat, null when none; Setup shows the detail under the relay line when `relay_ok` is false);
     - `smtp_proof`.
   - `setupGaps(status) → [{key,title,detail,link:"/#/setup"}]` (pure).
 - Produces in `health.js`:
@@ -1462,7 +1495,8 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
   - `registerLight(fn)`, where `fn(DB, env, now) → Promise<{name, level, detail, fix}>`; it returns a function
     that unregisters it (tests use it to clean up). Later stages call it from
     the module that holds their tick step (so importing `tick.js` registers every light) and never edit
-    `computeLights`;
+    `computeLights`. A stage without a tick step registers from its own module and adds a side-effect import of
+    it to `tick.js`; `health.js` is never edited (health.test.mjs counts the lights exactly);
   - `healthFromDb(DB, env, now) → Promise<{lights, gaps}>`, where `lights` = `computeLights(...)` followed by each
     registered light, in registration order;
   - `healthStep = {name:"health", everyMinutes:0, run}`, run only by the `?reason=health` call (Task 16). `run`
@@ -1823,6 +1857,8 @@ cold mailbox with the most remaining capacity, breaking ties by `id` ascending; 
      stops.
   3. Nik buys the mailbox, adds it, and presses Test login.
   4. Nik presses Send test email 10× while the real-time log stream is open. Note each outcome and the CPU time.
+     Then the inbound tick check ("How to read CPU time", step 5): a few real newsletters forwarded at once and one
+     manual tick, their outcomes and CPU times noted too.
   5. DNS records, then Gmail "Show original".
   6. D-1 steps, then a reply and a "no thanks" reply.
   7. Generate the access key, then the heartbeat curl.
@@ -1881,8 +1917,15 @@ Everything in overview §8 is built here with exactly those signatures. These ar
   is checked only for `first`/`followup`/`reply`. It assigns `pickMailbox` to cold messages that have no
   `mailbox_id`, and sets `prospects.mailbox_id` when it's null.
 - `COLD_WINDOW`, `sendStep` (`_lib/mail/outbox.js`).
+- `INTERRUPTED_PREFIX = "The send was interrupted"` and `MAYBE_SENT` (`_lib/mail/smtp.js`; `outbox.js` re-exports
+  `INTERRUPTED_PREFIX`, and stage 6 imports it from there): every stored send error that means the email may have
+  gone starts with it, and no other does.
+- `suppressionKeys(email) → {address, domain}` and `suppressionReasons(DB, emails) → Map<email as given, reason>`
+  (`_lib/prospects.js`): isSuppressed's rule for many addresses in one query; `dispatchDue` reads every due row's
+  suppression this way before any hold check.
 - `processInbound`, `inboundStep`, `BOUNCE_PAUSE` (`_lib/mail/inbound-db.js`). Stage 7 calls its `onHumanInbound`
-  from the human branch of `processInbound`; stage 6's stop rules read `prospects.last_inbound_at`, which this step
+  from the human branch of `processInbound`, only for outcome `human` (mail linked to a prospect; client-only and
+  unknown-sender mail has its own `escalation` todo); stage 6's stop rules read `prospects.last_inbound_at`, which this step
   sets. Linking also matches `From` against `client_links.email` and sets `messages.client_id`. For a `won`
   prospect or a client, an `opt_out`-class email is handled as `human`.
 

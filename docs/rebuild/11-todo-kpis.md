@@ -430,7 +430,9 @@ The privacy notice (stage 0) promises: "If we contacted you and you didn't becom
 - **Who is deleted:** a `place_id` that has no `clients` row, whose last contact is more than 12 months ago. Last
   contact = the newest of its `messages.created_at`, `prospects.updated_at` and `research.researched_at`
   (`queued_at` when not researched). A lead with no dated row at all is never touched.
-- **What is deleted:** its `prospects`, `messages` and `research` rows.
+- **What is deleted:** its `prospects`, `messages` and `research` rows. Also processed `inbound_raw` rows older
+  than the same 12-month cutoff (their `headers` still hold From and Subject), but always keeping the newest row,
+  because Setup's "Last email received" reads it by rowid.
 - **What is kept:** `suppression` (so a "no thanks" or bounce is never emailed again), every client's rows, and the
   scraped `leads` row (public business listing, owned by the scraper).
 - **Limits:** at most 90 leads per round, and only as many rounds as the tick's query budget allows (stage 0's

@@ -21,7 +21,9 @@ replies Claude shouldn't send reach Nik as ready-to-send drafts.
 
 1. Stage 0's `inbound` tick step (`processInbound` in `_lib/mail/inbound-db.js`) stores a message with
    `class = 'human'` and `needs_reply = 1`.
-2. This stage's hook `onHumanInbound` runs on it straight away (called from `processInbound`'s human branch, same tick).
+2. This stage's hook `onHumanInbound` runs on it straight away (called from `processInbound`'s human branch, same tick,
+   only for outcome `human`: mail linked to a prospect. Client-only and unknown-sender mail already has stage 0's
+   `escalation:client:`/`escalation:unknown:` todo).
 3. The tick's `reply_fire` step wakes the reply Routine (API fire).
 4. The reply Routine also runs on a schedule at 07:03 UK daily to catch up overnight mail.
 
@@ -803,7 +805,7 @@ moved it). Then `stopFollowups(DB, place_id, "replied", now)` and `last_inbound_
   assert.equal((await applyStageEvent(DB, "p1", "said_no", NOW, { lost_reason: "not_interested" })).to, "lost");
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/replies-db.test.mjs` → FAIL: cannot find module.
-- [ ] **Step 3: Implement `onHumanInbound` in `_lib/replies-db.js`** (importing `applyStageEvent` from `./prospects.js` and `stopFollowups` from stage 5–6; no stage or follow-up writes of its own); in `_lib/mail/inbound-db.js`, `processInbound`'s human branch calls `onHumanInbound(DB, msg, now)` for each newly stored message with `class = 'human'` (stage 0 already routes a paying client's "no thanks" there as human).
+- [ ] **Step 3: Implement `onHumanInbound` in `_lib/replies-db.js`** (importing `applyStageEvent` from `./prospects.js` and `stopFollowups` from stage 5–6; no stage or follow-up writes of its own); in `_lib/mail/inbound-db.js`, `processInbound`'s human branch calls `onHumanInbound(DB, msg, now)` for each newly stored message with outcome `human` (`class = 'human'` and linked to a prospect: the place stage 0 marks "Stage 7 hooks in here"; stage 0 already routes a paying client's "no thanks" there as human). Not for outcome `client` or `unknown_sender`: stage 0's escalation todo already covers those, and a client writing from their Stripe address has `place_id` = the won prospect's, so `onHumanInbound` would file a second, `client-mail:` todo for the same email.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS (stage 0's `inbound-db` tests still pass).
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/replies-db.js control-room/functions/_lib/mail/inbound-db.js control-room/tests/replies-db.test.mjs && git commit -m "Replies: human inbound moves the prospect and stops follow-ups" -m "$TRAILERS"`
 

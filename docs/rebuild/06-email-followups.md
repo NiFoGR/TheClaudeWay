@@ -744,8 +744,10 @@ Consumes: `queueMessage(DB, msg)`; `demoReady(DB, placeId) → Promise<{ok, url,
 `closeTodos`; `businessName`; `renderFollowup`; `coldFooter`; `getSetting` (`business:sender_name`);
 `applyStageEvent` (stage 0); `nextUkWindowStart`, `addUkDays`, `ukToUtc`; `countingDB(DB) → {DB, used}` (stage 0's
 `_lib/d1count.js`) and `ctx.budget.left()` (stage 0's `runTick`).
+Also consumes `INTERRUPTED_PREFIX = "The send was interrupted"` from stage 0's `_lib/mail/outbox.js` (imported, never
+re-declared): the start of every stage 0 send error that means the email may have gone (stuck in `sending`, the line
+dropped or went silent after login, a send that threw).
 Produces:
-`INTERRUPTED_PREFIX = "The send was interrupted"` (stage 0's error text for a send stuck in `sending`);
 `retryFailed(DB, now, {limit = 10}) → Promise<number>` (leads in `emailed`/`viewed`, `next_followup_at` NULL, whose
 latest message for step `followup_step + 1` is `failed`: if its `error` starts with `INTERRUPTED_PREFIX` → never
 retried (it may have gone): `stopFollowups` + `health` todo `health:followup-fail:<place_id>` "Follow-ups to
@@ -1191,7 +1193,9 @@ test("cap respected; follow-ups before first emails; none skipped", async () => 
 - Stage 0 `dispatchDue(DB, env, now, {limit = 2, send = sendViaSmtp, kinds = null}) → Promise<{sent, failed, held}>`
   (01 Task 13): orders `followup` before `first`, then `due_at`; uses the row's `message_id`/`in_reply_to`/`refs`;
   a paused mailbox holds `first`/`followup` rows `queued`; a row stuck in `sending` becomes `failed` with "The send
-  was interrupted…" and is never retried (Task 8 honours this). `pickMailbox` returns `null` when no mailbox in the
+  was interrupted…", as does every send that may have gone (a line that dropped or went silent after login, a send
+  that threw), and is never retried (Task 8 honours this through `INTERRUPTED_PREFIX`, imported from `outbox.js`).
+  `pickMailbox` returns `null` when no mailbox in the
   list has room.
 - Stage 0 `registerLight(fn)` and `healthFromDb(DB, env, now) → {lights, gaps}` in `_lib/health.js`.
 - Stage 0 setting `business:sender_name` (set on Setup) for every sign-off and cold footer.
