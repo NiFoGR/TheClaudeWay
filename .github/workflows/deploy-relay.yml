@@ -1,0 +1,132 @@
+name: Deploy mail relay
+
+# Deploys mail-relay/ (the small Worker that runs the 5-minute tick and receives reply emails) to Cloudflare, so it's
+# never deployed by hand. Runs on every push that changes mail-relay/, and by hand: Actions → Deploy mail relay →
+# Run workflow. If a run is red, its last step says what to fix.
+# Settings: secrets CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, D1_DATABASE_ID (the ones the scraper uses), and the
+# repository variables (or secrets) CONTROL_ROOM_URL, plus INBOUND_ADDRESS and FORWARD_COPY_TO when used.
+on:
+  push:
+    branches: [claude/confident-hawking-vi0lgk]
+    paths:
+      - "mail-relay/**"
+      - ".github/workflows/deploy-relay.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-relay
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      INBOUND_ADDRESS: ${{ vars.INBOUND_ADDRESS || secrets.INBOUND_ADDRESS }}
+      FORWARD_COPY_TO: ${{ vars.FORWARD_COPY_TO || secrets.FORWARD_COPY_TO }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Test the relay
+        id: tests
+        run: node --test mail-relay/tests/*.test.mjs
+      - name: Check the Cloudflare token and settings
+        id: precheck
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          APP_URL: ${{ vars.CONTROL_ROOM_URL || secrets.CONTROL_ROOM_URL }}
+          PRECHECK_REPORT: ${{ runner.temp }}/precheck-problems.txt
+        run: bash mail-relay/scripts/precheck.sh
+      - name: Fill in wrangler.toml
+        env:
+          APP_URL: ${{ vars.CONTROL_ROOM_URL || secrets.CONTROL_ROOM_URL }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+        run: |
+          # The precheck has made sure these hold no spaces or quotes. Escape what sed treats as special: \ | &
+          for_sed() { printf '%s' "$1" | sed -e 's/[\\|&]/\\&/g'; }
+          sed -i \
+            -e "s|__APP_URL__|$(for_sed "$APP_URL")|g" \
+            -e "s|__D1_DATABASE_ID__|$(for_sed "$D1_DATABASE_ID")|g" \
+            -e "s|__FORWARD_COPY_TO__|$(for_sed "$FORWARD_COPY_TO")|g" \
+            mail-relay/wrangler.toml
+      # A top-level `addresses` key makes the deploy set an Email Routing rule sending that address to this Worker.
+      # 4.112.0 only accepts the key (it sets no rule); 4.113.0 is the first wrangler that sets it. When it can't, the
+      # deploy fails after the Worker is uploaded ("The Worker is deployed, but Email Routing ...").
+      - name: Add the reply address
+        if: env.INBOUND_ADDRESS != ''
+        run: |
+          { printf 'addresses = ["%s"]\n' "$INBOUND_ADDRESS"; cat mail-relay/wrangler.toml; } > "$RUNNER_TEMP/wrangler.toml"
+          mv "$RUNNER_TEMP/wrangler.toml" mail-relay/wrangler.toml
+      - name: Deploy
+        id: deploy
+        continue-on-error: ${{ env.INBOUND_ADDRESS != '' }}
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: mail-relay
+          wranglerVersion: "4.113.0"
+          command: deploy
+      # Only when the deploy with `addresses` failed: deploy again without it; the routing rule is then set by hand.
+      - name: Drop the reply address
+        if: steps.deploy.outcome == 'failure'
+        run: sed -i '1{/^addresses = /d}' mail-relay/wrangler.toml
+      # No continue-on-error here: if this fails too, the relay isn't deployed and the run must be red.
+      - name: Deploy without the reply address
+        id: retry
+        if: steps.deploy.outcome == 'failure'
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: mail-relay
+          wranglerVersion: "4.113.0"
+          command: deploy
+      - name: Say how to set the routing rule
+        if: steps.deploy.outcome == 'failure'
+        run: |
+          echo "::warning::Set the routing rule by hand: Setup → Receiving replies, step A4"
+          {
+            echo "Set the routing rule by hand: Setup → Receiving replies, step A4"
+            echo ""
+            echo "The relay is deployed, but this run couldn't set the email routing rule for $INBOUND_ADDRESS (the Deploy step's log says why), so replies may not reach the relay yet. The domain must be on Cloudflare with Email Routing switched on (Setup → Receiving replies, steps A1 to A3). Then, instead of step A4, you can give the Cloudflare API token Zone · Email Routing Rules · Edit and re-run this workflow. If you've already set the rule by hand, delete the INBOUND_ADDRESS variable (GitHub → Settings → Secrets and variables → Actions → Variables) so this warning stops."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Done
+        run: |
+          echo "Deployed aetos-mail-relay. Within 5 minutes Setup → Receiving replies shows \"Mail relay checked in\"." >> "$GITHUB_STEP_SUMMARY"
+      # The relay light's fix says "its last step says what to fix", so this step repeats the precheck's problems (in
+      # its log and the run's summary; the precheck already made each one an annotation) and ends with one error.
+      - name: What to fix
+        if: failure()
+        env:
+          TESTS: ${{ steps.tests.outcome }}
+          PRECHECK: ${{ steps.precheck.outcome }}
+          DEPLOY: ${{ steps.deploy.outcome }}
+          RETRY: ${{ steps.retry.outcome }}
+          PRECHECK_REPORT: ${{ runner.temp }}/precheck-problems.txt
+        run: |
+          annotate() { local m="${1//\%/%25}"; m="${m//$'\r'/%0D}"; echo "::error::${m//$'\n'/%0A}"; }
+          if [ "$TESTS" = "failure" ]; then
+            msg="The relay's tests failed, so nothing was deployed. That's a code problem, not a setting: ask Claude to fix the failing test shown in the step \"Test the relay\"."
+          elif [ "$PRECHECK" = "failure" ] && [ -s "$PRECHECK_REPORT" ]; then
+            while IFS= read -r line; do
+              echo "- $line"
+              echo "- $line" >> "$GITHUB_STEP_SUMMARY"
+            done < "$PRECHECK_REPORT"
+            msg="Nothing was deployed. Fix what's listed above, then re-run this workflow: GitHub → Actions → Deploy mail relay → Run workflow."
+          elif [ "$PRECHECK" = "failure" ]; then
+            msg="Nothing was deployed. The step \"Check the Cloudflare token and settings\" says what to fix. Fix it, then re-run this workflow."
+          elif [ "$RETRY" = "failure" ] || { [ "$DEPLOY" = "failure" ] && [ "$RETRY" != "success" ]; }; then
+            msg="The deploy to Cloudflare failed, so the relay wasn't updated. If the Deploy step's log says \"Authentication error\" (code 10000): Your Cloudflare API token can't deploy Workers. Fix: Cloudflare → My Profile → API Tokens → edit the token GitHub uses → add Account · Workers Scripts · Edit, and Zone · Email Routing Rules · Edit → Save. Then re-run this workflow. Otherwise wait a few minutes and re-run it; if it fails again, ask Claude to look at this run."
+          else
+            msg="Something else went wrong (the red step above). Re-run this workflow; if it fails again, ask Claude to look at this run."
+          fi
+          annotate "$msg"
+          echo "$msg" >> "$GITHUB_STEP_SUMMARY"

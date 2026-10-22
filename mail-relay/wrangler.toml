@@ -1,0 +1,17 @@
+name = "aetos-mail-relay"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+workers_dev = false
+
+# Deployed only by .github/workflows/deploy-relay.yml, which fills in the __…__ values. Never deploy it by hand.
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+APP_URL = "__APP_URL__"
+FORWARD_COPY_TO = "__FORWARD_COPY_TO__"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "goldbarwebsites"
+database_id = "__D1_DATABASE_ID__"
