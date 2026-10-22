@@ -5,6 +5,7 @@ import test from "node:test";
 import { SCHEMA } from "../functions/_lib/schema.js";
 import { isWeekendUK, renderDemo, renderExpired, renderOrder, servicesFor, slugFor } from "../functions/_lib/demo.js";
 import { ensureDemo, recordEvent } from "../functions/_lib/demo-db.js";
+import { BUILD_GUARANTEE, GUARANTEE } from "../functions/_lib/offer.js";
 import { onRequestPost as enrol } from "../functions/api/outreach/enrol.js";
 
 function fakeD1() {
@@ -55,10 +56,49 @@ test("the order page follows the offer: weekday prices, weekend deal, links carr
   const weekend = renderOrder(LEAD, DEMO, links, new Date("2026-10-10T10:00:00Z"));
   assert.ok(isWeekendUK(new Date("2026-10-10T10:00:00Z")));
   assert.match(weekend, /£1,750/);
+  // The struck-through price is the real weekday price, never £2,000 (truth rule: a false price comparison).
+  assert.match(weekend, /<span class="was">£1,950<\/span>£1,750/);
+  assert.doesNotMatch(weekend, /£2,000/);
+  assert.doesNotMatch(weekday, /class="was"/);
   assert.match(weekend, /first 90 days free/);
   assert.match(weekend, /buy\.stripe\.com\/wknd/);
   assert.match(renderOrder(LEAD, DEMO, {}), /go off/); // no Stripe yet: buttons disabled, not broken
   assert.match(renderExpired(LEAD), /preview has ended/);
+});
+
+test("the order page offers no extra whose switch is off, and words the guarantee as overview §9 does", () => {
+  const escaped = (t) => t.replace(/'/g, "&#39;");
+  const EXTRAS = /receptionist|chatbot|chat assistant|review booster/i;
+  const OLD_GUARANTEE = /work free until you are|working for free until you are|Front page of Google in 90 days/;
+  for (const now of [new Date("2026-10-07T10:00:00Z"), new Date("2026-10-10T10:00:00Z")]) {
+    // Both switches default off: nothing shows the chatbot or the review booster (truth rule).
+    for (const html of [renderOrder(LEAD, DEMO, {}, now), renderOrder(LEAD, DEMO, {}, now, { chatbot: false, reviews: false })]) {
+      assert.doesNotMatch(html, EXTRAS);
+      assert.doesNotMatch(html, OLD_GUARANTEE);
+      assert.ok(html.includes(GUARANTEE.headline), "the Full Package lists the guarantee headline");
+      assert.ok(html.includes(escaped(GUARANTEE.section)), "the FAQ has the guarantee section");
+      assert.ok(html.includes(BUILD_GUARANTEE), "Website Only lists the build guarantee");
+    }
+    // The review booster shows once its switch is on; the chatbot's line comes with stage 10, so never here.
+    const reviews = renderOrder(LEAD, DEMO, {}, now, { chatbot: false, reviews: true });
+    assert.match(reviews, /<li>Review booster<\/li>/);
+    assert.doesNotMatch(reviews, /receptionist|chatbot|chat assistant/i);
+    assert.doesNotMatch(renderOrder(LEAD, DEMO, {}, now, { chatbot: true, reviews: false }), EXTRAS);
+  }
+});
+
+test("the order route reads the extras switches and passes them on", async () => {
+  const { onRequestGet } = await import("../functions/d/[slug]/order.js");
+  const DB = fakeD1();
+  const later = new Date(Date.now() + 7 * 86400000).toISOString();
+  DB.raw.prepare("INSERT INTO leads (place_id, name, trade, search_town, first_seen_at, updated_at) VALUES ('p1', 'Smith Roofing', 'roofer', 'Leeds', 'x', 'x')").run();
+  DB.raw.prepare("INSERT INTO demos (slug, place_id, created_at, expires_at) VALUES ('smith-roofing-abc234', 'p1', 'x', ?)").run(later);
+  const html = async () => (await onRequestGet({ env: { DB }, params: { slug: "smith-roofing-abc234" } })).text();
+  const off = await html();
+  assert.match(off, /Make it yours/);
+  assert.doesNotMatch(off, /review booster|receptionist/i);
+  DB.raw.prepare("INSERT INTO settings (key, value) VALUES ('offer:review_booster_live', '1')").run();
+  assert.match(await html(), /<li>Review booster<\/li>/);
 });
 
 test("one live demo per lead; views count once per 30 minutes; expired demos stop counting", async () => {

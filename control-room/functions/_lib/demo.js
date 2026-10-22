@@ -5,6 +5,7 @@
 // we can't know (photos, their own words) is clearly a placeholder ("your photos go here").
 
 import { PACKAGES } from "./money.js";
+import { BUILD_GUARANTEE, GUARANTEE } from "./offer.js";
 
 export const PREVIEW_DAYS = 14;
 
@@ -183,8 +184,12 @@ setTimeout(function(){if(document.visibilityState!=="hidden")s("view")},4000);
 document.querySelectorAll("[data-ev]").forEach(function(a){a.addEventListener("click",function(){s(a.getAttribute("data-ev"))})});})();</script>`;
 }
 
-/** The order page: Full Package vs Website Only, weekend deal on Sat–Sun, guarantees, no contract, the usual questions. */
-export function renderOrder(lead, demo, links = {}, now = new Date()) {
+/**
+ * The order page: Full Package vs Website Only, weekend deal on Sat–Sun, guarantees, no contract, the usual questions.
+ * `extras` are the switches offer:chatbot_live and offer:review_booster_live (site.js loadSiteSettings): an extra is
+ * offered only once its switch is on (truth rule). The chatbot gets its line in stage 10, so it's never listed here.
+ */
+export function renderOrder(lead, demo, links = {}, now = new Date(), extras = { chatbot: false, reviews: false }) {
   const name = shortName(lead.name);
   const weekend = isWeekendUK(now);
   const full = weekend ? PACKAGES.weekend : PACKAGES.full;
@@ -194,7 +199,7 @@ export function renderOrder(lead, demo, links = {}, now = new Date()) {
   const faq = [
     ["What happens after I order?", "You get a short form for your logo, photos and details. Your website is live within 7 days of us getting them, guaranteed."],
     ["Is there a contract?", "No contract and no cancellation fees. If we're not making you money, we don't want your money. Stop the monthly plan any time and you keep the website."],
-    ["What does the monthly plan do?", "We get you onto the front page of Google: your Google Business Profile, your site's pages and regular updates. Front page of Google in 90 days, or we keep working for free until you are."],
+    ["What does the monthly plan do?", `We get you into the top 3 on Google: your Google Business Profile, your site's pages and regular updates. ${GUARANTEE.section}`],
     ["Can I change things on the site?", "Yes. Tell us what you want changed before it goes live, and urgent changes (prices, phone number, opening times) are done straight away after that."],
     ["Who owns the website?", "You do. If you ever stop the monthly plan, you keep it."],
   ];
@@ -218,12 +223,12 @@ details{background:#fff;border:1px solid #e3e6ec;border-radius:10px;padding:14px
 <h1>Make it yours</h1><p class="lead">Your website, live within 7 days. ${weekend ? "Weekend deal on now." : ""}</p>
 <div class="plans">
 <div class="plan main"><span class="tag">${weekend ? "Weekend deal" : "Most popular"}</span><h2 style="margin:0">Full Package</h2>
-<div class="price">${weekend ? `<span class="was">${pounds(200000)}</span>` : ""}${pounds(full.build)}</div>
+<div class="price">${weekend ? `<span class="was">${pounds(full.wasBuild)}</span>` : ""}${pounds(full.build)}</div>
 <p class="per">then ${pounds(full.monthly)}/month, <b>first ${full.freeDays} days free</b></p>
-<ul><li>This website, made fully yours</li><li>Front page of Google in 90 days, or we work free until you are</li><li>Google Business Profile set up like the top 3</li><li>AI receptionist that answers enquiries 24/7</li><li>Monthly improvements, Google posts and a review booster</li><li>A plain-English monthly report</li></ul>
+<ul><li>This website, made fully yours</li><li>${esc(GUARANTEE.headline)}</li><li>Google Business Profile set up like the top 3</li><li>Monthly improvements and Google posts</li>${extras?.reviews ? "<li>Review booster</li>" : ""}<li>A plain-English monthly report</li></ul>
 <a class="go${fullLink ? "" : " off"}" href="${esc(ref(fullLink))}" data-ev="order_click">Order the Full Package</a></div>
 <div class="plan"><h2 style="margin:0">Website Only</h2><div class="price">${pounds(PACKAGES.website.build)}</div><p class="per">one-off, nothing monthly</p>
-<ul><li>This website, made fully yours</li><li>Live in 7 days, guaranteed</li></ul>
+<ul><li>This website, made fully yours</li><li>${esc(BUILD_GUARANTEE)}</li></ul>
 <a class="go${siteLink ? "" : " off"}" href="${esc(ref(siteLink))}" data-ev="order_click">Order Website Only</a></div>
 </div>
 <div class="promise"><b>No contract. No cancellation fees.</b> If we're not making you money, we don't want your money. If you ever stop the monthly plan, you keep the website.</div>
