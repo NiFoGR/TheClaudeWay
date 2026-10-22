@@ -45,7 +45,10 @@ businesses (dentists, clinics, solicitors) or chains.
 | `lead-manager/schema.sql` | Single source of truth for the database. After changing it run `python scripts/sync_schema.py` (a test fails if you forget). |
 | `.github/workflows/scrape-leads.yml` | Started by the Control Room's "Find leads" button; reports progress and status back to D1. |
 | `.github/workflows/map-rank.yml` | Started by the Map Rank page's "Run scan" button. |
-| `docs/` | Business playbooks (above). |
+| `mail-relay/` | Cloudflare Worker `aetos-mail-relay`: every 5 min it calls `/api/tick?reason=cron`, then `?reason=health`; inbound email is saved raw to D1 `inbound_raw`, then it calls `/api/tick?reason=inbound`. Deployed only by `.github/workflows/deploy-relay.yml`, never by hand. |
+| `routines/` | One prompt file per Claude Routine (`aetos-<name>`) plus `README.md`: how the owner creates each one, then pastes its URL and token on Setup → Claude. |
+| `legacy/` | Untouched copy of the old system (git tag `old-system`). Not deployed, not tested; never import from it or edit it. |
+| `docs/` | Business playbooks (above). The rebuild spec and plan: `docs/rebuild/`. |
 
 ## Running things
 
@@ -68,7 +71,7 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
 
 - Everything shown to prospects must be true. Audit "issues" are quoted in outreach, so false alarms are bugs
   (e.g. a 403 is a firewall, not a broken site). Add a regression test for each one found in real data.
-- Escape everything scraped before rendering (`esc()` / `safeUrl()` in app.js); scraped text is untrusted.
+- Escape everything scraped before rendering (`esc()` / `safeUrl()` in `public/js/lib.js`); scraped text is untrusted.
 - Errors shown to the owner say what's wrong and how to fix it, in plain English.
 
 ## Working with the owner
@@ -77,11 +80,14 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
 - No filler, no sugar-coating, plain English, short answers. Push back when something's wrong, once, then go with their call.
 - Don't overcomplicate: prefer free, simple setups (Cloudflare + GitHub free tiers). Budget for leads + mailboxes: £100/month.
 - **`docs/plan.md` is the money plan Claude drives** (phases, targets, levers); keep it current. The original plans are the owner's claude.ai docs *GoldBar Websites — System Plan* and *Launch Action Plan* (read them before
-  building a feature). Keep `control-room/public/js/roadmap.js` (Roadmap page) and the nav's "soon" items current.
+  building a feature). The nav lists built pages only, no "soon" items: `PAGES` in `control-room/public/js/app.js`
+  (Home, Leads, Lead Scraper, Map Rank, Money, then Setup and Log out at the bottom); each stage adds its own page
+  there. The Roadmap and Outreach pages are gone (kept in `legacy/`); file 11's Todo page replaces Home.
 - Built so far: Control Room (Home, Lead Scraper with live progress, Map Rank heatmaps, Leads with a details drawer,
-  Outreach, Money, Setup); lead score = Website 45 + Local SEO 30 + Google Maps 25 (`lead-manager/aetos_leads/scoring.py`);
+  Money, Setup: health lights, mailboxes and the SMTP test, DNS, receiving replies, Claude's access key and Routines,
+  business details); lead score = Website 45 + Local SEO 30 + Google Maps 25 (`lead-manager/aetos_leads/scoring.py`);
   email finding in `lead-manager/aetos_leads/contacts.py`; owner's first name in `owner.py` (website → Google reviews →
-  email → business name, Companies House only as a fallback; never a word from the business name, the town or a famous person; only their own words or email count as confirmed (`owner_confident`), emails greet a guessed name with plain "Hi," and Claude checks guesses). Demo sites + order page built (`functions/_lib/demo.js` + `demo-db.js`, routes `/d/:slug`, `/d/:slug/order`, beacon `/d/:slug/e`; tables `demos`, `demo_events`; one neutral template awaiting the owner's look/trade decision; views/orders count as outreach wins). Funnel draft in `docs/funnel.md` (7 decisions open). Demos use their own logo/colour/photos (`aetos_leads/brand.py`, free, from their site) and best Google reviews. Daily autopilot (`aetos_leads/autopilot.py`, `.github/workflows/daily.yml`): one town a morning from the territory setting (Lead Scraper page; landscapers first), paused while 100+ leads are ready (READY_CAP); Claude's lead research is a daily scheduled Routine "Aetos lead research (daily)" (13:47 UK; Routines made from a session have vanished twice: if research stops, What to do/SITREP warn, recreate it), researching the best 15 waiting a day, picks first, then writes `SITREP.md` (committed with [CI Skip]; pull before pushing). "What to do" checklist on Home (`_lib/today.js`, `api/today.js`): daily steps from live numbers + one-time setup; add a step whenever a new feature needs the owner. Today's picks (Outreach page, `api/outreach/picks.js`): the owner approves who's emailed (final say). Decisions in `docs/funnel.md`: no phone pings (SITREP instead), replies: rules → Haiku → Sonnet, Namecheap mailboxes. Next: sending + replies (when mailboxes exist), chasing hot leads, aetoswebsites.com, Outreach sending, Onboarding, client second brain. The Roadmap page is the to-do list.
+  email → business name, Companies House only as a fallback; never a word from the business name, the town or a famous person; only their own words or email count as confirmed (`owner_confident`), emails greet a guessed name with plain "Hi," and Claude checks guesses). Demo sites + order page built (`functions/_lib/demo.js` + `demo-db.js`, routes `/d/:slug`, `/d/:slug/order`, beacon `/d/:slug/e`; tables `demos`, `demo_events`; one neutral template awaiting the owner's look/trade decision; views/orders count as outreach wins). Funnel draft in `docs/funnel.md` (7 decisions open). Demos use their own logo/colour/photos (`aetos_leads/brand.py`, free, from their site) and best Google reviews. Daily autopilot (`aetos_leads/autopilot.py`, `.github/workflows/daily.yml`): one town a morning from the territory setting (Lead Scraper page; landscapers first), paused while 100+ leads are ready (READY_CAP); Claude's lead research is a daily scheduled Routine "Aetos lead research (daily)" (13:47 UK; Routines made from a session have vanished twice: if research stops, What to do/SITREP warn, recreate it), researching the best 15 waiting a day, picks first, then writes `SITREP.md` (committed with [CI Skip]; pull before pushing). "What to do" checklist on Home (`_lib/today.js`, `api/today.js`): daily steps from live numbers + one-time setup; add a step whenever a new feature needs the owner. Today's picks (Outreach page, `api/outreach/picks.js`): the owner approves who's emailed (final say). Decisions in `docs/funnel.md`: no phone pings (SITREP instead), replies: rules → Haiku → Sonnet, Namecheap mailboxes. Next: sending + replies (when mailboxes exist), chasing hot leads, aetoswebsites.com, Outreach sending, Onboarding, client second brain. The rebuild plan (`docs/rebuild/`) is the to-do list.
 - Call script per lead (`public/js/callscript.js`, pure + tested): playbook structure, only proven facts, today's price, objections; "I've built you a site" only once `demo_url` exists.
 - Money page: clients (build fee + retainer after the free days), costs you add, and Google API cost estimated from
   calls logged per run (`aetos_leads/usage.py` → `api_usage` table; prices and free allowances in

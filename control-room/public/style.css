@@ -226,7 +226,61 @@ tbody tr.click:hover .ring::before { background: var(--surface-2); }
 .dot { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px; }
 .dot.ok { background: var(--good-soft); color: var(--good); }
 .dot.no { background: var(--bad-soft); color: var(--bad); }
-code { background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 13px; }
+code { background: var(--surface-2); border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: 13px; overflow-wrap: anywhere; }
+.ok-text { color: var(--good); }
+.bad-text { color: var(--bad); }
+.setup-section { scroll-margin-top: 16px; }
+.setup-section:first-of-type .section-title { margin-top: 0; }
+.setup-form { display: grid; gap: 14px; }
+
+/* health lights: one row per light, a dot by level (green, amber, red, grey) */
+.light-list { display: grid; gap: 12px; }
+.light { --light: var(--text-3); display: grid; grid-template-columns: 12px 1fr; gap: 12px; align-items: start; }
+.light.green { --light: var(--good); }
+.light.amber { --light: var(--warn); }
+.light.red { --light: var(--bad); }
+.light.grey { --light: var(--text-3); color: var(--text-2); }
+.light-dot { width: 10px; height: 10px; margin-top: 6px; border-radius: 50%; background: var(--light); box-shadow: 0 0 0 3px color-mix(in srgb, var(--light) 22%, transparent); }
+.light .detail { font-weight: 550; }
+.light .fix { color: var(--text-2); font-size: 13px; margin-top: 2px; }
+.gaps { margin-top: 16px; }
+.gaps > summary { cursor: pointer; font-weight: 600; }
+.gap-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 10px; }
+
+/* the banner on every page while the business details are missing (D-7) */
+.banner-red { margin: 0 0 20px; padding: 12px 16px; border: 1px solid rgba(239, 107, 91, 0.5); border-radius: var(--r); background: var(--bad-soft); color: var(--text); font-weight: 550; }
+.banner-red a { color: var(--text); text-decoration: underline; }
+
+/* mailboxes */
+.mailbox-table { min-width: 720px; }
+.mailbox-table td { vertical-align: top; }
+.mailbox-table tr.mb-row td { border-bottom: 0; padding-bottom: 6px; }
+.mailbox-table td.mb-today { min-width: 150px; }
+.mb-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.mb-note { flex-basis: 100%; font-size: 13px; }
+.mb-note:empty { display: none; }
+details.how { margin-top: 16px; }
+details.how > summary { cursor: pointer; font-weight: 600; }
+details.how[open] > summary { margin-bottom: 12px; }
+details.how ul { margin: 6px 0 0; padding-left: 18px; }
+#mb-add { margin-top: 16px; }
+
+/* DNS rows */
+.dns-found { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-2); margin: 4px 0 0; }
+.dns-fix { margin-top: 8px; display: grid; gap: 8px; color: var(--text-2); font-size: 13px; }
+.record { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line); border-radius: var(--r); }
+.record .grow { flex: 1; min-width: 200px; }
+.dns-mx { margin-top: 14px; color: var(--text-2); }
+
+/* receiving replies, Claude */
+.recv-status { display: grid; gap: 4px; font-weight: 550; }
+.setup-option h3 { font-size: 14px; font-weight: 650; margin: 0 0 12px; }
+.routines { display: grid; gap: 0; }
+.routine { padding: 16px 0; border-top: 1px solid var(--line); }
+.routine:first-child { border-top: 0; padding-top: 0; }
+.routine:last-child { padding-bottom: 0; }
+.routine-head { display: flex; align-items: center; gap: 10px; }
+code.token { display: block; padding: 10px 12px; font-size: 14px; word-break: break-all; user-select: all; }
 
 /* ---------------------------------------------------------------- home */
 .funnel { display: grid; grid-template-columns: repeat(5, 1fr); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); overflow: hidden; }
@@ -384,7 +438,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
   .leads-table td.c-status { grid-column: 3; justify-self: end; }
   .table-card .table-wrap { overflow-x: visible; }
   .clients-table, .entries-table { min-width: 560px; }
-  .table-card:has(.clients-table) .table-wrap, .table-card:has(.entries-table) .table-wrap { overflow-x: auto; }
+  .table-card:has(.clients-table) .table-wrap, .table-card:has(.entries-table) .table-wrap, .table-card:has(.mailbox-table) .table-wrap { overflow-x: auto; }
 }
 
 /* payment links */

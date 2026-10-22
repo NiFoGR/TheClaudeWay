@@ -59,6 +59,22 @@ def test_sitrep_reports_the_day_and_what_needs_the_owner():
     assert "Tomorrow's search:** landscaper in" in md
 
 
+def test_sitrep_never_points_at_the_removed_outreach_or_roadmap_pages():
+    # Stage 0 deleted both pages (an unknown route just reloads Home), so the SITREP states facts instead.
+    d1 = FakeD1()
+    d1.query("INSERT INTO leads (place_id, name, trade, search_town, email, status, quality_score, audit, first_seen_at, updated_at) "
+             "VALUES ('p1', 'Biz', 'landscaper', 'X', 'a@b.co.uk', 'new', 60, '{}', 'x', 'x')")
+    d1.query("INSERT INTO outreach_versions (id, step, name, body, status, author, created_at) "
+             "VALUES ('v1', 1, 'A', 'b', 'proposed', 'claude', 'x')")
+    d1.query("INSERT INTO owner_questions (id, question, asked_at) VALUES ('q1', 'q?', 'x')")
+    assert d1.query("SELECT COUNT(*) AS n FROM outreach_versions WHERE status = 'proposed'")["result"][0]["results"][0]["n"] == 1
+    assert d1.query("SELECT COUNT(*) AS n FROM owner_questions WHERE answer IS NULL")["result"][0]["results"][0]["n"] == 1
+    md = autopilot.sitrep(d1, datetime(2026, 10, 19, 7, 0, tzinfo=timezone.utc))
+    assert "**1 lead ready for outreach**" in md
+    assert "Outreach page" not in md and "Roadmap" not in md
+    assert "Full to-do list: 'What to do' on the Control Room's Home page." in md
+
+
 def test_sitrep_says_a_search_is_still_running():
     d1 = FakeD1()
     d1.query("INSERT INTO jobs (id, trade, town, max_results, status, created_at, updated_at) "

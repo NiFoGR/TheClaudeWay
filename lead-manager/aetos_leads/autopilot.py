@@ -115,8 +115,6 @@ def sitrep(d1, now: datetime | None = None) -> str:
         "order_pages": n("SELECT COUNT(*) AS n FROM demo_events WHERE kind = 'order_page' AND at > ?", [day]),
         "orders": n("SELECT COUNT(*) AS n FROM demo_events WHERE kind = 'ordered' AND at > ?", [week]),
         "replies": n("SELECT COUNT(*) AS n FROM outreach_replies WHERE received_at > ?", [day]),
-        "proposals": n("SELECT COUNT(*) AS n FROM outreach_versions WHERE status = 'proposed'"),
-        "questions": n("SELECT COUNT(*) AS n FROM owner_questions WHERE answer IS NULL"),
         "clients": n("SELECT COUNT(*) AS n FROM clients WHERE cancelled_on IS NULL"),
     }
     hot = _rows(d1.query(
@@ -161,12 +159,9 @@ def sitrep(d1, now: datetime | None = None) -> str:
     if stats["waiting_claude"] and (not last_ai or last_ai < _iso(now - timedelta(days=2))):
         needs.append("**Claude isn't researching leads** (last run: " + (str(last_ai)[:10] if last_ai else "never")
                      + "). See 'What to do' on the Control Room's Home page.")
-    if stats["picks"]:
-        needs.append(f"**{stats['picks']} lead{'s' if stats['picks'] != 1 else ''} ready for outreach**: Outreach page → Today's picks → approve.")
-    if stats["proposals"]:
-        needs.append(f"**{stats['proposals']} email versions** waiting for your approval (Outreach page).")
-    if stats["questions"]:
-        needs.append(f"**{stats['questions']} question(s) from Claude** (Outreach page).")
+    if stats["picks"]:  # a fact, no page: the Outreach page is gone until sending is rebuilt
+        needs.append(f"**{stats['picks']} lead{'s' if stats['picks'] != 1 else ''} ready for outreach** "
+                     "(sending is being rebuilt; nothing to approve yet)")
     if not needs:
         needs.append("Nothing urgent.")
     L += ["## Needs you", "", *[f"- {x}" for x in needs], ""]
@@ -175,5 +170,5 @@ def sitrep(d1, now: datetime | None = None) -> str:
           f"- **Tomorrow's search:** " + (f"paused: {stats['picks']} leads are ready, enough for about {stats['picks'] // 12} days of emails"
                                           if paused and t.get("on") else f"{t['trade']} in {upcoming}")
           + ("" if t.get("on") else " (autopilot is OFF: Lead Scraper page)"),
-          "- Full to-do list: the Roadmap page in the Control Room.", ""]
+          "- Full to-do list: 'What to do' on the Control Room's Home page.", ""]
     return "\n".join(L)
