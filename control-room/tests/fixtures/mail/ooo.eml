@@ -1,0 +1,65 @@
+Return-Path: <markdixonroofing@gmail.com>
+Delivered-To: nik@aetoswebsites.com
+Received: from mx2.privateemail.com
+	by mail.privateemail.com with LMTP
+	id QzE1Mx4qE2fHGgAAk2sz7A
+	(envelope-from <markdixonroofing@gmail.com>)
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 03:01:47 -0400
+Received: from mail-wm1-f54.google.com (mail-wm1-f54.google.com [209.85.128.54])
+	(using TLSv1.3 with cipher TLS_AES_256_GCM_SHA384 (256/256 bits)
+	 key-exchange X25519 server-signature RSA-PSS (2048 bits) server-digest SHA256)
+	(No client certificate requested)
+	by mx2.privateemail.com (Postfix) with ESMTPS id 4XHn3f1rWbz3Ff1L
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 03:01:46 -0400 (EDT)
+Received: by mail-wm1-f54.google.com with SMTP id 5b1f17b1804b1-4315e62afe0so12345675e9.1
+        for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 00:01:45 -0700 (PDT)
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=gmail.com; s=20230601; t=1792393304; x=1792998104; darn=aetoswebsites.com;
+        h=to:subject:message-id:date:from:auto-submitted:in-reply-to
+         :references:mime-version:from:to:cc:subject:date:message-id:reply-to;
+        bh=5eP9fKW3txwiUoC4ovejTFpMKLmfmSDpq5SgI8N+brt=;
+        b=dHS5nrDTFjZEwuMmff0WlxGEJNB4H46Tte9APmi6OR0VrPJ4O02ibivGhk9f6gej94T3
+         toCmcnXMO/QcFStrFIn4VNeqMtn7tIy4J2nAQyyzaZW3yvudQijBj9rO4LCYOH8DjgYg
+         +hQIaDuh4Q6W9VN4BSzJ9qdyOaQhsb2sEt7fJXn2iIEDJaaCMzqSfi9J3l8DzXi9S0QK
+         HNQg54gmMaWTc3yS9lOmw5NN8tJUQAqIvGdwP3HwycbCmrV4NWslNOzvCRqNIaF8HaSQ
+         8xu9H6z5xTHWdwX0ibPBzSvkjM71TRdqk6P8wAkUPXHi3FnqnSohKOneIggsHWSh35Ap
+         vJ0kdFQqrOdzJjm59CQL3Pww6AxxdZ4vQJAtQ7HVHxFObLes9oDn==
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20230601; t=1792393304; x=1792998104;
+        h=to:subject:message-id:date:from:in-reply-to:references
+         :mime-version:x-gm-message-state:from:to:cc:subject:date:message-id
+         :reply-to;
+        bh=d5IPF+2eA0JRBDANbxlHHZZ62KSAcYiJQ12N/Fa3H8L=;
+        b=uKzUp+ZH/3Ux10+1FfvF8+dS0c4/oLcJ/C+dhA7aNa/SYfJQaebfO0IkrXIAdzMx0RpC
+         40pibS0Ke5LXMROX1jIO5YJ+SJu2HQ8EQz5ObUF54gNLVu9kekw5pVUgWRUCUu1VwG4J
+         bW0jeYY/O05JVXhLE13/Yx3rGQkAMIcl/r0O1/3R==
+X-Gm-Message-State: AOJu0Ya4oIJy68fu6AX805/5qjzT6ijTInZvA42gD8bsePs4fyTYkaYISylYsmTETMNO0WxH
+	TZ7BBrWplNLp69GlYsuPh+1E4IPHe4x7nc1M/Bh6
+X-Google-Smtp-Source: AGHT+IGKtxivQhcnwy0sIv0TxADV0dCOeX2L6QdicLXJvIjkTvfzdAiKbhEy2/VpaI3
+X-Received: by 2002:a17:907:7f25:b0:a99:4b0e:1d3c with SMTP id qf37-20020a1709077f2500b00a994b0e1d3cmr1792393304ejc.12.1792393304093;
+        Mon, 19 Oct 2026 00:01:45 -0700 (PDT)
+MIME-Version: 1.0
+References: <7a4e1c2b-9d3f-4b8a-a6e5-0c1f2d3e4b5a@aetoswebsites.com>
+In-Reply-To: <7a4e1c2b-9d3f-4b8a-a6e5-0c1f2d3e4b5a@aetoswebsites.com>
+Auto-Submitted: auto-replied
+From: Mark Dixon <markdixonroofing@gmail.com>
+Date: Mon, 19 Oct 2026 00:01:44 -0700
+Message-ID: <CAMx4qT9vRkZ2b+YwQ7hN3uPj8eL1sD5fK0aWc6gXo2tB9rEm4A@mail.gmail.com>
+Subject: Re: Your new website, Mark
+To: Nik <nik@aetoswebsites.com>
+Content-Type: multipart/alternative; boundary="000000000000e1a3b20624c1b0f2"
+
+--000000000000e1a3b20624c1b0f2
+Content-Type: text/plain; charset="UTF-8"
+
+Thanks for your email. I'm up on a roof most of this week with no signal, so I'll reply properly on Thursday. For anything urgent ring 07700 900456.
+
+Mark
+Dixon Roofing
+
+--000000000000e1a3b20624c1b0f2
+Content-Type: text/html; charset="UTF-8"
+
+<div dir="ltr">Thanks for your email. I&#39;m up on a roof most of this week with no signal, so I&#39;ll reply properly on Thursday. For anything urgent ring 07700 900456.<div><br></div><div>Mark</div><div>Dixon Roofing</div></div>
+
+--000000000000e1a3b20624c1b0f2--

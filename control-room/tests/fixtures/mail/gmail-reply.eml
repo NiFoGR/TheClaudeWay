@@ -1,0 +1,102 @@
+Return-Path: <bobharrisroofing@gmail.com>
+Delivered-To: nik@aetoswebsites.com
+Received: from mx1.privateemail.com
+	by mail.privateemail.com with LMTP
+	id kF3mBz5qE2fZ1AAAk2sz7A
+	(envelope-from <bobharrisroofing@gmail.com>)
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 04:14:23 -0400
+Received: from mail-ej1-f47.google.com (mail-ej1-f47.google.com [209.85.218.47])
+	(using TLSv1.3 with cipher TLS_AES_256_GCM_SHA384 (256/256 bits)
+	 key-exchange X25519 server-signature RSA-PSS (2048 bits) server-digest SHA256)
+	(No client certificate requested)
+	by mx1.privateemail.com (Postfix) with ESMTPS id 4XHn2Z5vRkz2Sd0J
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 04:14:22 -0400 (EDT)
+Authentication-Results: mx1.privateemail.com;
+	dkim=pass (2048-bit key; unprotected) header.d=gmail.com header.i=@gmail.com header.b="zaDg6IKw";
+	dkim-atps=neutral
+Received: by mail-ej1-f47.google.com with SMTP id a640c23a62f3a-a9a0ef5179dso612345166b.1
+        for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 01:14:22 -0700 (PDT)
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=gmail.com; s=20230601; t=1792397650; x=1793002450; darn=aetoswebsites.com;
+        h=to:subject:message-id:date:from:in-reply-to:references
+         :mime-version:from:to:cc:subject:date:message-id:reply-to;
+        bh=VktoC2bMhXvg4LAc+x8TnfHHOB5MWYKbLLeNmUTL2Di=;
+        b=nfguhaiWCw4BLAmVdgbX9hK+dXYit3T3orjtIrnvBfatTFYJRFFoJNQuoD+5RiKn1Ar8
+         LIDA7X3mpmjW8KvTnU4BB2XZmtcacoer8rzPf41ktElb86hcLsGuShEkA8NRpqqzgd/r
+         qYgTHq+gC473zG5dn2nbUpOIu6QA9SxBMeawRl5TEfI9xmJjW0Y0nL3TnYg/yQykpQyl
+         TTWwlMUKr5yfjLf7Oe9YFHt2dKmW1rgNIlHMVWt902AEfRddX74UAbqIk5iuWuWqi4Rn
+         wBsnF0haiKCsw/AXs5UOz/41y6Ob1hSEN1+/yjrNvLcwwWUj8zQta+XLoy+yjDB+bsdT
+         ymxGtX2W+M/mxuYlqiJOx2MKXd+dMz/AWPZiBm/qiEURBkfqLLNh==
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20230601; t=1792397650; x=1793002450;
+        h=to:subject:message-id:date:from:in-reply-to:references
+         :mime-version:x-gm-message-state:from:to:cc:subject:date:message-id
+         :reply-to;
+        bh=UIbsb+ZYn14/qtuOpgjuXX5xnmwF8sOBj0Zb1UkUT+B=;
+        b=ThmB/5tB80eGCcR2YHnu3QHaVUPPlsE49b+O99BcesAOL73e9V0tKos7xpGCnWxgU+rD
+         6eaMHcM6nuXoClpvbgOxGapg9E0OKtknzrEV/Xv6ys/96IlspE2k3KX+NjahdofPkPtK
+         O+zNROOxOIHV3ROc8fyoiPF5Pnrw//C34fGIMQjl==
+X-Gm-Message-State: AOJu0YCh5hno4FIwpbf+pLbVkVtr5J6rjRm1r/1r3FHYSARZytPlVTmfZEHpw+qksX+0jTPO
+	CI0QQ0mwfuVmvRw2z29sHH5aEsfDCUDNmqI+iG3w
+X-Google-Smtp-Source: AGHT+IGvJ+fTG3E+DNFupFBPY4/P4eDV+FjsO+LYrPBonRw2C1STMBLxo5JpvUTkcC2
+X-Received: by 2002:a17:907:7f25:b0:a99:4b0e:1d3c with SMTP id qf37-20020a1709077f2500b00a994b0e1d3cmr1792397650ejc.12.1792397650093;
+        Mon, 19 Oct 2026 01:14:22 -0700 (PDT)
+MIME-Version: 1.0
+References: <orig@aetoswebsites.com>
+In-Reply-To: <orig@aetoswebsites.com>
+From: Bob Harris <bobharrisroofing@gmail.com>
+Date: Mon, 19 Oct 2026 09:14:10 +0100
+X-Gm-Features: AS18NWBD6TQ2ijjv1QzWy71lFlVyV6z1LF2J4eaezpASRqZDlewO1kE951vZnNxRomP
+Message-ID: <CAJx7Lk2bPq0vN=Ze4tX1+R8mGHu3sYw-Fd5kLzQ9aE2oWcVb7g@mail.gmail.com>
+Subject: Re: Your new website, Bob
+To: Nik <nik@aetoswebsites.com>
+Content-Type: multipart/alternative; boundary="0000000000004f3e2b0624c1a7d9"
+
+--0000000000004f3e2b0624c1a7d9
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Nik,
+
+Had a look at the site, it's not bad at all. My lad reckons the photos need=
+ changing but otherwise I like it. What would it cost to keep it going each=
+ month?
+
+Cheers,
+Bob
+
+On Mon, 19 Oct 2026 at 08:01, Nik <nik@aetoswebsites.com>
+wrote:
+
+> Hi Bob,
+>
+> I made you a new website for Harris Roofing, using your photos and your
+> Google reviews. Have a look:
+> https://aetoswebsites.com/d/harris-roofing-a1b2
+>
+> Nik
+> Aetos Websites
+>
+> If you'd rather not hear from me, just reply "no thanks".
+>
+
+--0000000000004f3e2b0624c1a7d9
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+<div dir=3D"ltr">Hi Nik,<div><br></div><div>Had a look at the site, it&#39;=
+s not bad at all. My lad reckons the photos need changing but otherwise I l=
+ike it. What would it cost to keep it going each month?</div><div><br></div=
+><div>Cheers,</div><div>Bob</div></div><br><div class=3D"gmail_quote gmail_=
+quote_container"><div dir=3D"ltr" class=3D"gmail_attr">On Mon, 19 Oct 2026 =
+at 08:01, Nik &lt;<a href=3D"mailto:nik@aetoswebsites.com">nik@aetoswebsite=
+s.com</a>&gt; wrote:<br></div><blockquote class=3D"gmail_quote" style=3D"ma=
+rgin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:=
+1ex">Hi Bob,<br><br>I made you a new website for Harris Roofing, using your=
+ photos and your Google reviews. Have a look:<br><a href=3D"https://aetoswe=
+bsites.com/d/harris-roofing-a1b2" rel=3D"noreferrer" target=3D"_blank">http=
+s://aetoswebsites.com/d/harris-roofing-a1b2</a><br><br>Nik<br>Aetos Website=
+s<br><br>If you&#39;d rather not hear from me, just reply &quot;no thanks&q=
+uot;.<br></blockquote></div>
+
+--0000000000004f3e2b0624c1a7d9--

@@ -1,0 +1,87 @@
+Return-Path: <>
+Delivered-To: nik@aetoswebsites.com
+Received: from mta-09.privateemail.com
+	by mail.privateemail.com with LMTP
+	id wJ3sHA1qE2f6HAAAk2sz7A
+	(envelope-from <>)
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 03:01:10 -0400
+Received: by mta-09.privateemail.com (Postfix)
+	id 4XHs2D0kTnz2Sd3D; Mon, 19 Oct 2026 03:01:09 -0400 (EDT)
+Date: Mon, 19 Oct 2026 03:01:09 -0400 (EDT)
+From: MAILER-DAEMON@mta-09.privateemail.com (Mail Delivery System)
+Subject: Undelivered Mail Returned to Sender
+To: nik@aetoswebsites.com
+Auto-Submitted: auto-replied
+MIME-Version: 1.0
+Content-Type: multipart/report; report-type=delivery-status;
+	boundary="4XHs2C6pKqz2Sd3C.1792393269/mta-09.privateemail.com"
+Content-Transfer-Encoding: 8bit
+Message-Id: <4XHs2D0kTnz2Sd3D@mta-09.privateemail.com>
+
+This is a MIME-encapsulated message.
+
+--4XHs2C6pKqz2Sd3C.1792393269/mta-09.privateemail.com
+Content-Description: Notification
+Content-Type: text/plain; charset=us-ascii
+
+This is the mail system at host mta-09.privateemail.com.
+
+I'm sorry to have to inform you that your message could not
+be delivered to one or more recipients. It's attached below.
+
+For further assistance, please send mail to postmaster.
+
+If you do so, please include this problem report. You can
+delete your own text from the attached returned message.
+
+                   The mail system
+
+<info@oldsite-plumbing.co.uk>: host mx.oldsite-plumbing.co.uk[203.0.113.40]
+    said: 550 5.1.1 <info@oldsite-plumbing.co.uk>: Recipient address rejected:
+    User unknown in virtual mailbox table (in reply to RCPT TO command)
+
+--4XHs2C6pKqz2Sd3C.1792393269/mta-09.privateemail.com
+Content-Description: Delivery report
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; mta-09.privateemail.com
+X-Postfix-Queue-ID: 4XHs2C6pKqz2Sd3C
+X-Postfix-Sender: rfc822; nik@aetoswebsites.com
+Arrival-Date: Mon, 19 Oct 2026 03:01:03 -0400 (EDT)
+
+Final-Recipient: rfc822; info@oldsite-plumbing.co.uk
+Original-Recipient: rfc822;info@oldsite-plumbing.co.uk
+Action: failed
+Status: 5.1.1
+Remote-MTA: dns; mx.oldsite-plumbing.co.uk
+Diagnostic-Code: smtp; 550 5.1.1 <info@oldsite-plumbing.co.uk>: Recipient
+    address rejected: User unknown in virtual mailbox table
+
+--4XHs2C6pKqz2Sd3C.1792393269/mta-09.privateemail.com
+Content-Description: Undelivered Message Headers
+Content-Type: text/rfc822-headers
+Content-Transfer-Encoding: 8bit
+
+Return-Path: <nik@aetoswebsites.com>
+Received: from [127.0.0.1] (unknown [104.28.86.12])
+	(Authenticated sender: nik@aetoswebsites.com)
+	by mta-09.privateemail.com (Postfix) with ESMTPA id 4XHs2C6pKqz2Sd3C
+	for <info@oldsite-plumbing.co.uk>; Mon, 19 Oct 2026 03:01:03 -0400 (EDT)
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=aetoswebsites.com;
+	s=default; t=1792393263;
+	bh=i31i0RhquZ7m9mfixmlcDLMbnGL6VeLGuyU/4n5VONa=;
+	h=From:To:Subject:Date:From;
+	b=Z4GhQVf36tonhL6njmC3tkhCvR39O6d27zm2ZmAmk3Qey/b//jzclanquKjqs+6t
+	 7eYM30/723qS6lzdVlDp1gdP9YRZ/jShMHequzrkyTLLwHItE4grc/AOzWJ0xNWp+jZXXFYG
+	 s08rd0Dub8q3R74HjnH4WWDjQP3XMIh2IA6CpzunJRx2Ys3GzoYIaRcRNCnv/W2daTHDqMd5
+	 W3Q+y/TI2aoGOqe5f0D++wcPSBS4l31Txb2q1VwqJNfC5bCN753JDy21==
+From: Nik <nik@aetoswebsites.com>
+To: info@oldsite-plumbing.co.uk
+Subject: Your new website, Oldsite Plumbing
+Date: Mon, 19 Oct 2026 07:01:03 GMT
+Message-ID: <3f9c2b7e-4a1d-4e8b-9c6f-2d5e8a1b7c40@aetoswebsites.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: 7bit
+
+--4XHs2C6pKqz2Sd3C.1792393269/mta-09.privateemail.com--

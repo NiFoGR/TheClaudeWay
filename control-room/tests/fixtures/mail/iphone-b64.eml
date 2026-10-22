@@ -1,0 +1,76 @@
+Return-Path: <dan.cooper@btinternet.com>
+Delivered-To: nik@aetoswebsites.com
+Received: from mx1.privateemail.com
+	by mail.privateemail.com with LMTP
+	id 8Hk2LQ3uE2dCLwAAk2sz7A
+	(envelope-from <dan.cooper@btinternet.com>)
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 14:22:52 -0400
+Received: from sa-prd-fep-047.btinternet.com (mailomta20-sa.btinternet.com [213.120.69.26])
+	(using TLSv1.2 with cipher ECDHE-RSA-AES256-GCM-SHA384 (256/256 bits))
+	(No client certificate requested)
+	by mx1.privateemail.com (Postfix) with ESMTPS id 4XHq0L1mPtz2Sd1B
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 14:22:51 -0400 (EDT)
+Received: from sa-prd-rgout-005.btmx-prd.synchronoss.net ([10.2.38.8])
+          by sa-prd-fep-047.btinternet.com with ESMTP
+          id <20261019182250.ABCD1234.sa-prd-fep-047.btinternet.com@sa-prd-rgout-005.btmx-prd.synchronoss.net>
+          for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 19:22:50 +0100
+Authentication-Results: btinternet.com;
+    auth=pass (PLAIN) smtp.auth=dan.cooper@btinternet.com;
+    bimi=skipped
+X-SNCR-Rigid: 66F2A9E1012B4C7D
+X-Originating-IP: [86.142.31.207]
+X-OWM-Source-IP: 86.142.31.207
+X-OWM-Env-Sender: dan.cooper@btinternet.com
+X-VadeSecure-score: verdict=clean score=0/300, class=clean
+Received: from smtpclient.apple (86.142.31.207) by sa-prd-rgout-005.btmx-prd.synchronoss.net (5.8.814) (authenticated as dan.cooper@btinternet.com)
+        id 66F2A9E1012B4C7D for nik@aetoswebsites.com; Mon, 19 Oct 2026 19:22:50 +0100
+Content-Type: multipart/alternative; boundary=Apple-Mail-6E2D0A51-9B3C-4F7E-A8D1-2C5B7E9F0A13
+Content-Transfer-Encoding: 7bit
+From: Dan Cooper <dan.cooper@btinternet.com>
+Mime-Version: 1.0 (1.0)
+Subject: Re: Your new website, Dan
+Date: Mon, 19 Oct 2026 19:22:38 +0100
+Message-Id: <3C8E5F21-7A4B-4D9C-B1E2-9F0A6D3C4B5E@btinternet.com>
+References: <8c1e5a7f-2d4b-4e9a-b3c6-7f0d1e2a9b45@aetoswebsites.com>
+In-Reply-To: <8c1e5a7f-2d4b-4e9a-b3c6-7f0d1e2a9b45@aetoswebsites.com>
+To: Nik <nik@aetoswebsites.com>
+X-Mailer: iPhone Mail (22A3354)
+
+
+--Apple-Mail-6E2D0A51-9B3C-4F7E-A8D1-2C5B7E9F0A13
+Content-Type: text/plain;
+	charset=utf-8
+Content-Transfer-Encoding: base64
+
+U291bmRzIGdvb2QgbWF0ZSwgSeKAmWxsIGhhdmUgYSBwcm9wZXIgbG9vayB0b25pZ2h0IHdoZW4g
+SeKAmW0gYmFjayBmcm9tIHRoZSBqb2IuCgpDaGVlcnMg8J+RjQoKU2VudCBmcm9tIG15IGlQaG9u
+ZQoKPiBPbiAxOSBPY3QgMjAyNiwgYXQgMDg6MDEsIE5payA8bmlrQGFldG9zd2Vic2l0ZXMuY29t
+PiB3cm90ZToKPiAKPiDvu79IaSBEYW4sCj4gCj4gSSBtYWRlIHlvdSBhIG5ldyB3ZWJzaXRlIGZv
+ciBDb29wZXIgRWxlY3RyaWNhbCwgdXNpbmcgeW91ciBwaG90b3MgYW5kIHlvdXIgR29vZ2xlIHJl
+dmlld3MuIEhhdmUgYSBsb29rOgo+IGh0dHBzOi8vYWV0b3N3ZWJzaXRlcy5jb20vZC9jb29wZXIt
+ZWxlY3RyaWNhbC05ZjNlCj4gCj4gTmlrCj4gQWV0b3MgV2Vic2l0ZXMKPiAKPiBJZiB5b3UnZCBy
+YXRoZXIgbm90IGhlYXIgZnJvbSBtZSwganVzdCByZXBseSAibm8gdGhhbmtzIi4K
+--Apple-Mail-6E2D0A51-9B3C-4F7E-A8D1-2C5B7E9F0A13
+Content-Type: text/html;
+	charset=utf-8
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGhlYWQ+PG1ldGEgaHR0cC1lcXVpdj0iY29udGVudC10eXBlIiBjb250ZW50PSJ0ZXh0
+L2h0bWw7IGNoYXJzZXQ9dXRmLTgiPjwvaGVhZD48Ym9keSBkaXI9ImF1dG8iPjxkaXYgZGlyPSJs
+dHIiPlNvdW5kcyBnb29kIG1hdGUsIEnigJlsbCBoYXZlIGEgcHJvcGVyIGxvb2sgdG9uaWdodCB3
+aGVuIEnigJltIGJhY2sgZnJvbSB0aGUgam9iLjwvZGl2PjxkaXYgZGlyPSJsdHIiPjxicj48L2Rp
+dj48ZGl2IGRpcj0ibHRyIj5DaGVlcnMg8J+RjTxiciBpZD0ibGluZUJyZWFrQXRCZWdpbm5pbmdP
+ZlNpZ25hdHVyZSI+PGRpdiBkaXI9Imx0ciI+PGJyPjwvZGl2PjxkaXYgZGlyPSJsdHIiPlNlbnQg
+ZnJvbSBteSBpUGhvbmU8L2Rpdj48ZGl2IGRpcj0ibHRyIj48YnI+PGJsb2NrcXVvdGUgdHlwZT0i
+Y2l0ZSI+T24gMTkgT2N0IDIwMjYsIGF0IDA4OjAxLCBOaWsgJmx0O25pa0BhZXRvc3dlYnNpdGVz
+LmNvbSZndDsgd3JvdGU6PGJyPjxicj48L2Jsb2NrcXVvdGU+PC9kaXY+PGJsb2NrcXVvdGUgdHlw
+ZT0iY2l0ZSI+PGRpdiBkaXI9Imx0ciI+77u/PGRpdiBkaXI9Imx0ciI+SGkgRGFuLDwvZGl2Pjxk
+aXYgZGlyPSJsdHIiPjxicj48L2Rpdj48ZGl2IGRpcj0ibHRyIj5JIG1hZGUgeW91IGEgbmV3IHdl
+YnNpdGUgZm9yIENvb3BlciBFbGVjdHJpY2FsLCB1c2luZyB5b3VyIHBob3RvcyBhbmQgeW91ciBH
+b29nbGUgcmV2aWV3cy4gSGF2ZSBhIGxvb2s6PC9kaXY+PGRpdiBkaXI9Imx0ciI+aHR0cHM6Ly9h
+ZXRvc3dlYnNpdGVzLmNvbS9kL2Nvb3Blci1lbGVjdHJpY2FsLTlmM2U8L2Rpdj48ZGl2IGRpcj0i
+bHRyIj48YnI+PC9kaXY+PGRpdiBkaXI9Imx0ciI+TmlrPC9kaXY+PGRpdiBkaXI9Imx0ciI+QWV0
+b3MgV2Vic2l0ZXM8L2Rpdj48ZGl2IGRpcj0ibHRyIj48YnI+PC9kaXY+PGRpdiBkaXI9Imx0ciI+
+SWYgeW91J2QgcmF0aGVyIG5vdCBoZWFyIGZyb20gbWUsIGp1c3QgcmVwbHkgJnF1b3Q7bm8gdGhh
+bmtzJnF1b3Q7LjwvZGl2PjwvZGl2PjwvYmxvY2txdW90ZT48L2Rpdj48L2JvZHk+PC9odG1sPg==
+--Apple-Mail-6E2D0A51-9B3C-4F7E-A8D1-2C5B7E9F0A13--

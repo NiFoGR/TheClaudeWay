@@ -1,0 +1,77 @@
+Return-Path: <>
+Delivered-To: nik@aetoswebsites.com
+Received: from mta-09.privateemail.com
+	by mail.privateemail.com with LMTP
+	id 7kQmLHOJG2dS9AAAk2sz7A
+	(envelope-from <>)
+	for <nik@aetoswebsites.com>; Sat, 24 Oct 2026 03:05:12 -0400
+Received: by mta-09.privateemail.com (Postfix)
+	id 4XJ9mQ2vLtz2Sd7H; Sat, 24 Oct 2026 03:05:12 -0400 (EDT)
+Date: Sat, 24 Oct 2026 03:05:12 -0400 (EDT)
+From: MAILER-DAEMON@mta-09.privateemail.com (Mail Delivery System)
+Subject: Undelivered Mail Returned to Sender
+To: nik@aetoswebsites.com
+Auto-Submitted: auto-replied
+MIME-Version: 1.0
+Content-Type: multipart/report; report-type=delivery-status;
+	boundary="4XJ9mQ2vLtz2Sd7H.1792826712/mta-09.privateemail.com"
+Content-Transfer-Encoding: 8bit
+Message-Id: <4XJ9mQ2vLtz2Sd7H@mta-09.privateemail.com>
+
+This is a MIME-encapsulated message.
+
+--4XJ9mQ2vLtz2Sd7H.1792826712/mta-09.privateemail.com
+Content-Description: Notification
+Content-Type: text/plain; charset=us-ascii
+
+This is the mail system at host mta-09.privateemail.com.
+
+I'm sorry to have to inform you that your message could not
+be delivered to one or more recipients. It's attached below.
+
+For further assistance, please send mail to postmaster.
+
+If you do so, please include this problem report. You can
+delete your own text from the attached returned message.
+
+                   The mail system
+
+<sales@slowserver-scaffolding.co.uk>: connect to
+    mail.slowserver-scaffolding.co.uk[203.0.113.7]:25: Connection timed out
+
+--4XJ9mQ2vLtz2Sd7H.1792826712/mta-09.privateemail.com
+Content-Description: Delivery report
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; mta-09.privateemail.com
+X-Postfix-Queue-ID: 4XHn1B3cRdz2Sd0F
+X-Postfix-Sender: rfc822; nik@aetoswebsites.com
+Arrival-Date: Mon, 19 Oct 2026 03:01:03 -0400 (EDT)
+
+Final-Recipient: rfc822; sales@slowserver-scaffolding.co.uk
+Original-Recipient: rfc822;sales@slowserver-scaffolding.co.uk
+Action: failed
+Status: 4.4.7
+Diagnostic-Code: X-Postfix; connect to
+    mail.slowserver-scaffolding.co.uk[203.0.113.7]:25: Connection timed out
+
+--4XJ9mQ2vLtz2Sd7H.1792826712/mta-09.privateemail.com
+Content-Description: Undelivered Message Headers
+Content-Type: text/rfc822-headers
+Content-Transfer-Encoding: 8bit
+
+Return-Path: <nik@aetoswebsites.com>
+Received: from [127.0.0.1] (unknown [104.28.86.12])
+	(Authenticated sender: nik@aetoswebsites.com)
+	by mta-09.privateemail.com (Postfix) with ESMTPA id 4XHn1B3cRdz2Sd0F
+	for <sales@slowserver-scaffolding.co.uk>; Mon, 19 Oct 2026 03:01:03 -0400 (EDT)
+From: Nik <nik@aetoswebsites.com>
+To: sales@slowserver-scaffolding.co.uk
+Subject: Your new website, Sam
+Date: Mon, 19 Oct 2026 07:01:03 GMT
+Message-ID: <9e2c4a1b-3d5f-4e7a-8b6c-0f1e2d3c4b5a@aetoswebsites.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: 7bit
+
+--4XJ9mQ2vLtz2Sd7H.1792826712/mta-09.privateemail.com--

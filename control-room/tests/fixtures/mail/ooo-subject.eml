@@ -1,0 +1,49 @@
+Return-Path: <jenny@walshremovals.co.uk>
+Delivered-To: nik@aetoswebsites.com
+Received: from mx1.privateemail.com
+	by mail.privateemail.com with LMTP
+	id mN0aGh9qE2eOMgAAk2sz7A
+	(envelope-from <jenny@walshremovals.co.uk>)
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 03:02:14 -0400
+Received: from server88.web-hosting.com (server88.web-hosting.com [198.54.115.20])
+	(using TLSv1.3 with cipher TLS_AES_256_GCM_SHA384 (256/256 bits))
+	(No client certificate requested)
+	by mx1.privateemail.com (Postfix) with ESMTPS id 4XHn4g2sXcz2Sd0M
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 03:02:13 -0400 (EDT)
+DKIM-Signature: v=1; a=rsa-sha256; q=dns/txt; c=relaxed/relaxed;
+	d=walshremovals.co.uk; s=default; h=Content-Transfer-Encoding:Content-Type:
+	MIME-Version:Message-ID:Date:Subject:To:From:Sender:Reply-To:Cc;
+	bh=aT7+BwFNM4ci//ZuN3YHoVje4hDszRgj9RRHfjvLgvf=; b=wZLhGJL9qbjFhRlptqt4KT1O6JmI3xWaXM/eSvE7
+	eQpd9wCkYOvIbDZZ3mbTyGYBzkrNQpET1kkbDETmswnfR2Iz5hjWAZLZ4dzPMzfjqoRnmXlb
+	R6MUPE6ewvivb/QSD2+SMTnetNjuVXq4t7BcnqUfNFO3n6UY/7Gm39v8fgvVJ2tWbbEuZd6A
+	DsKvOBP8b6mD3lD5l36P3BKs6sNUWumEck9w7yUp0wuzpd9fhNCeD6x4lA5x==;
+Received: from [92.40.183.61] (port=51244 helo=DESKTOP-4K7QJ2M)
+	by server88.web-hosting.com with esmtpsa  (TLS1.3) tls TLS_AES_256_GCM_SHA384
+	(Exim 4.98)
+	(envelope-from <jenny@walshremovals.co.uk>)
+	id 1t2Bq7-0009xK-1f
+	for nik@aetoswebsites.com;
+	Mon, 19 Oct 2026 03:02:12 -0400
+From: "Jenny Walsh" <jenny@walshremovals.co.uk>
+To: <nik@aetoswebsites.com>
+Subject: Automatic reply: away
+Date: Mon, 19 Oct 2026 08:02:11 +0100
+Message-ID: <000001db41f2$8a3c1b20$9eb45160$@walshremovals.co.uk>
+MIME-Version: 1.0
+Content-Type: text/plain;
+	charset="us-ascii"
+Content-Transfer-Encoding: 7bit
+X-Mailer: Microsoft Outlook 16.0
+Thread-Index: AdtB8oo8GyCetFFgQ2KxV9pTzWmEkA==
+Content-Language: en-gb
+X-AntiAbuse: This header was added to track abuse, please include it with any abuse report
+X-AntiAbuse: Primary Hostname - server88.web-hosting.com
+X-AntiAbuse: Sender Address Domain - walshremovals.co.uk
+X-Get-Message-Sender-Via: server88.web-hosting.com: authenticated_id: jenny@walshremovals.co.uk
+
+Thank you for your email. I'm away until Monday 26 October with no access to email.
+
+For bookings and quotes please call the office on 0161 496 0123.
+
+Jenny Walsh
+Walsh Removals

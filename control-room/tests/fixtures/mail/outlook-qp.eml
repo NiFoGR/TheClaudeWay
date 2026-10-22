@@ -1,0 +1,188 @@
+Return-Path: <steve@turnerroofing.co.uk>
+Delivered-To: nik@aetoswebsites.com
+Received: from mx2.privateemail.com
+	by mail.privateemail.com with LMTP
+	id 2q9cF0BzE2f5QQAAk2sz7A
+	(envelope-from <steve@turnerroofing.co.uk>)
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 05:40:13 -0400
+Received: from LO2P265CU024.outbound.protection.outlook.com (mail-uksouthazon11021087.outbound.protection.outlook.com [52.101.95.87])
+	(using TLSv1.2 with cipher ECDHE-RSA-AES256-GCM-SHA384 (256/256 bits))
+	(No client certificate requested)
+	by mx2.privateemail.com (Postfix) with ESMTPS id 4XHp1R3kLsz3Ff2M
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 05:40:12 -0400 (EDT)
+ARC-Seal: i=1; a=rsa-sha256; s=arcselector10001; d=microsoft.com; cv=none;
+ b=Sn6Uzpcet59vwEoLHf40hN6JgBSLDZSkmVRFYPFuqdmsoQT4UKqx7bSvANJ3i6OesUuDimqF
+ u6rjfnHZWheFwAIZZHQuiK5CSWdYVeuco9r9aDpp7CQFgiGu8GasodQcGQuLTRiwDbqn8s4y8Krj
+ 2CCYNunFlNzmSps8FZEqtWyAJAvcKmBpN5end+On+Lm8nM6DuER9qkqelmUj5G9WJOB9bizGN7UY
+ jzvh6kCP9/rYYR2NhWDWrUpSXg7/B3DLogyxFF624ZlB2pnKrsdYdAZnMP8yKFPLEZopjBK77Lnw
+ skwua9R2akIc6hbK/3FEG+KGGckXUfdday7t4xdL
+ARC-Message-Signature: i=1; a=rsa-sha256; c=relaxed/relaxed; d=microsoft.com;
+ s=arcselector10001;
+ h=From:Date:Subject:Message-ID:Content-Type:MIME-Version:X-MS-Exchange-AntiSpam-MessageData-ChunkCount:X-MS-Exchange-AntiSpam-MessageData-0:X-MS-Exchange-AntiSpam-MessageData-1;
+ bh=YrMCdCpDSiwOIV6QLj8fdOBUJoi6kdh5Cfkt/BqPiDy=;
+ b=tqPxK870zfNPYp3/YapA3de+F645wnk6++bTBbrS+lwjN3DnsZxr9jxyzj1esUuCOHEkU/4D
+ X/2CRpUZELZbpQkofXqMSS8OpPzcKbkoxcEkuR2HFwSPq0lZG6FUlE/blIhB5MTyil3ftAavuI3A
+ DVqSLT3F/E2DYNVo1OzuI8Mwkhx/ZiOc0rXHtcqz3AjMPk1bF67mWg6lce2a2UAe0vIpVLTsYqrH
+ Bf+kOiOJOnhCy5eNJ7OyIpl9303GwMo21QhjhaGqMrBeYD0rtu5X6+3/EAfZx53pC/yVng99mYYg
+ m211T2CHACwYBmM48Rpq+3CdEQWtLbi+dKydQztz
+ARC-Authentication-Results: i=1; mx.microsoft.com 1; spf=pass
+ smtp.mailfrom=turnerroofing.co.uk; dmarc=pass action=none
+ header.from=turnerroofing.co.uk; dkim=pass header.d=turnerroofing.co.uk;
+ arc=none
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=turnerroofing.co.uk;
+ s=selector1;
+ h=From:Date:Subject:Message-ID:Content-Type:MIME-Version:X-MS-Exchange-SenderADCheck;
+ bh=jg7bvajzvm9+pBED022UC2H10oGX5aMp1koXyyRzKz5=;
+ b=seX7KxblsG34tShksa3w+KP5lpZ76W8lnjEaCW6i8ubekTewaYgWeWAyXQe5p+1MJ/Tt0IGQ
+ LtTkfdoniVQWaAGa3L44Lwxg8NRJAu5DgvjqsieQhvEuEFEbxig7ErifxIC2c8e/hYCuyfmr8HI9
+ C/u4Kq66tX5xZpKLrLGZtlEQY3/l2nNE9FqxJ0A6CRNPYdkZbElxD3eQEqC3LR8K/ZGkTECe5XJZ
+ sHusRh+riJabfIO1s8/p2S6MfMkT5iiXkw7b1xY4AvrrDun+KM3N9ctuD93+5RnVfdh6Jz0Bzko+
+ tvjpym6uoqWzoRE7X/d6TAh7HnjfZyJ6lWTY4utp
+Received: from LO4P265MB5873.GBRP265.PROD.OUTLOOK.COM (2603:10a6:600:2b1::9)
+ by CWLP265MB6519.GBRP265.PROD.OUTLOOK.COM (2603:10a6:400:1a3::12) with
+ Microsoft SMTP Server (version=TLS1_2,
+ cipher=TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384) id 15.20.8093.17; Mon, 19 Oct
+ 2026 09:40:10 +0000
+Received: from LO4P265MB5873.GBRP265.PROD.OUTLOOK.COM
+ ([fe80::4c1d:2f3a:9b8e:61d0]) by LO4P265MB5873.GBRP265.PROD.OUTLOOK.COM
+ ([fe80::4c1d:2f3a:9b8e:61d0%5]) with mapi id 15.20.8093.014; Mon, 19 Oct 2026
+ 09:40:09 +0000
+From: Steve Turner <steve@turnerroofing.co.uk>
+To: Nik <nik@aetoswebsites.com>
+Subject: RE: Your new website, Steve
+Thread-Topic: Your new website, Steve
+Thread-Index: AQHbIgxk2pW4h7XcT0Kd1a2bC3dE4w==
+Date: Mon, 19 Oct 2026 09:40:09 +0000
+Message-ID:
+ <LO4P265MB58733F1A2B9C4D5E6F7A8B9CD1E2A@LO4P265MB5873.GBRP265.PROD.OUTLOOK.COM>
+References: <2b7d4e91-6c3a-4f0e-8d25-9a1e3c7b5f08@aetoswebsites.com>
+In-Reply-To: <2b7d4e91-6c3a-4f0e-8d25-9a1e3c7b5f08@aetoswebsites.com>
+Accept-Language: en-GB, en-US
+Content-Language: en-GB
+X-MS-Has-Attach:
+X-MS-TNEF-Correlator:
+msip_labels:
+authentication-results: dkim=none (message not signed)
+ header.d=none;dmarc=none action=none header.from=turnerroofing.co.uk;
+x-ms-publictraffictype: Email
+x-ms-traffictypediagnostic: LO4P265MB5873:EE_|CWLP265MB6519:EE_
+x-ms-office365-filtering-correlation-id: 9c1f4e2a-7b3d-4a8e-b6f0-2d1c5e9a3b74
+x-ms-exchange-senderadcheck: 1
+x-ms-exchange-antispam-relay: 0
+Content-Type: multipart/alternative;
+	boundary="_000_LO4P265MB58733F1A2B9C4D5E6F7A8B9CD1E2ALO4P265MB5873GBRP_"
+MIME-Version: 1.0
+X-OriginatorOrg: turnerroofing.co.uk
+X-MS-Exchange-CrossTenant-AuthAs: Internal
+X-MS-Exchange-CrossTenant-originalarrivaltime: 19 Oct 2026 09:40:09.8812
+ (UTC)
+X-MS-Exchange-Transport-CrossTenantHeadersStamped: CWLP265MB6519
+
+--_000_LO4P265MB58733F1A2B9C4D5E6F7A8B9CD1E2ALO4P265MB5873GBRP_
+Content-Type: text/plain; charset="Windows-1252"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Nik,
+
+Thanks for sending this over. I=92m interested but =A3249 a month is a lot =
+for us at the moment. Is there any way of doing it cheaper, or just the web=
+site on its own?
+
+Kind regards
+
+Steve Turner
+Turner Roofing Ltd
+07700 900321
+________________________________
+From: Nik <nik@aetoswebsites.com>
+Sent: 19 October 2026 08:01
+To: Steve Turner <steve@turnerroofing.co.uk>
+Subject: Your new website, Steve
+
+Hi Steve,
+
+I made you a new website for Turner Roofing, using your photos and your Goo=
+gle reviews. Have a look:
+https://aetoswebsites.com/d/turner-roofing-77c1
+
+Nik
+Aetos Websites
+
+If you'd rather not hear from me, just reply "no thanks".
+
+--_000_LO4P265MB58733F1A2B9C4D5E6F7A8B9CD1E2ALO4P265MB5873GBRP_
+Content-Type: text/html; charset="Windows-1252"
+Content-Transfer-Encoding: quoted-printable
+
+<html>
+<head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3DWindows-1=
+252">
+<style type=3D"text/css" style=3D"display:none;"> P {margin-top:0;margin-bo=
+ttom:0;} </style>
+</head>
+<body dir=3D"ltr">
+<div class=3D"elementToProof" style=3D"font-family: Aptos, Aptos_EmbeddedFo=
+nt, Aptos_MSFontService, Calibri, Helvetica, sans-serif; font-size: 12pt; c=
+olor: rgb(0, 0, 0);">
+Hi Nik,</div>
+<div class=3D"elementToProof" style=3D"font-family: Aptos, Aptos_EmbeddedFo=
+nt, Aptos_MSFontService, Calibri, Helvetica, sans-serif; font-size: 12pt; c=
+olor: rgb(0, 0, 0);">
+<br>
+</div>
+<div class=3D"elementToProof" style=3D"font-family: Aptos, Aptos_EmbeddedFo=
+nt, Aptos_MSFontService, Calibri, Helvetica, sans-serif; font-size: 12pt; c=
+olor: rgb(0, 0, 0);">
+Thanks for sending this over. I=92m interested but =A3249 a month is a lot =
+for us at the moment. Is there any way of doing it cheaper, or just the web=
+site on its own?</div>
+<div class=3D"elementToProof" style=3D"font-family: Aptos, Aptos_EmbeddedFo=
+nt, Aptos_MSFontService, Calibri, Helvetica, sans-serif; font-size: 12pt; c=
+olor: rgb(0, 0, 0);">
+<br>
+</div>
+<div class=3D"elementToProof" style=3D"font-family: Aptos, Aptos_EmbeddedFo=
+nt, Aptos_MSFontService, Calibri, Helvetica, sans-serif; font-size: 12pt; c=
+olor: rgb(0, 0, 0);">
+Kind regards</div>
+<div class=3D"elementToProof" style=3D"font-family: Aptos, Aptos_EmbeddedFo=
+nt, Aptos_MSFontService, Calibri, Helvetica, sans-serif; font-size: 12pt; c=
+olor: rgb(0, 0, 0);">
+<br>
+</div>
+<div id=3D"Signature">
+<div style=3D"font-family: Aptos, Aptos_EmbeddedFont, Aptos_MSFontService, =
+Calibri, Helvetica, sans-serif; font-size: 12pt; color: rgb(0, 0, 0);">
+<b>Steve Turner</b><br>
+Turner Roofing Ltd<br>
+07700 900321</div>
+</div>
+<div id=3D"appendonsend"></div>
+<hr style=3D"display:inline-block;width:98%" tabindex=3D"-1">
+<div id=3D"divRplyFwdMsg" dir=3D"ltr"><font face=3D"Calibri, sans-serif" st=
+yle=3D"font-size:11pt" color=3D"#000000"><b>From:</b> Nik &lt;nik@aetoswebs=
+ites.com&gt;<br>
+<b>Sent:</b> 19 October 2026 08:01<br>
+<b>To:</b> Steve Turner &lt;steve@turnerroofing.co.uk&gt;<br>
+<b>Subject:</b> Your new website, Steve</font>
+<div>&nbsp;</div>
+</div>
+<div class=3D"BodyFragment"><font size=3D"2"><span style=3D"font-size:11pt;=
+">
+<div class=3D"PlainText">Hi Steve,<br>
+<br>
+I made you a new website for Turner Roofing, using your photos and your Goo=
+gle reviews. Have a look:<br>
+<a href=3D"https://aetoswebsites.com/d/turner-roofing-77c1">https://aetoswe=
+bsites.com/d/turner-roofing-77c1</a><br>
+<br>
+Nik<br>
+Aetos Websites<br>
+<br>
+If you'd rather not hear from me, just reply &quot;no thanks&quot;.</div>
+</span></font></div>
+</body>
+</html>
+
+--_000_LO4P265MB58733F1A2B9C4D5E6F7A8B9CD1E2ALO4P265MB5873GBRP_--

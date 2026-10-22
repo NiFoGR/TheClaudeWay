@@ -1,0 +1,90 @@
+Return-Path: <>
+Delivered-To: nik@aetoswebsites.com
+Received: from mta-09.privateemail.com
+	by mail.privateemail.com with LMTP
+	id 0tXbJGOJE2dQ4AAAk2sz7A
+	(envelope-from <>)
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 07:04:52 -0400
+Received: by mta-09.privateemail.com (Postfix)
+	id 4XHsK1d6pQz2Sd4F; Mon, 19 Oct 2026 07:04:51 -0400 (EDT)
+Date: Mon, 19 Oct 2026 07:04:51 -0400 (EDT)
+From: MAILER-DAEMON@mta-09.privateemail.com (Mail Delivery System)
+Subject: Delayed Mail (still being retried)
+To: nik@aetoswebsites.com
+Auto-Submitted: auto-replied
+MIME-Version: 1.0
+Content-Type: multipart/report; report-type=delivery-status;
+	boundary="4XHsK1d6pQz2Sd4F.1792411491/mta-09.privateemail.com"
+Content-Transfer-Encoding: 8bit
+Message-Id: <4XHsK1d6pQz2Sd4F@mta-09.privateemail.com>
+
+This is a MIME-encapsulated message.
+
+--4XHsK1d6pQz2Sd4F.1792411491/mta-09.privateemail.com
+Content-Description: Notification
+Content-Type: text/plain; charset=us-ascii
+
+This is the mail system at host mta-09.privateemail.com.
+
+####################################################################
+# THIS IS A WARNING ONLY.  YOU DO NOT NEED TO RESEND YOUR MESSAGE. #
+####################################################################
+
+Your message could not be delivered for more than 4 hour(s).
+It will be retried until it is 5 day(s) old.
+
+For further assistance, please send mail to postmaster.
+
+If you do so, please include this problem report. You can
+delete your own text from the attached returned message.
+
+                   The mail system
+
+<sales@slowserver-scaffolding.co.uk>: delivery temporarily suspended: connect
+    to mail.slowserver-scaffolding.co.uk[203.0.113.7]:25: Connection timed out
+
+--4XHsK1d6pQz2Sd4F.1792411491/mta-09.privateemail.com
+Content-Description: Delivery report
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; mta-09.privateemail.com
+X-Postfix-Queue-ID: 4XHn1B3cRdz2Sd0F
+X-Postfix-Sender: rfc822; nik@aetoswebsites.com
+Arrival-Date: Mon, 19 Oct 2026 03:01:03 -0400 (EDT)
+
+Final-Recipient: rfc822; sales@slowserver-scaffolding.co.uk
+Original-Recipient: rfc822;sales@slowserver-scaffolding.co.uk
+Action: delayed
+Status: 4.4.7
+Diagnostic-Code: X-Postfix; delivery temporarily suspended: connect to
+    mail.slowserver-scaffolding.co.uk[203.0.113.7]:25: Connection timed out
+Will-Retry-Until: Sat, 24 Oct 2026 03:01:03 -0400 (EDT)
+
+--4XHsK1d6pQz2Sd4F.1792411491/mta-09.privateemail.com
+Content-Description: Undelivered Message Headers
+Content-Type: text/rfc822-headers
+Content-Transfer-Encoding: 8bit
+
+Return-Path: <nik@aetoswebsites.com>
+Received: from [127.0.0.1] (unknown [104.28.86.12])
+	(Authenticated sender: nik@aetoswebsites.com)
+	by mta-09.privateemail.com (Postfix) with ESMTPA id 4XHn1B3cRdz2Sd0F
+	for <sales@slowserver-scaffolding.co.uk>; Mon, 19 Oct 2026 03:01:03 -0400 (EDT)
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=aetoswebsites.com;
+	s=default; t=1792393263;
+	bh=kMXeAEclq7x6ma8msTUAEBmJamr460CGBIJm601rfPY=;
+	h=From:To:Subject:Date:From;
+	b=TiT1OlgY+QR5+pGkiZ+1LpG3VpWAPn2ObjCBNProq7+S7j1E61M+0YJkKsVWSxDr
+	 v05WV1pjrYawxRSQVisuQ/AUB1F7UlNSmg1G1+9vwjqoapk44P+QGpINdKUO+G9Ag2nRPEfI
+	 qBrX7UgfNacDy7xmYG8bmLwOLmsyakICkqz5aG8qyGlNNgICnPWqZgvOwL1PA+x0MBcG32rW
+	 El1gs6a6KGe8cQdg7eFvATkx9AA4rDg/V+PNqF3mAg3fs2A2EW/vsKkR==
+From: Nik <nik@aetoswebsites.com>
+To: sales@slowserver-scaffolding.co.uk
+Subject: Your new website, Sam
+Date: Mon, 19 Oct 2026 07:01:03 GMT
+Message-ID: <9e2c4a1b-3d5f-4e7a-8b6c-0f1e2d3c4b5a@aetoswebsites.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: 7bit
+
+--4XHsK1d6pQz2Sd4F.1792411491/mta-09.privateemail.com--

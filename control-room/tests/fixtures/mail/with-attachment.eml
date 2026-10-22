@@ -1,0 +1,103 @@
+Return-Path: <tony@russomotors.co.uk>
+Delivered-To: nik@aetoswebsites.com
+Received: from mx1.privateemail.com
+	by mail.privateemail.com with LMTP
+	id 4Gd7Ow6vE2eTfQAAk2sz7A
+	(envelope-from <tony@russomotors.co.uk>)
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 06:12:03 -0400
+Received: from mail-wr1-f52.google.com (mail-wr1-f52.google.com [209.85.221.52])
+	(using TLSv1.3 with cipher TLS_AES_256_GCM_SHA384 (256/256 bits)
+	 key-exchange X25519 server-signature RSA-PSS (2048 bits) server-digest SHA256)
+	(No client certificate requested)
+	by mx1.privateemail.com (Postfix) with ESMTPS id 4XHr7Q2nVxz2Sd2A
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 06:12:02 -0400 (EDT)
+Received: by mail-wr1-f52.google.com with SMTP id ffacd0b85a97d-37d43a9bc03so1234567f8f.2
+        for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 03:12:02 -0700 (PDT)
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=russomotors.co.uk; s=google; t=1792404721; x=1793009521; darn=aetoswebsites.com;
+        h=to:subject:message-id:date:from:in-reply-to:references
+         :mime-version:from:to:cc:subject:date:message-id:reply-to;
+        bh=TJMzzN6Im4XsqFrkoQBsH8j810H6FUU6VPTU6ok/AZy=;
+        b=KCZUOeN/D+/+ckBoFriaA9uKx6+zMWLxODqSg53f009cRYPO9p0NbrlqIxad9pB3kFRA
+         sREVfcPssMXA7ODSzdaBTPWac5+F9lOT2gCYcAf5Zi4FIGd41Unjn2Y5K98oCXt0ztt9
+         SKM4VDIjswDvY2j4WSYzJEULFFkmkIUYfPyD30whwVUj011JmjlBObKAkk9zemiHa0Fm
+         EgvtXTWUk/dbl4r805nlF59+iFLcRC8kmvimee4h67hqyl0K3ZwM==
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20230601; t=1792404721; x=1793009521;
+        h=to:subject:message-id:date:from:in-reply-to:references
+         :mime-version:x-gm-message-state:from:to:cc:subject:date:message-id
+         :reply-to;
+        bh=LPOnDReiIKbpCGlrrtPUpAlstHxPFFii3+cF8US5V9U=;
+        b=juU42UI/LMy74yW1Bo5ov3JXYIEei4NkOm58TINVlKadPFzFUksxvwiHtqbk47iISRD+
+         +jH7kwRjd/XutugxcMS41LFPkYp/U8B0wrqPbnY3CQgs9vKLkInVFsmcyTlpgjtKHXYd
+         Rq6/bJaMqFywZqHWRqHoe7PjVppjqjOwtkV1VRPF==
+X-Gm-Message-State: AOJu0YYzeIBeVl0v/MWIQ98gnP/ebH5FNIpJh+KgwvpYd1pPJvXH0/NKgypCZXpDeGAq+Myi
+	uH55rN6f2P+A/zS16NaapZAkhtjc2U3QudYREvzW
+X-Google-Smtp-Source: AGHT+IGVpBd/ySx+6pSnnlWwXKASCoLhiMZy+kBvTFu+uIV2fMTIeOSGryJkEqyAnLG
+X-Received: by 2002:a17:907:7f25:b0:a99:4b0e:1d3c with SMTP id qf37-20020a1709077f2500b00a994b0e1d3cmr1792404721ejc.12.1792404721093;
+        Mon, 19 Oct 2026 03:12:02 -0700 (PDT)
+MIME-Version: 1.0
+References: <c5a9e3f1-7b2d-4c8e-9a6f-1d0b3e5c7a92@aetoswebsites.com>
+In-Reply-To: <c5a9e3f1-7b2d-4c8e-9a6f-1d0b3e5c7a92@aetoswebsites.com>
+From: Tony Russo <tony@russomotors.co.uk>
+Date: Mon, 19 Oct 2026 11:12:01 +0100
+Message-ID: <CAH5pZ0sT8u+Wq3RkJ1vYb6nE2dL9xF4cA7gQm0oUi3VhKe8Xyw@mail.gmail.com>
+Subject: Re: Your new website, Tony
+To: Nik <nik@aetoswebsites.com>
+Content-Type: multipart/mixed; boundary="000000000000b8c41f0624c2e5a1"
+
+--000000000000b8c41f0624c2e5a1
+Content-Type: multipart/alternative; boundary="000000000000b8c41d0624c2e59f"
+
+--000000000000b8c41d0624c2e59f
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+See attached
+
+On Mon, 19 Oct 2026 at 08:01, Nik <nik@aetoswebsites.com> wrote:
+
+> Hi Tony,
+>
+> I made you a new website for Russo Motors, using your photos and your Goo=
+gle reviews. Have a look:
+> https://aetoswebsites.com/d/russo-motors-2b8c
+>
+> Nik
+> Aetos Websites
+>
+> If you'd rather not hear from me, just reply "no thanks".
+
+--000000000000b8c41d0624c2e59f
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+<div dir=3D"ltr">See attached</div><br><div class=3D"gmail_quote gmail_quot=
+e_container"><div dir=3D"ltr" class=3D"gmail_attr">On Mon, 19 Oct 2026 at 0=
+8:01, Nik &lt;<a href=3D"mailto:nik@aetoswebsites.com">nik@aetoswebsites.co=
+m</a>&gt; wrote:<br></div><blockquote class=3D"gmail_quote" style=3D"margin=
+:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex"=
+>Hi Tony,<br><br>I made you a new website for Russo Motors, using your phot=
+os and your Google reviews. Have a look:<br><a href=3D"https://aetoswebsite=
+s.com/d/russo-motors-2b8c">https://aetoswebsites.com/d/russo-motors-2b8c</a=
+><br><br>Nik<br>Aetos Websites<br><br>If you&#39;d rather not hear from me,=
+ just reply &quot;no thanks&quot;.<br></blockquote></div>
+
+--000000000000b8c41d0624c2e59f--
+--000000000000b8c41f0624c2e5a1
+Content-Type: application/pdf; name="current-hosting-invoice.pdf"
+Content-Disposition: attachment; filename="current-hosting-invoice.pdf"
+Content-Transfer-Encoding: base64
+Content-ID: <f_m2h4k9x50>
+X-Attachment-Id: f_m2h4k9x50
+
+JVBERi0xLjQKJeLjz9MKMSAwIG9iago8PCAvVHlwZSAvQ2F0YWxvZyAvUGFnZXMgMiAwIFIgPj4K
+ZW5kb2JqCjIgMCBvYmoKPDwgL1R5cGUgL1BhZ2VzIC9LaWRzIFszIDAgUl0gL0NvdW50IDEgPj4K
+ZW5kb2JqCjMgMCBvYmoKPDwgL1R5cGUgL1BhZ2UgL1BhcmVudCAyIDAgUiAvTWVkaWFCb3ggWzAg
+MCA1OTUgODQyXSAvQ29udGVudHMgNCAwIFIgL1Jlc291cmNlcyA8PCAvRm9udCA8PCAvRjEgNSAw
+IFIgPj4gPj4gPj4KZW5kb2JqCjQgMCBvYmoKPDwgL0xlbmd0aCA4OCA+PgpzdHJlYW0KQlQgL0Yx
+IDE0IFRmIDcyIDc3MCBUZCAoSW52b2ljZSAyMjkxIC0gd2Vic2l0ZSBob3N0aW5nLCAxMiBtb250
+aHM6IDM2MC4wMCkgVGogRVQKZW5kc3RyZWFtCmVuZG9iago1IDAgb2JqCjw8IC9UeXBlIC9Gb250
+IC9TdWJ0eXBlIC9UeXBlMSAvQmFzZUZvbnQgL0hlbHZldGljYSA+PgplbmRvYmoKdHJhaWxlcgo8
+PCAvUm9vdCAxIDAgUiAvU2l6ZSA2ID4+CiUlRU9GCg==
+--000000000000b8c41f0624c2e5a1--

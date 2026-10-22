@@ -1,0 +1,83 @@
+Return-Path: <garypike.locksmith@icloud.com>
+Delivered-To: nik@aetoswebsites.com
+Received: from mx2.privateemail.com
+	by mail.privateemail.com with LMTP
+	id e1rVNyRsE2eo1wAAk2sz7A
+	(envelope-from <garypike.locksmith@icloud.com>)
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 04:33:30 -0400
+Received: from st43p00im-ztfb10073301.me.com (st43p00im-ztfb10073301.me.com [17.58.63.179])
+	(using TLSv1.2 with cipher ECDHE-RSA-AES256-GCM-SHA384 (256/256 bits))
+	(No client certificate requested)
+	by mx2.privateemail.com (Postfix) with ESMTPS id 4XHnR85tYvz3Ff1T
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 04:33:28 -0400 (EDT)
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=icloud.com;
+	s=1a1hai; t=1792398806;
+	bh=oRn/d8P8PQc8xnSb3bKOvld2BqP7JPGfxP5yo9Ov7Ky=;
+	h=Content-Type:Mime-Version:Subject:Message-Id:Date:From:To;
+	b=FEdJvTwBZDNOKkcpw6eAug4ECoBkpF8O5yTpCgAwWSc2boKEHpK+oK2R4pJ6PiQg
+	 220+vkjRzXzzKJWqvk/fZS7dHkzd0/zScM9Gc4kDBB4bWOq7fQNr9S5UKtkYN8y+EQO0+2F/
+	 py3oo8WuwfSHAwKKBtd4fYU2fRwBPeqzRoRJtcEMxhXUvS6r9xq001yLQfsgCsrQwxUFp2x1
+	 ZWMBqetSufd26qDhu1D+ch1cFmxaa8SCYKyQzgXtlNyBYF1hg0QX3axE==
+Received: from smtpclient.apple (st43p00im-dlb-asmtp-mailmevip.me.com [17.42.251.41])
+	by st43p00im-ztfb10073301.me.com (Postfix) with ESMTPSA id 2E1A64C0B2A
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 08:33:25 +0000 (UTC)
+Content-Type: multipart/alternative; boundary=Apple-Mail-1F4C8B2E-7D3A-4E9B-A5C6-0B8D2F1E3A47
+Content-Transfer-Encoding: 7bit
+From: Gary Pike <garypike.locksmith@icloud.com>
+Mime-Version: 1.0 (1.0)
+Subject: Re: Your new website, Gary
+Date: Mon, 19 Oct 2026 09:33:21 +0100
+Message-Id: <A7B3C9D1-4E2F-4A6B-8C0D-1E5F7A9B3C2D@icloud.com>
+References: <4f1a8c3e-6b2d-4e9f-a7c5-3d0e2b1f9a68@aetoswebsites.com>
+In-Reply-To: <4f1a8c3e-6b2d-4e9f-a7c5-3d0e2b1f9a68@aetoswebsites.com>
+To: Nik <nik@aetoswebsites.com>
+X-Mailer: iPhone Mail (22A3354)
+X-Proofpoint-ORIG-GUID: Xn3kJ5vQe8wL0bR2tY6uP9sD4fG7hA1c
+X-Proofpoint-GUID: Xn3kJ5vQe8wL0bR2tY6uP9sD4fG7hA1c
+X-Proofpoint-Virus-Version: vendor=baseguard
+ engine=ICAP:2.0.293,Aquarius:18.0.1051,Hydra:6.0.680,FMLib:17.12.62.30
+ definitions=2026-10-19_06,2026-10-17_01,2026-10-19_01 signatures=0
+X-Proofpoint-Spam-Details: rule=notspam policy=default score=0 phishscore=0 spamscore=0
+ bulkscore=0 suspectscore=0 malwarescore=0 mlxlogscore=999 mlxscore=0
+ clxscore=1030 adultscore=0 classifier=spam adjust=0 reason=mlx scancount=1
+ engine=8.19.0-2308100000 definitions=main-2610190071
+
+
+--Apple-Mail-1F4C8B2E-7D3A-4E9B-A5C6-0B8D2F1E3A47
+Content-Type: text/plain;
+	charset=us-ascii
+Content-Transfer-Encoding: 7bit
+
+No thanks.
+
+Sent from my iPhone
+
+> On 19 Oct 2026, at 08:01, Nik <nik@aetoswebsites.com> wrote:
+> 
+> Hi Gary,
+> 
+> I made you a new website for Pike Locksmiths, using your photos and your Google reviews. Have a look:
+> https://aetoswebsites.com/d/pike-locksmiths-c3d4
+> 
+> Nik
+> Aetos Websites
+> 
+> If you'd rather not hear from me, just reply "no thanks".
+
+--Apple-Mail-1F4C8B2E-7D3A-4E9B-A5C6-0B8D2F1E3A47
+Content-Type: text/html;
+	charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<html><head><meta http-equiv=3D"content-type" content=3D"text/html; charset=
+=3Dutf-8"></head><body dir=3D"auto">No thanks.<br id=3D"lineBreakAtBeginnin=
+gOfSignature"><div dir=3D"ltr">Sent from my iPhone</div><div dir=3D"ltr"><b=
+r><blockquote type=3D"cite">On 19 Oct 2026, at 08:01, Nik &lt;nik@aetoswebs=
+ites.com&gt; wrote:<br><br></blockquote></div><blockquote type=3D"cite"><di=
+v dir=3D"ltr">=EF=BB=BF<span>Hi Gary,</span><br><span></span><br><span>I ma=
+de you a new website for Pike Locksmiths, using your photos and your Google=
+ reviews. Have a look:</span><br><span>https://aetoswebsites.com/d/pike-loc=
+ksmiths-c3d4</span><br><span></span><br><span>Nik</span><br><span>Aetos Web=
+sites</span><br><span></span><br><span>If you'd rather not hear from me, ju=
+st reply &quot;no thanks&quot;.</span><br></div></blockquote></body></html>
+--Apple-Mail-1F4C8B2E-7D3A-4E9B-A5C6-0B8D2F1E3A47--

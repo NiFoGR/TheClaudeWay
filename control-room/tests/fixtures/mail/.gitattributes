@@ -1,0 +1,2 @@
+# Real mail uses CRLF line endings; keep these fixtures byte-for-byte (no end-of-line conversion).
+*.eml -text

@@ -1,0 +1,69 @@
+Return-Path: <info@cafeplumbing.co.uk>
+Delivered-To: nik@aetoswebsites.com
+Received: from mx2.privateemail.com
+	by mail.privateemail.com with LMTP
+	id yP4oKk1vE2e3cgAAk2sz7A
+	(envelope-from <info@cafeplumbing.co.uk>)
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 06:05:41 -0400
+Received: from smtp-out.heartinternet.uk (smtp-out.heartinternet.uk [79.170.44.25])
+	(using TLSv1.3 with cipher TLS_AES_256_GCM_SHA384 (256/256 bits))
+	(No client certificate requested)
+	by mx2.privateemail.com (Postfix) with ESMTPS id 4XHr3m0BcQz3Ff2V
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 06:05:40 -0400 (EDT)
+DKIM-Signature: v=1; a=rsa-sha256; q=dns/txt; c=relaxed/relaxed;
+	d=cafeplumbing.co.uk; s=default; h=Content-Transfer-Encoding:Content-Type:
+	MIME-Version:Message-ID:Date:Subject:To:From:Sender:Reply-To:Cc:Content-ID:
+	Content-Description:Resent-Date:Resent-From:Resent-Sender:Resent-To:Resent-Cc
+	:Resent-Message-ID:In-Reply-To:References:List-Id:List-Help:List-Unsubscribe:
+	List-Subscribe:List-Post:List-Owner:List-Archive;
+	bh=V1YSbTgYRC1vpPTNqZpRYT6ex/olzhsU1kfrJPYmtoK=; b=VHZ7N2oZMAt6iAvO9BUWQAeLVlme4myTcL+plrT/
+	ZS/m9upSYxaC4mxICjjNb5OFosQVzRguW9jwVk7WoC7jiKAYqgaOYcszTzOJVCVxZBZQlTqm
+	yBndYtbCbaiuFEydcAsEjALSe9fSPhD3UJfrbPJwtQCCHicdase6WhW27lUEPt9Z1CDwgw+U
+	jA+rZQZP1Sy4kalcc8iw3Os9zVmS6LLlMW3aOJWSfPI1woIk26E4YMbiDS9g==;
+From: =?iso-8859-1?Q?Caf=E9_Plumbing_Ltd?= <info@cafeplumbing.co.uk>
+To: "nik@aetoswebsites.com" <nik@aetoswebsites.com>
+Subject: RE: Your new website, Maria
+Date: Mon, 19 Oct 2026 11:05:37 +0100
+Message-ID: <e4b2c71a9d3f4e6b8a5c0d1f2e3a4b5c@cafeplumbing.co.uk>
+In-Reply-To: <0d6f3b2a-5e7c-4a91-8b4d-c2e1f0a9b8d7@aetoswebsites.com>
+References: <0d6f3b2a-5e7c-4a91-8b4d-c2e1f0a9b8d7@aetoswebsites.com>
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+<html><head>
+<meta http-equiv=3D"Content-Type" content=3D"text/html; charset=3Dutf-8">
+<style type=3D"text/css">p { margin: 0; font-family: Calibri, sans-serif; f=
+ont-size: 11pt; }</style>
+</head>
+<body>
+<p>Hi Nik,</p>
+<p>&nbsp;</p>
+<p>Thanks &amp; yes, we&#39;d like to go ahead. Is the &pound;1,950 a one-o=
+ff, and is the &#8220;first 60 days free&#8221; on top of that?</p>
+<p>&nbsp;</p>
+<p>Best wishes,<br>
+Maria Rossi<br>
+Caf&eacute; Plumbing Ltd</p>
+<div id=3D"appendonsend"></div>
+<hr style=3D"display:inline-block;width:98%">
+<div id=3D"divRplyFwdMsg" dir=3D"ltr"><font face=3D"Calibri, sans-serif" st=
+yle=3D"font-size:11pt" color=3D"#000000"><b>From:</b> Nik &lt;nik@aetoswebs=
+ites.com&gt;<br>
+<b>Sent:</b> 19 October 2026 08:01<br>
+<b>To:</b> info@cafeplumbing.co.uk &lt;info@cafeplumbing.co.uk&gt;<br>
+<b>Subject:</b> Your new website, Maria</font>
+<div>&nbsp;</div>
+</div>
+<div>Hi Maria,<br>
+<br>
+I made you a new website for Caf&eacute; Plumbing, using your photos and yo=
+ur Google reviews. Have a look:<br>
+https://aetoswebsites.com/d/cafe-plumbing-41ad<br>
+<br>
+Nik<br>
+Aetos Websites<br>
+<br>
+If you'd rather not hear from me, just reply &quot;no thanks&quot;.</div>
+</body>
+</html>

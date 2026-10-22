@@ -1,0 +1,94 @@
+Received: from mta-11-4.privateemail.com (198.54.127.88)
+        by mx.cloudflare.net (unknown) id 9JkO2LWmaBc1
+        for <replies@aetos-mail.co.uk>; Mon, 19 Oct 2026 10:12:09 +0000
+ARC-Seal: i=1; a=rsa-sha256; s=2024; d=email.cloudflare.net; cv=none;
+	b=6snR8hZDYAM6sNwuFbYKbwyC/hNFauR/mBoWVIPB/p4Ni9h0tato8U9RoBgipnvw
+	f1LvKccSt0JWiQDOAYtBm4zplGihs9AFZvF72OkfMzIGqbSogWkoAoNuzA9gpjJ+ROEGZSFl
+	xLfNLqAqlGsaNFo4VvBs6B9xnAzBNrJkQTnrN3CiJcZzrcdb8K25wlLGOt6VtgF/A7r/e/PR
+	4nZHgUaZTjFUxRtjIyk7Esbb7aP3/ItF+L+q+oxk==;
+ARC-Message-Signature: i=1; a=rsa-sha256; s=2024; d=email.cloudflare.net; c=relaxed/relaxed;
+	h=Content-Type:MIME-Version:Subject:References:In-Reply-To:Message-ID:To:From:Date:DKIM-Signature; t=1792404729;
+	bh=rUNUSPmQE6XqaQqYrr6RDtpvxkbVLeDu26kePt6tNUQ=;
+	b=EuFVGr/MHcTCFzmS2vnV8jMaCZO0uRM3byHFTVVd++31dCwYqhAG2NgIdyHgEJd8
+	3yL6mGsThWtrI4p2DjpYjS3kupYlkxooba4kiUELliFpu62eFgMoWzr9kYzeSnjLkjpg/Kt5
+	64f00VzkzWGjLB5CJmZNdx2MobwkTn6kdeppdZRv==;
+ARC-Authentication-Results: i=1; mx.cloudflare.net;
+	dkim=pass header.d=yahoo.co.uk header.s=s2048 header.b=gps6pkxn;
+	dmarc=pass header.from=yahoo.co.uk policy.dmarc=reject;
+	spf=pass (mx.cloudflare.net: domain of srs0=qk3v=ra=yahoo.co.uk=dave.wilkins@aetoswebsites.com designates 198.54.127.88 as permitted sender) smtp.mailfrom=SRS0=Qk3v=RA=yahoo.co.uk=dave.wilkins@aetoswebsites.com;
+	arc=none smtp.remote-ip=198.54.127.88
+Received-SPF: pass (mx.cloudflare.net: domain of srs0=qk3v=ra=yahoo.co.uk=dave.wilkins@aetoswebsites.com designates 198.54.127.88 as permitted sender)
+	receiver=mx.cloudflare.net; client-ip=198.54.127.88; envelope-from="SRS0=Qk3v=RA=yahoo.co.uk=dave.wilkins@aetoswebsites.com"; helo=mta-11-4.privateemail.com;
+Received: from mta-11.privateemail.com (localhost [127.0.0.1])
+	by mta-11.privateemail.com (Postfix) with ESMTP id 4XHr7c4Wnfz2Sd2C
+	for <replies@aetos-mail.co.uk>; Mon, 19 Oct 2026 06:12:08 -0400 (EDT)
+X-Sieve-Redirected-From: nik@aetoswebsites.com
+Delivered-To: nik@aetoswebsites.com
+Received: from mx2.privateemail.com
+	by mail.privateemail.com with LMTP
+	id 7mQ9DjhtE2cL2QAAk2sz7A
+	(envelope-from <dave.wilkins@yahoo.co.uk>)
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 06:12:08 -0400
+Received: from sonic311-24.consmr.mail.ir2.yahoo.com (sonic311-24.consmr.mail.ir2.yahoo.com [77.238.176.156])
+	(using TLSv1.3 with cipher TLS_AES_128_GCM_SHA256 (128/128 bits))
+	(No client certificate requested)
+	by mx2.privateemail.com (Postfix) with ESMTPS id 4XHr7b6Hk3z3Ff3N
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 06:12:07 -0400 (EDT)
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=yahoo.co.uk; s=s2048; t=1792404725; bh=ZKXT7XZfQ7V2/3DcbNIkR2NqNlSV6ko8DUqJ7oNsHRn=; h=Date:From:To:In-Reply-To:References:Subject:From:Subject:Reply-To; b=BNgrCS6PvKVhgDKQNAA9/8HsIlLpOk0JsjphSmduMINnTM9Xikei0VhSU280ba25tQOJ4Ce6BjEuEsMehgkuzg5QWfphX3ZNZeBRSr/RJnvBqZAHd9XY/L4PakRIau5iG7LoUoLqpoqcNKefIBB49UbMDLZQTbGKNtV3lDrnv8lgzpKWwbtASkSeRMR1cjVdrK+7ZAxT6uVY7NBUH0JtPUqIConF5EoIkWFT00ZtGaGYfMkK+qsyRZO5czByTJG/tg3HDLepuX8WEw51jYEyEeCLC8bqG2EWUHn1GqQvyPGt8FOs5LRauZKwzoAVRzK6ORmHYM7QVj0A07CYeGjL
+X-SONIC-DKIM-SIGN: v=1; a=rsa-sha256; c=relaxed/relaxed; d=yahoo.com; s=s2048; t=1792404725; bh=N+JQ79hqy18bNa02J7gG2I0Fyp2jO8mCD4ycE1PP0lw=; h=X-Sonic-MF:Date:From:To:Subject:From:Subject; b=IF3AiswjCwJxYC/mOaTUKNm4hzS73MVxigiWhy17cg3BTD2GSRdjn0xl/UaGzFyJpW+6ncIq1dGiGAF3ykTKRgVtkD/I84hHauSNRaSQRpdBmPx5EV0kXK6wDdKlz7zv0ynJpXZb55C6cd9g8aoE847/g4rEJsaxYTgq5LYQpkgQgnu3FNdea7n0dke45LozAXEociNCNizFThKoLjVWVMT75U8zArx7BBLSpPe4og4Det+KslveykgOVE8mmVweYgsKuYrqlO1eIGSt1kc1p6Tccrdhc5oIrEzdn+6JIcoAx+Jd5KOBpg7ZcbgNMiMexy9OaQ0gL3Uhm+q2vGtG
+X-YMail-OSG: 3/s5TITrayWQPpasbDWV7mRJrv/AlGrw4Nt34chrPlOSrgmbnzrFXFW93WL8dgvhmOpUPrMP
+ BF4sBdVnhI9OeKa13ov+omO++e1YPM/MY0TbMM33+G1k+axNDm2GUhzM4RJoSN9Eah1o5rkl
+ eOf0zx5YpsHWsbc3tbFnEPjyPFNglm1tYMWdclR6--
+X-Sonic-MF: <dave.wilkins@yahoo.co.uk>
+X-Sonic-ID: 3c9d1f2e-8a4b-4c6d-9e0f-7b1a2c3d4e5f
+Received: from sonic.gate.mail.ne1.yahoo.com by sonic311.consmr.mail.ir2.yahoo.com with HTTP; Mon, 19 Oct 2026 10:12:05 +0000
+Date: Mon, 19 Oct 2026 10:12:01 +0000 (UTC)
+From: Dave Wilkins <dave.wilkins@yahoo.co.uk>
+To: Nik <nik@aetoswebsites.com>
+Message-ID: <1283746529.4567821.1792404721234@mail.yahoo.com>
+In-Reply-To: <e9b4c2d7-3f1a-4b8e-9c5d-2a7f0e1b6c43@aetoswebsites.com>
+References: <e9b4c2d7-3f1a-4b8e-9c5d-2a7f0e1b6c43@aetoswebsites.com>
+Subject: Re: Your new website, Dave
+MIME-Version: 1.0
+Content-Type: multipart/alternative; 
+	boundary="----=_Part_4567820_1938475612.1792404721233"
+X-Mailer: WebService/1.1.24562 YahooMailAndroidMobile
+Content-Length: 1864
+
+------=_Part_4567820_1938475612.1792404721233
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Go on then, what do I need to do next? Can you put my Checkatrade link on i=
+t as well
+
+Sent from Yahoo Mail on Android=20
+=20
+  On Mon, 19 Oct 2026 at 8:01, Nik<nik@aetoswebsites.com> wrote:   Hi Dave,
+I made you a new website for Wilkins Removals, using your photos and your G=
+oogle reviews. Have a look:
+https://aetoswebsites.com/d/wilkins-removals-e5f6
+Nik
+Aetos Websites
+If you'd rather not hear from me, just reply "no thanks". =20
+
+------=_Part_4567820_1938475612.1792404721233
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: quoted-printable
+
+Go on then, what do I need to do next? Can you put my Checkatrade link on i=
+t as well<br><br><div id=3D"ymail_android_signature"><a id=3D"ymail_android=
+_signature_link" href=3D"https://mail.onelink.me/107872968?pid=3Dnativeplac=
+ement&amp;c=3DGlobal_Acquisition_YMktg_315_Internal_EmailSignature&amp;af_s=
+ub1=3DAcquisition&amp;af_sub2=3DGlobal_YMktg&amp;af_sub3=3D&amp;af_sub4=3D1=
+00000604&amp;af_sub5=3DEmailSignature__Static_">Sent from Yahoo Mail on And=
+roid</a></div> <br> <blockquote style=3D"margin: 0 0 20px 0;"> <div style=
+=3D"font-family:Roboto, sans-serif; color:#6D00F6;"> <div>On Mon, 19 Oct 20=
+26 at 8:01, Nik</div><div>&lt;nik@aetoswebsites.com&gt; wrote:</div> </div>=
+ <div style=3D"padding: 10px 0 0 20px; margin: 10px 0 0 0; border-left: 1px=
+ solid #6D00F6;"> Hi Dave,<br>I made you a new website for Wilkins Removals=
+, using your photos and your Google reviews. Have a look:<br>https://aetosw=
+ebsites.com/d/wilkins-removals-e5f6<br>Nik<br>Aetos Websites<br>If you'd ra=
+ther not hear from me, just reply &quot;no thanks&quot;.</div> </blockquote=
+>
+------=_Part_4567820_1938475612.1792404721233--

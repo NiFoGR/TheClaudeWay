@@ -1,0 +1,103 @@
+Return-Path: <lee.barnes.electrical@gmail.com>
+Delivered-To: nik@aetoswebsites.com
+Received: from mx1.privateemail.com
+	by mail.privateemail.com with LMTP
+	id iBqJCe/4E2dOvAAAk2sz7A
+	(envelope-from <lee.barnes.electrical@gmail.com>)
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 14:22:40 -0400
+Received: from mail-ed1-f44.google.com (mail-ed1-f44.google.com [209.85.208.44])
+	(using TLSv1.3 with cipher TLS_AES_256_GCM_SHA384 (256/256 bits)
+	 key-exchange X25519 server-signature RSA-PSS (2048 bits) server-digest SHA256)
+	(No client certificate requested)
+	by mx1.privateemail.com (Postfix) with ESMTPS id 4XHq0C4ZkHz2Sd19
+	for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 14:22:39 -0400 (EDT)
+Received: by mail-ed1-f44.google.com with SMTP id 4fb4d7f45d1cf-5c96df52c52so1234567a12.0
+        for <nik@aetoswebsites.com>; Mon, 19 Oct 2026 11:22:39 -0700 (PDT)
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=gmail.com; s=20230601; t=1792434158; x=1793038958; darn=aetoswebsites.com;
+        h=to:subject:message-id:date:from:in-reply-to:references
+         :mime-version:from:to:cc:subject:date:message-id:reply-to;
+        bh=CN0n7r6bjicY+YOT4HidZFEeTFyJaNYYDItUNtNNWZ3=;
+        b=lNi3H1T3iytTWV/l9Pn3Xw8IUbQIQlTETJDLLpkIwhjFxSzxLPlKZgKd3Oie2aO6bsD5
+         tLCYM9HDRNXl2tSQzrawjiQsmDjhzn0sO7zOm9S2LDYUoq1UOxe5VfkYb07Snu8IlpF1
+         GUHC0ltxtjhOKzJqg0+5NnpaW7fvXHD2VLEZiK2ychw9BTbIwQZF4zgMnSH1eujDD61L
+         oCzuVtIu34xrGTHbhugx/93Zh4Rx6dLcruPpjxTZBXyDF0u3Y8gkinrot6GTqltvtr6K
+         BPvFNAyYIsU0PjD92VWzKR/S/rxCjweqD0Icx6KfLb8KtloeiqvDp+ESjq/+TDga4dH7
+         Br/6bKxFZuYX5Gn8vF2YFUSOvt2Oq4INWNxAQitmZR03U+Pes5Bl==
+X-Google-DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+        d=1e100.net; s=20230601; t=1792434158; x=1793038958;
+        h=to:subject:message-id:date:from:in-reply-to:references
+         :mime-version:x-gm-message-state:from:to:cc:subject:date:message-id
+         :reply-to;
+        bh=WXz8fH/8Ll7zYk5xb2s0TkyF4NGDBuem+JpoJIDjiK6=;
+        b=WQ1Ghb8HIaCF/JyHGwH+PuGoYbBKWy0wA4XNRodKh8kUwFE3YPEQThKfyyaDI/RTnYmr
+         DkGpVOdVj41l9eRrzqZn9P7EfCX5dVobOp1hW6toX93O6iTfPtf7HaUVOS60lkL/+kOD
+         xc6peP1FMK0v6FvZxEiG5XpYH6YgwKAoLQ9f8l58==
+X-Gm-Message-State: AOJu0YzWF4QGWxvtBOZuTvTkkQ2cUxrc0C9FHsbDjnp8jnP3flFjQCgruGw3v7OMIqoKtiAC
+	20HxF6LVR3Oc7YdgPXfRS1f2Fee5Trog6K7hBZTv
+X-Google-Smtp-Source: AGHT+IGJ2rPq/XyJVmF11/3oXaI8EfBV1F1cd+7Xdh1JfonzO7yW1B03sxQQoYhIujp
+X-Received: by 2002:a17:907:7f25:b0:a99:4b0e:1d3c with SMTP id qf37-20020a1709077f2500b00a994b0e1d3cmr1792434158ejc.12.1792434158093;
+        Mon, 19 Oct 2026 11:22:39 -0700 (PDT)
+MIME-Version: 1.0
+References: <6b3e9d2f-1a4c-4f7e-b8d0-5c2a7e9f1b36@aetoswebsites.com>
+In-Reply-To: <6b3e9d2f-1a4c-4f7e-b8d0-5c2a7e9f1b36@aetoswebsites.com>
+From: Lee Barnes <lee.barnes.electrical@gmail.com>
+Date: Mon, 19 Oct 2026 19:22:38 +0100
+Message-ID: <CAF9wR2yN5vX+Lh0Tq8mKc3sJd7pBg1eZa4uYo6iWf2nQx0Rt5A@mail.gmail.com>
+Subject: Re: Your new website, Lee
+To: Nik <nik@aetoswebsites.com>
+Content-Type: multipart/alternative; boundary="000000000000c93d7e0624c9f8a4"
+
+--000000000000c93d7e0624c9f8a4
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+Hi Nik,
+
+I'm not going to unsubscribe, the site looks decent and I can see you've us=
+ed our reviews.
+
+Before I commit to anything though, who owns the domain if we stop paying, =
+and can I change the photos myself or does it have to go through you?
+
+Ring me after 5 if that's easier for you.
+
+Cheers mate
+Lee
+
+On Mon, 19 Oct 2026 at 08:01, Nik <nik@aetoswebsites.com> wrote:
+
+> Hi Lee,
+>
+> I made you a new website for Barnes Electrical, using your photos and you=
+r Google reviews. Have a look:
+> https://aetoswebsites.com/d/barnes-electrical-6d1f
+>
+> Nik
+> Aetos Websites
+>
+> If you'd rather not hear from me, just reply "no thanks".
+
+--000000000000c93d7e0624c9f8a4
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+<div dir=3D"auto"><div>Hi Nik,</div><div dir=3D"auto"><br></div><div dir=3D=
+"auto">I&#39;m not going to unsubscribe, the site looks decent and I can se=
+e you&#39;ve used our reviews.</div><div dir=3D"auto"><br></div><div dir=3D=
+"auto">Before I commit to anything though, who owns the domain if we stop p=
+aying, and can I change the photos myself or does it have to go through you=
+?</div><div dir=3D"auto"><br></div><div dir=3D"auto">Ring me after 5 if tha=
+t&#39;s easier for you.</div><div dir=3D"auto"><br></div><div dir=3D"auto">=
+Cheers mate</div><div dir=3D"auto">Lee</div></div><br><div class=3D"gmail_q=
+uote gmail_quote_container"><div dir=3D"ltr" class=3D"gmail_attr">On Mon, 1=
+9 Oct 2026 at 08:01, Nik &lt;<a href=3D"mailto:nik@aetoswebsites.com">nik@a=
+etoswebsites.com</a>&gt; wrote:<br></div><blockquote class=3D"gmail_quote" =
+style=3D"margin:0 0 0 .8ex;border-left:1px #ccc solid;padding-left:1ex">Hi =
+Lee,<br><br>I made you a new website for Barnes Electrical, using your phot=
+os and your Google reviews. Have a look:<br><a href=3D"https://aetoswebsite=
+s.com/d/barnes-electrical-6d1f">https://aetoswebsites.com/d/barnes-electric=
+al-6d1f</a><br><br>Nik<br>Aetos Websites<br><br>If you&#39;d rather not hea=
+r from me, just reply &quot;no thanks&quot;.<br></blockquote></div>
+
+--000000000000c93d7e0624c9f8a4--
