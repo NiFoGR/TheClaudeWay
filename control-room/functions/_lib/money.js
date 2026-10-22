@@ -3,6 +3,7 @@
 // Income  = build fees (on the day paid) + retainers (monthly, starting once the free days end, until cancelled)
 //           + any other money in. Costs = Google API (estimated from logged calls) + costs you add.
 // Forecast months only count what is already committed: active clients, monthly costs, average Google spend.
+import { PACKAGES } from "./offer.js";
 
 // Google Places API (New) list prices, USD per 1,000 calls, and the free calls each SKU gets every month.
 // SKUs match lead-manager/aetos_leads/usage.py. Check https://developers.google.com/maps/billing-and-pricing/pricing
@@ -15,11 +16,8 @@ export const GOOGLE_SKUS = {
 };
 export const USD_TO_GBP = 0.75; // approximate; Google bills in your account's currency
 
-export const PACKAGES = {
-  full: { label: "Full Package", build: 195000, monthly: 24900, freeDays: 60 },
-  weekend: { label: "Weekend deal", build: 175000, monthly: 24900, freeDays: 90 },
-  website: { label: "Website Only", build: 175000, monthly: 0, freeDays: 0 },
-};
+// Prices live only in offer.js; re-exported here for the modules that already import them from money.js.
+export { PACKAGES } from "./offer.js";
 export const COST_CATEGORIES = ["Mailboxes", "Domains", "Tools & software", "Ads", "Other"];
 export const DEFAULT_GOAL = 500000; // £5,000 a month recurring
 const PAST_MONTHS = 5;
@@ -219,7 +217,7 @@ export async function loadMoney(DB, today = new Date().toISOString().slice(0, 10
   return { summary, entries: entries.results, payments: payments.results.slice(0, 50) };
 }
 
-/** "£1,950.00" → 195000. Accepts numbers or strings with £ and commas. Returns NaN if not a sensible amount. */
+/** "£12.50" → 1250. Accepts numbers or strings with £ and commas. Returns NaN if not a sensible amount. */
 export function toPence(value) {
   const n = Number(String(value ?? "").replace(/[£,\s]/g, ""));
   return Number.isFinite(n) && n >= 0 && n < 10_000_000 ? Math.round(n * 100) : NaN;
