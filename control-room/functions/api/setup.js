@@ -1,6 +1,9 @@
-// GET /api/setup → which parts of the Control Room are connected, in plain English. Never returns secret values.
+// GET /api/setup → which parts of the Control Room are connected, in plain English, plus the Setup page's status
+// (mailboxes, Claude, DNS, business details, receiving: loadSetupStatus) and what's still to set up (setupGaps).
+// Never returns secret values: the status only says whether each secret is set.
+import { loadSetupStatus, setupGaps } from "../_lib/setupStatus.js";
 import { getSetting, isCurrent, stripeMode } from "../_lib/stripe.js";
-import { json } from "../_lib/util.js";
+import { db, json } from "../_lib/util.js";
 
 async function checkStripe(env) {
   if (!env.STRIPE_SECRET_KEY) return { ok: false, fix: "Not connected yet: follow “Connect Stripe” below." };
@@ -40,8 +43,20 @@ async function checkGitHub(env) {
   return { ok: false, fix: `GitHub answered ${resp.status}. Try again in a minute.` };
 }
 
+// The status and gaps, or {status: null, gaps: [], status_error} when the database can't be read, so the checks above
+// still show (the Database check says how to fix it).
+async function readStatus(env) {
+  try {
+    const status = await loadSetupStatus(await db(env), env, new Date());
+    return { status, gaps: setupGaps(status) };
+  } catch (err) {
+    const why = String(err?.message ?? err).split("\n")[0].slice(0, 300);
+    return { status: null, gaps: [], status_error: `Couldn't read the setup status: ${why}` };
+  }
+}
+
 export async function onRequestGet({ env }) {
-  const [database, github, payments] = await Promise.all([checkDatabase(env), checkGitHub(env), checkStripe(env)]);
+  const [database, github, payments, setup] = await Promise.all([checkDatabase(env), checkGitHub(env), checkStripe(env), readStatus(env)]);
   return json({
     checks: [
       { name: "Password", ok: true, detail: "You're logged in." },
@@ -50,5 +65,6 @@ export async function onRequestGet({ env }) {
       { name: `Payments (Stripe${env.STRIPE_SECRET_KEY ? `, ${stripeMode(env)} mode` : ""})`, ...payments, detail: "Clients pay by card; payments land on the Money page by themselves." },
     ],
     note: "Google Places and Companies House keys live in GitHub (repo → Settings → Secrets and variables → Actions). If they're missing, a run will show as failed with the reason.",
+    ...setup,
   });
 }
