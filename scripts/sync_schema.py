@@ -1,5 +1,6 @@
 """Regenerate control-room/functions/_lib/schema.js from lead-manager/schema.sql (the single source of truth)."""
 
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -11,9 +12,12 @@ JS = ROOT / "control-room" / "functions" / "_lib" / "schema.js"
 
 def render() -> str:
     statements = [s.strip() for s in re.sub(r"--[^\n]*", "", SQL.read_text()).split(";") if s.strip()]
+    # db() in util.js runs the schema only when this differs from the setting schema:version.
+    version = hashlib.sha256(json.dumps(statements).encode()).hexdigest()[:12]
     return (
         "// GENERATED from lead-manager/schema.sql by scripts/sync_schema.py: do not edit by hand.\n"
         f"export const SCHEMA = {json.dumps(statements, indent=2)};\n"
+        f'export const SCHEMA_VERSION = "{version}";\n'
     )
 
 

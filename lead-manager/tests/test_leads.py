@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import sqlite3
 from datetime import date
 
@@ -378,7 +379,7 @@ def test_sqlite_upsert_keeps_outreach_state(tmp_path):
 
 def test_d1_schema_statements_are_clean():
     stmts = store.schema_statements()
-    assert len(stmts) == 29 and all("--" not in s for s in stmts)
+    assert len(stmts) >= 52 and all("--" not in s for s in stmts)
 
 
 @respx.mock
@@ -391,6 +392,22 @@ def test_d1_save_and_job_updates():
     assert sqls[-2]["sql"].startswith("INSERT INTO leads") and "job9" in sqls[-2]["params"]
     assert sqls[-1]["params"][:3] == ["done", 1, 1] and sqls[-1]["params"][-1] == "job9"
     assert route.calls[0].request.headers["Authorization"] == "Bearer tok"
+
+
+@respx.mock
+def test_d1_ensure_schema_writes_the_control_rooms_schema_version():
+    # The Control Room's db() migrates whenever schema:version differs from SCHEMA_VERSION in schema.js, so once the
+    # lead manager has applied the schema it says so, with the very same value: the Control Room then runs nothing.
+    js = (store.Path(store.__file__).resolve().parents[2] / "control-room" / "functions" / "_lib" / "schema.js").read_text()
+    version = re.search(r'export const SCHEMA_VERSION = "([0-9a-f]{12})";', js).group(1)
+    assert store.schema_version() == version
+    d1 = store.D1("acc", "db", "tok")
+    route = respx.post(d1.url).mock(return_value=httpx.Response(200, json={"success": True, "result": []}))
+    d1.ensure_schema()
+    bodies = [json.loads(c.request.content) for c in route.calls]
+    assert [b["sql"] for b in bodies[:-1]] == store.schema_statements()
+    assert bodies[-1]["sql"].startswith("INSERT INTO settings (key, value) VALUES ('schema:version', ?)")
+    assert "ON CONFLICT" in bodies[-1]["sql"] and bodies[-1]["params"] == [version]
 
 
 @respx.mock

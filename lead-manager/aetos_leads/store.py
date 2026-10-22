@@ -1,6 +1,7 @@
 """Save leads to SQLite (local) or Cloudflare D1 (online). Re-scraping updates a lead but keeps its
 status, warmth and first-seen date, so outreach history is never lost."""
 
+import hashlib
 import json
 import os
 import re
@@ -33,6 +34,12 @@ UPSERT = (
 def schema_statements() -> list[str]:
     no_comments = re.sub(r"--[^\n]*", "", SCHEMA)
     return [s.strip() for s in no_comments.split(";") if s.strip()]
+
+
+def schema_version() -> str:
+    """SCHEMA_VERSION in control-room/functions/_lib/schema.js: the first 12 hex characters of the SHA-256 of the
+    statements as JSON, worked out exactly as scripts/sync_schema.py does (a test checks the two agree)."""
+    return hashlib.sha256(json.dumps(schema_statements()).encode()).hexdigest()[:12]
 
 
 def row(lead: Lead, now: str, job_id: str = "") -> list:
@@ -126,6 +133,9 @@ class D1:
     def ensure_schema(self) -> None:
         for statement in schema_statements():
             self.query(statement)
+        # The Control Room's db() migrates only when this differs from its SCHEMA_VERSION, so it now runs nothing.
+        self.query("INSERT INTO settings (key, value) VALUES ('schema:version', ?) "
+                   "ON CONFLICT(key) DO UPDATE SET value = excluded.value", [schema_version()])
 
     def save(self, leads: list[Lead], job_id: str = "") -> None:
         self.ensure_schema()

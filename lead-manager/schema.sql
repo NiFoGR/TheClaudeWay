@@ -265,3 +265,201 @@ CREATE TABLE IF NOT EXISTS demo_events (
   at          TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS demo_events_place ON demo_events (place_id, kind);
+
+-- Rebuild (stage 0)
+-- Claude's research and grade, one row per lead (stage 2).
+CREATE TABLE IF NOT EXISTS research (
+  place_id      TEXT PRIMARY KEY,
+  status        TEXT NOT NULL,            -- queued | done | skipped
+  grade         TEXT,                     -- A+ | A | B | C | D (computed by grade.js, never sent by Claude)
+  points        TEXT,                     -- JSON {need, means, reach, fit} each 0–5
+  grade_reason  TEXT,                     -- one or two sentences shown to Nik
+  angle         TEXT,                     -- JSON [{fact, source_url}] 1–3 true, specific ways we can help
+  opener        TEXT,                     -- suggested first two lines for Nik's email
+  owner         TEXT,                     -- JSON {first, full, source_url, confident}
+  best_email    TEXT,
+  best_email_why TEXT,
+  emails        TEXT,                     -- JSON [{email, source_url, where}]
+  copy          TEXT,                     -- JSON demo copy {headline, intro, services[], areas[], about}
+  site_review   TEXT,                     -- JSON {verdict, summary, problems[], good[]}
+  too_big       INTEGER NOT NULL DEFAULT 0,
+  notes         TEXT NOT NULL DEFAULT '',
+  searched      TEXT,                     -- JSON [what Claude searched/opened]
+  queued_at     TEXT,
+  researched_at TEXT
+);
+CREATE INDEX IF NOT EXISTS research_status ON research (status, grade);
+
+-- The sales pipeline, one row per lead Nik has emailed (or is about to).
+CREATE TABLE IF NOT EXISTS prospects (
+  place_id        TEXT PRIMARY KEY,
+  stage           TEXT NOT NULL,          -- see stages.js
+  stage_at        TEXT NOT NULL,
+  email           TEXT NOT NULL,          -- the address we write to
+  greet_name      TEXT,                   -- first name only when confident, else NULL ("Hi,")
+  mailbox_id      TEXT,                   -- the mailbox that owns this thread (all messages use it)
+  subject         TEXT,                   -- first email's subject; follow-ups use "Re: " + subject
+  root_message_id TEXT,                   -- Message-ID of Nik's first email (threading)
+  first_sent_at   TEXT,
+  followup_step   INTEGER NOT NULL DEFAULT 0,  -- follow-ups sent so far (0–9)
+  next_followup_at TEXT,                  -- NULL when the sequence is stopped or finished
+  views           INTEGER NOT NULL DEFAULT 0,
+  last_view_at    TEXT,
+  last_inbound_at TEXT,
+  lost_reason     TEXT,                   -- opt_out | bounce | sequence_done | not_now | not_interested | call
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS prospects_stage ON prospects (stage);
+CREATE INDEX IF NOT EXISTS prospects_followup ON prospects (next_followup_at);
+
+-- Sending mailboxes (Namecheap Private Email). The password is in settings under secret:mailbox:<id>.
+CREATE TABLE IF NOT EXISTS mailboxes (
+  id            TEXT PRIMARY KEY,
+  address       TEXT NOT NULL UNIQUE,
+  display_name  TEXT NOT NULL,            -- Nik's name as he wants it shown in the From line
+  role          TEXT NOT NULL,            -- cold | system (system = onboarding/client mail, never cold)
+  smtp_host     TEXT NOT NULL DEFAULT 'mail.privateemail.com',
+  smtp_port     INTEGER NOT NULL DEFAULT 465,
+  started_on    TEXT NOT NULL,            -- YYYY-MM-DD the mailbox was bought (warm-up clock)
+  cap_override  INTEGER,                  -- NULL = follow the warm-up ramp
+  status        TEXT NOT NULL DEFAULT 'active',  -- active | paused
+  paused_reason TEXT,
+  created_at    TEXT NOT NULL
+);
+
+-- Every email in or out, one row each.
+CREATE TABLE IF NOT EXISTS messages (
+  id           TEXT PRIMARY KEY,
+  place_id     TEXT,                      -- NULL for mail not tied to a lead (e.g. warm-up, client)
+  client_id    TEXT,
+  mailbox_id   TEXT,
+  direction    TEXT NOT NULL,             -- out | in
+  kind         TEXT NOT NULL,             -- first | followup | reply | system | inbound
+  step         INTEGER,                   -- follow-up number 1–9
+  author       TEXT NOT NULL,             -- nik | claude | system | them
+  to_addr      TEXT,
+  from_addr    TEXT,
+  subject      TEXT,
+  body         TEXT NOT NULL,
+  message_id   TEXT,                      -- RFC 5322 Message-ID (ours for out, theirs for in)
+  in_reply_to  TEXT,
+  refs         TEXT,                      -- References header
+  status       TEXT NOT NULL,             -- queued | sending | sent | failed | cancelled | received
+  due_at       TEXT,
+  sent_at      TEXT,
+  received_at  TEXT,
+  error        TEXT,
+  class        TEXT,                      -- inbound only: bounce | auto | opt_out | human
+  needs_reply  INTEGER NOT NULL DEFAULT 0,-- inbound human mail waiting for Claude
+  handled_at   TEXT,                      -- when Claude replied or escalated
+  intent       TEXT,                      -- inbound only: what they meant, set by the reply Routine (stage 7)
+  created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS messages_place ON messages (place_id, created_at);
+CREATE INDEX IF NOT EXISTS messages_due ON messages (status, due_at);
+CREATE INDEX IF NOT EXISTS messages_reply ON messages (needs_reply, received_at);
+CREATE INDEX IF NOT EXISTS messages_msgid ON messages (message_id);
+
+-- Raw inbound mail, written by the relay Worker, processed by the tick.
+CREATE TABLE IF NOT EXISTS inbound_raw (
+  id           TEXT PRIMARY KEY,
+  received_at  TEXT NOT NULL,
+  envelope_from TEXT,
+  envelope_to  TEXT,
+  headers      TEXT NOT NULL,             -- JSON object of lower-cased header → value
+  raw          TEXT NOT NULL,             -- raw MIME, first 256 KB
+  processed_at TEXT,
+  outcome      TEXT
+);
+CREATE INDEX IF NOT EXISTS inbound_raw_todo ON inbound_raw (processed_at);
+
+-- Follow-up wording (9 steps, fixed days), approved once by Nik.
+CREATE TABLE IF NOT EXISTS followup_templates (
+  step        INTEGER PRIMARY KEY,        -- 1–9
+  day_offset  INTEGER NOT NULL,           -- 1, 2, 4, 7, 10, 17, 24, 30, 60
+  body        TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'draft',  -- draft | approved
+  approved_at TEXT
+);
+
+-- Nik's voice: his real emails and his guidance, read by the reply Routine.
+CREATE TABLE IF NOT EXISTS style_examples (
+  id         TEXT PRIMARY KEY,
+  kind       TEXT NOT NULL,               -- example | rule
+  situation  TEXT NOT NULL,               -- e.g. "they ask the price"
+  body       TEXT NOT NULL,
+  source     TEXT NOT NULL,               -- nik_written | nik_sent
+  created_at TEXT NOT NULL
+);
+
+-- Calls in Nik's 11am slots.
+CREATE TABLE IF NOT EXISTS calls (
+  id         TEXT PRIMARY KEY,
+  place_id   TEXT NOT NULL,
+  slot_at    TEXT NOT NULL,               -- ISO time of the slot (UK 11:00 → UTC)
+  status     TEXT NOT NULL,               -- offered | confirmed | done | no_show | cancelled
+  phone      TEXT,
+  note       TEXT NOT NULL DEFAULT '',    -- what was said / agreed (stage 8)
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS calls_slot ON calls (slot_at, status);
+
+-- Everything Nik has to do, in one list (the Todo page).
+CREATE TABLE IF NOT EXISTS todos (
+  id         TEXT PRIMARY KEY,
+  kind       TEXT NOT NULL,               -- see section 6
+  place_id   TEXT,
+  client_id  TEXT,
+  title      TEXT NOT NULL,
+  detail     TEXT NOT NULL DEFAULT '',
+  link       TEXT,                        -- in-app link, e.g. /#/lead/<place_id>
+  draft      TEXT,                        -- a reply Claude drafted for Nik to send/edit
+  due_at     TEXT,
+  status     TEXT NOT NULL DEFAULT 'open',-- open | done | dismissed
+  dedupe     TEXT UNIQUE,                 -- stops the same item being added twice
+  created_at TEXT NOT NULL,
+  done_at    TEXT
+);
+CREATE INDEX IF NOT EXISTS todos_open ON todos (status, due_at);
+
+-- Health: last time each automatic part checked in.
+CREATE TABLE IF NOT EXISTS heartbeats (
+  name     TEXT PRIMARY KEY,              -- tick | health | relay | routine:research | routine:reply | ...
+  last_at  TEXT NOT NULL,
+  ok       INTEGER NOT NULL,
+  detail   TEXT NOT NULL DEFAULT ''
+);
+
+-- Every attempt to wake a Claude Routine.
+CREATE TABLE IF NOT EXISTS routine_fires (
+  id         TEXT PRIMARY KEY,
+  routine    TEXT NOT NULL,
+  reason     TEXT NOT NULL,
+  http_status INTEGER,
+  error      TEXT,
+  session_url TEXT,
+  at         TEXT NOT NULL
+);
+
+-- Weekly KPI report (numbers computed by code; analysis written by Claude).
+CREATE TABLE IF NOT EXISTS kpi_reports (
+  week       TEXT PRIMARY KEY,            -- ISO week, e.g. 2026-W44
+  numbers    TEXT NOT NULL,               -- JSON from kpis.js
+  analysis   TEXT NOT NULL DEFAULT '',    -- Claude's markdown
+  created_at TEXT NOT NULL
+);
+
+-- After payment: the onboarding form and the 7-day build clock (stages 9–10).
+CREATE TABLE IF NOT EXISTS onboarding (
+  client_id    TEXT PRIMARY KEY,
+  token        TEXT NOT NULL UNIQUE,      -- unguessable link /onboard/<token>
+  status       TEXT NOT NULL,             -- sent | submitted | building | review | live
+  form         TEXT,                      -- JSON answers
+  submitted_at TEXT,                      -- the 7-day clock starts here
+  due_live_at  TEXT,
+  live_at      TEXT,
+  site_url     TEXT,
+  created_at   TEXT NOT NULL
+);
