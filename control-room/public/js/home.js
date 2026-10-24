@@ -1,5 +1,5 @@
 // Home: the important numbers and who to contact next, on one screen.
-import { openDrawer } from "./leads.js";
+import { openLeadDrawer } from "./leads.js";
 import { api, esc, icon, kpi, money, pageHead, ring, toast, view } from "./lib.js";
 import { runRow } from "./scraper.js";
 
@@ -10,10 +10,10 @@ export async function homePage() {
   const hello = hour < 12 ? "Morning" : hour < 18 ? "Afternoon" : "Evening";
   const n = (v) => Number(v || 0).toLocaleString("en-GB");
   const funnel = [
-    ["To contact", c.fresh, `${n(c.fresh_email)} with email`, "#/leads"],
-    ["Contacted", c.contacted, "waiting on a reply", "#/leads"],
-    ["Replied", c.replied, "follow these up", "#/leads"],
-    ["Calls booked", c.call_booked, m.pipeline.value ? `${money(m.pipeline.value, { compact: true })} if they close` : "", "#/leads"],
+    ["To contact", c.fresh, `${n(c.fresh_email)} with email`, "#/leads?view=all"],
+    ["Contacted", c.contacted, "waiting on a reply", "#/leads?view=all"],
+    ["Replied", c.replied, "follow these up", "#/leads?view=all"],
+    ["Calls booked", c.call_booked, m.pipeline.value ? `${money(m.pipeline.value, { compact: true })} if they close` : "", "#/leads?view=all"],
     ["Won", c.won, "", "#/money", "won"],
   ].map(([label, v, sub, href, cls]) => `<a href="${href}" class="${cls || ""}"><span>${label}</span><b>${n(v)}</b><small>${sub}</small></a>`).join("");
 
@@ -27,11 +27,11 @@ export async function homePage() {
       ${kpi("Clients", m.activeClients, m.totalClients ? `${m.totalClients} all time` : "the first one's the hardest")}
       ${kpi("Leads", n(c.total), "worth pitching, all searches")}
     </div>
-    <div class="section-title"><h2>Pipeline</h2><a class="small" href="#/leads">All leads</a></div>
+    <div class="section-title"><h2>Pipeline</h2><a class="small" href="#/leads?view=all">All leads</a></div>
     <div class="funnel">${funnel}</div>
     <div class="grid-main" style="margin-top:16px">
       <div class="card">
-        <div class="card-head"><div><h2>Contact these next</h2><div class="muted small">Highest scores you haven't contacted yet</div></div><a class="small" href="#/leads">See all</a></div>
+        <div class="card-head"><div><h2>Contact these next</h2><div class="muted small">Highest scores you haven't contacted yet</div></div><a class="small" href="#/leads?view=all">See all</a></div>
         ${next.length ? `<div class="next-list">${next.map((l, i) => `
           <div class="next" data-i="${i}">${ring(l.quality_score)}
             <div style="min-width:0"><div class="biz">${esc(l.name)}</div><div class="sub-line">${esc(l.issues[0] || "")}</div></div>
@@ -49,7 +49,7 @@ export async function homePage() {
 
   view.querySelectorAll(".next").forEach((el) => el.onclick = (e) => {
     if (e.target.closest("a")) return;
-    openDrawer(next[Number(el.dataset.i)], () => homePage());
+    openLeadDrawer(next[Number(el.dataset.i)]?.place_id);
   });
   view.querySelectorAll(".run").forEach((r) => r.onclick = () => { location.hash = `#/scraper?job=${encodeURIComponent(r.dataset.id)}`; });
   todoCard();

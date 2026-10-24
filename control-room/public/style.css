@@ -121,6 +121,14 @@ textarea { resize: vertical; }
 .quick { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
 .chip { background: transparent; border: 1px solid var(--line-2); color: var(--text-2); border-radius: 99px; padding: 1px 9px; font-size: 12px; cursor: pointer; }
 .chip:hover, .chip.on { color: var(--gold); border-color: var(--gold-line); background: var(--gold-soft); }
+.chip.off, .chip.off:hover { color: var(--text-3); border-color: var(--line); background: transparent; border-style: dashed; cursor: not-allowed; }
+.chip .n { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.chip.on .n { color: inherit; }
+.chip .spare { font-size: 11px; }
+.chip svg.i { width: 12px; height: 12px; vertical-align: -1px; }
+/* the Leads page's grade and stage chips (leadview.js filterBarHtml) */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 0; }
+.chips .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 13px; font-weight: 550; }
 
 /* ---------------------------------------------------------------- tabs, badges */
 .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
@@ -155,10 +163,14 @@ tbody tr.sel { background: var(--gold-soft); }
 .leads-table { min-width: 860px; }
 .biz { font-weight: 600; color: var(--text); }
 .sub-line { font-size: 12px; color: var(--text-3); margin-top: 1px; }
-.problem { color: var(--text-2); font-size: 13px; }
 .contact-icons { display: flex; gap: 6px; }
-.c-contact a, .c-google .sub-line, .c-google .rating { white-space: nowrap; }
-.status-select { height: auto !important; width: auto; padding: 4px 26px 4px 10px; font-size: 12px; font-weight: 550; border-radius: 99px; background: var(--surface-2); }
+.leads-table th.c-score, .leads-table td.c-score { text-align: right; }
+.leads-table td.c-grade { width: 56px; }
+.leads-table td.c-grade .grade { min-width: 34px; height: 26px; font-size: 13px; }
+.leads-table td.c-why { max-width: 360px; color: var(--text-2); font-size: 13px; }
+.leads-table td.c-email { overflow-wrap: anywhere; font-size: 13px; }
+.leads-table td.c-stage { white-space: nowrap; }
+.leads-table td.c-score b { font-size: 15px; }
 .empty { color: var(--text-3); text-align: center; padding: 40px 16px; }
 .rating { white-space: nowrap; }
 .rating svg { width: 13px; height: 13px; fill: var(--gold); stroke: none; vertical-align: -2px; }
@@ -193,13 +205,8 @@ tbody tr.click:hover .ring::before { background: var(--surface-2); }
 .issues { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
 .issues li { display: flex; gap: 8px; font-size: 13px; color: var(--text); }
 .issues li::before { content: ""; flex: none; width: 6px; height: 6px; margin-top: 7px; border-radius: 50%; background: var(--warn); }
-.parts { display: grid; gap: 10px; }
-.part { display: grid; grid-template-columns: 96px 1fr 44px; gap: 12px; align-items: center; font-size: 13px; }
 .bar { height: 6px; background: var(--surface-3); border-radius: 99px; overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--gold); border-radius: 99px; }
-.part b { text-align: right; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
-.email-list { display: grid; gap: 6px; }
-.email-list div { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 /* ---------------------------------------------------------------- runs list & progress */
 .runs { display: grid; gap: 6px; }
@@ -390,11 +397,6 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
 /* dark street map to match the theme (markers sit in another pane, so they keep their colours) */
 .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.85) saturate(0.4); }
 
-/* score help */
-.help-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
-.help-grid h3 { font-size: 13px; color: var(--gold); margin: 0 0 4px; }
-.help-grid p { font-size: 13px; color: var(--text-2); margin: 0; }
-
 /* ---------------------------------------------------------------- login */
 .login { min-height: 100vh; display: grid; place-items: center; padding: 16px; }
 .login .card { width: min(380px, 100%); }
@@ -417,7 +419,7 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
   .page-head h1 { font-size: 21px; }
   .search-form, .search-form.five { grid-template-columns: 1fr 1fr; }
   .search-form .btn { grid-column: 1 / -1; margin-top: 0; }
-  .grid-2, .help-grid { grid-template-columns: 1fr; }
+  .grid-2 { grid-template-columns: 1fr; }
   .funnel { grid-template-columns: repeat(3, 1fr); }
   .funnel a:nth-child(3) { border-right: 0; }
   .funnel a:nth-child(-n + 3) { border-bottom: 1px solid var(--line); }
@@ -425,17 +427,18 @@ dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
   .kpi-value { font-size: 22px; }
   .counters { grid-template-columns: 1fr; }
   #heatmap { height: 380px; }
-  /* lead table becomes one card per lead */
+  /* lead table becomes one card per lead: grade | business, why, email | score, stage */
   .leads-table { min-width: 0; }
   .leads-table thead { display: none; }
   .leads-table, .leads-table tbody { display: block; }
-  .leads-table tr.click { display: grid; grid-template-columns: 40px 1fr auto; gap: 4px 12px; padding: 14px; border-bottom: 1px solid var(--line); }
-  .leads-table td { display: block; padding: 0; border: 0; }
-  .leads-table td.c-score { grid-row: span 3; }
-  .leads-table td.c-biz { grid-column: 2 / 4; }
-  .leads-table td.c-problem, .leads-table td.c-google { grid-column: 2 / 4; }
-  .leads-table td.c-contact { grid-column: 2; }
-  .leads-table td.c-status { grid-column: 3; justify-self: end; }
+  .leads-table tr.click { display: grid; grid-template-columns: 40px minmax(0, 1fr) auto; gap: 4px 12px; padding: 14px; border-bottom: 1px solid var(--line); }
+  .leads-table td { display: block; padding: 0; border: 0; min-width: 0; }
+  .leads-table td.c-grade { grid-column: 1; grid-row: 1 / span 3; width: auto; }
+  .leads-table td.c-biz { grid-column: 2; grid-row: 1; }
+  .leads-table td.c-score { grid-column: 3; grid-row: 1; }
+  .leads-table td.c-why { grid-column: 2 / 4; grid-row: 2; max-width: none; }
+  .leads-table td.c-email { grid-column: 2; grid-row: 3; }
+  .leads-table td.c-stage { grid-column: 3; grid-row: 3; justify-self: end; }
   .table-card .table-wrap { overflow-x: visible; }
   .clients-table, .entries-table { min-width: 560px; }
   .table-card:has(.clients-table) .table-wrap, .table-card:has(.entries-table) .table-wrap, .table-card:has(.mailbox-table) .table-wrap { overflow-x: auto; }
@@ -474,6 +477,12 @@ dialog .card { border: 0; padding: 0; margin: 0 !important; }
 .grade { display: inline-grid; place-items: center; min-width: 36px; height: 30px; padding: 0 8px; border-radius: 8px; font-size: 15px; font-weight: 750;
   background: var(--surface-3); color: var(--text); border: 1px solid var(--line-2); }
 .grade.aplus { background: var(--gold); color: var(--gold-ink); border-color: var(--gold); }
+/* the Leads page's badges (leadview.js gradeBadge): A a gold outline, B to D greys that fade, "–" for not graded */
+.grade.a { background: transparent; color: var(--text); border-color: var(--gold); }
+.grade.b { color: var(--text); }
+.grade.c { background: var(--surface-2); color: var(--text-2); }
+.grade.d { background: var(--surface-2); color: var(--text-3); border-color: var(--line); }
+.grade.none { background: transparent; color: var(--text-3); border-color: var(--line-2); border-style: dashed; font-weight: 600; }
 .research-cap { margin-top: -2px; }
 .points { display: grid; gap: 8px; margin: 4px 0 2px; }
 .point { display: grid; gap: 4px; }
@@ -491,11 +500,52 @@ details.research-checked ol { margin: 6px 0 0; padding-left: 20px; color: var(--
 .recheck-box { display: grid; gap: 8px; }
 .recheck-box label { margin: 0; }
 
-/* selecting leads for outreach */
-.score-cell { display: flex; align-items: center; gap: 10px; }
-input.sel, #sel-all { width: 16px; height: 16px; accent-color: var(--gold); cursor: pointer; vertical-align: middle; }
-.sel-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 0 0 12px; padding: 10px 14px;
-  background: var(--surface-2); border: 1px solid var(--gold); border-radius: var(--r); }
+/* ---------------------------------------------------------------- Leads page (stage 3: leads.js + leadview.js) */
+/* today's room for first emails: ok and info are neutral, warn is amber; only the link is gold */
+.banner { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; margin: 0 0 16px; padding: 11px 16px; border: 1px solid var(--line-2);
+  border-radius: var(--r); background: var(--surface-2); color: var(--text); font-weight: 550; }
+.banner.ok { border-color: rgba(69, 195, 129, 0.4); background: var(--good-soft); }
+.banner.info { border-color: var(--line-2); background: var(--surface-2); }
+.banner.warn { border-color: rgba(233, 168, 59, 0.45); background: var(--warn-soft); }
+.banner a { font-weight: 650; }
+.toolbar.filters { margin: 12px 0 14px; align-items: flex-end; }
+label.filter { display: grid; gap: 4px; margin: 0; min-width: 150px; }
+label.filter select { height: 36px; padding: 6px 10px; }
+.toolbar.filters label.check { margin: 0 4px 10px; }
+.toolbar.filters .search-box input { height: 36px; }
+.pager { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; margin-top: 12px; font-size: 13px; }
+.empty-state { display: grid; justify-items: start; gap: 10px; color: var(--text-2); }
+.empty-state p { margin: 0; }
+.card.job-done { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
+input[type="radio"] { width: auto; accent-color: var(--gold); }
+.fit-options { display: grid; gap: 8px; }
+/* the lead panel */
+.head-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.drawer-actions .hint { align-self: center; margin: 0; }
+.demo-facts { font-size: 13px; color: var(--text-2); margin-bottom: 10px; overflow-wrap: anywhere; }
+.demo-preview-box { margin-top: 10px; }
+.demo-preview { display: block; width: 100%; height: 420px; border: 1px solid var(--line-2); border-radius: var(--r); background: #FFFFFF; }
+.review { padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; }
+h3 + .review { border-top: 0; padding-top: 0; }
+.review p { margin: 4px 0 0; color: var(--text-2); overflow-wrap: anywhere; }
+.stars { color: var(--gold); letter-spacing: 1px; }
+.drawer h4.thread-head { font-size: 12px; font-weight: 600; color: var(--text-2); margin: 14px 0 8px; }
+/* The read-only Conversation steps aside once stage 6 mounts its thread (or the composer) in #d-email. */
+#d-email:not(:empty) + [data-conversation] { display: none; }
+.thread { display: grid; gap: 10px; }
+.msg { padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface-2); font-size: 13px; min-width: 0; }
+.msg.in { background: var(--bg); }
+.msg-head { color: var(--text-2); }
+.msg-head b { color: var(--text); }
+.msg-subject { font-weight: 600; margin-top: 4px; overflow-wrap: anywhere; }
+.msg-body { white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.55 var(--font); margin: 6px 0 0; color: var(--text); }
+@media (max-width: 860px) {
+  .toolbar.filters label.filter { flex: 1 1 140px; min-width: 0; }
+  .toolbar.filters .search-box { flex-basis: 100%; }
+  .pager { flex-direction: column; align-items: stretch; }
+  .pager .actions .btn { flex: 1; }
+  .demo-preview { height: 300px; }
+}
 
 /* roadmap */
 .road-row { display: grid; grid-template-columns: 92px 1fr; gap: 12px; align-items: start; padding: 10px 0; border-top: 1px solid var(--line); }
@@ -512,10 +562,6 @@ details.script[open] > summary { border-bottom: 1px solid var(--line); }
 .script-sec li { margin-bottom: 4px; }
 details.script-obj { margin: 6px 14px 12px; }
 details.script-obj > summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--text-2); padding: 6px 0; }
-
-/* demo site card in the lead drawer */
-.demo-card { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 14px; margin: 0 0 12px;
-  border: 1px solid var(--line); border-radius: var(--r); background: var(--surface-2); }
 
 /* autopilot + today's picks */
 .card.autopilot { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 12px; }

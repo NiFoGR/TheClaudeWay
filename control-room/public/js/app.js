@@ -1,6 +1,7 @@
 // Aetos Control Room: navigation and routing. Each page lives in its own file next to this one, and PAGES lists them.
 import { homePage } from "./home.js";
-import { closeDrawer, leadsPage } from "./leads.js";
+import { closeDrawer, leadsPage, openLeadDrawer } from "./leads.js";
+import { parseRoute } from "./leadview.js";
 import { api, esc, icon, pageHead, state, view } from "./lib.js";
 import { mapRankRoute } from "./maprank.js";
 import { moneyPage } from "./money.js";
@@ -12,7 +13,7 @@ import { setupPage } from "./setup.js";
 // Later stages add their entries here, until file 11 replaces this with public/js/nav.js.
 export const PAGES = [
   { route: "home", label: "Home", icon: "home", render: () => homePage() },
-  { route: "leads", label: "Leads", icon: "users", render: () => leadsPage() },
+  { route: "leads", label: "Leads", icon: "users", render: (params) => leadsPage(params) },
   {
     route: "scraper", label: "Lead Scraper", icon: "search",
     render: (params) => {
@@ -32,23 +33,22 @@ const navFor = (where) => PAGES.filter((p) => place(p) === where).map(navLink).j
 document.getElementById("nav").innerHTML = navFor("main");
 document.getElementById("nav-bottom").innerHTML = `${navFor("bottom")}<a href="/logout">${icon("logout")}<span class="lbl">Log out</span></a>`;
 
-/** The page named by the hash's first segment ("#/scraper?job=1" → scraper) and its query. Unknown pages → home. */
-function currentPage() {
-  const hash = location.hash.replace(/^#\/?/, "");
-  const q = hash.indexOf("?");
-  const name = (q < 0 ? hash : hash.slice(0, q)).split("/")[0];
-  const page = PAGES.find((p) => p.route === name) || PAGES.find((p) => p.route === "home");
-  return { page, params: new URLSearchParams(q < 0 ? "" : hash.slice(q + 1)) };
-}
+let turn = 0; // the newest route: a slow page never opens its lead panel over the next one
 
+// The page named by the hash's first segment (parseRoute: "#/scraper?job=1" → scraper, "#/lead/<place_id>" → leads
+// with that lead's panel), found in PAGES; an unknown page → home, so a stage only adds its PAGES entry.
 async function route() {
-  const { page, params } = currentPage();
+  const { page: name, params, leadId } = parseRoute(location.hash);
+  const page = PAGES.find((p) => p.route === name) || PAGES.find((p) => p.route === "home");
+  const mine = ++turn;
   document.querySelectorAll(".nav a[data-route]").forEach((a) => a.classList.toggle("active", a.dataset.route === page.route));
   closeDrawer();
   if (state.map) { state.map.remove(); state.map = null; }
   window.scrollTo(0, 0);
   try {
     await page.render(params);
+    // #/lead/<place_id>: the Leads page first, then its panel (closeDrawer above has already run).
+    if (leadId && page.route === "leads" && mine === turn) openLeadDrawer(leadId);
   } catch (err) {
     view.innerHTML = `${pageHead("Something's not set up")}<p class="error">${esc(err.message)}</p><p class="hint">Open <a href="#/setup">Setup</a> to see what's connected.</p>`;
   }

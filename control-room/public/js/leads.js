@@ -1,351 +1,319 @@
-// The lead table (Lead Scraper results and All Leads) and the lead details drawer.
-import { callScript } from "./callscript.js";
-import { ago, api, esc, icon, pageHead, ring, safeUrl, state, toast, view } from "./lib.js";
+// The Leads page and the lead panel (stage 3, docs/rebuild/04-shortlist.md): the wiring only. The HTML is leadview.js
+// (pure, tested in tests/leadview.test.mjs); this file fetches GET /api/leads and GET /api/leads/:id, puts that HTML on
+// the page and binds its data-* hooks: filters, paging, the panel's buttons (Write first email, Not a fit, Preview,
+// notes) and stage 2's research card (Copy, Research is wrong).
+// The URL is the page's state: #/leads?<leadsQueryString> (kept in step as filters change, without a reload) and
+// #/lead/<place_id> (app.js opens the page, then the panel). Loading this file only adds a keydown listener.
+import { api, esc, icon, modal, pageHead, safeUrl, state, toast, view } from "./lib.js";
+import {
+  drawerHtml, leadsBodyHtml, leadsErrorHtml, leadsQueryString, notAFitHtml, notAFitReason, parseLeadsQuery,
+} from "./leadview.js";
 import { RECHECK_OFFLINE, recheckAnswer, recheckedResearch, researchCard } from "./researchcard.js";
 
-export const STATUSES = ["new", "in outreach", "contacted", "replied", "call booked", "won", "lost", "not interested"];
-export const NO_SITE = ["no_website", "profile_only", "site_down", "site_broken", "bad_certificate"];
-const PARTS = [["website", "Website", 45], ["seo", "Local SEO", 30], ["maps", "Google Maps", 25]];
+const SEARCH_WAIT_MS = 300; // the search box waits this long after the last key
+const NO_COMPOSER = "Writing emails arrives with the next stage.";
 
-export const FILTERS = {
-  pitch: { label: "Worth pitching", test: (l) => !l.excluded },
-  email: { label: "Has email", test: (l) => !l.excluded && l.email },
-  call: { label: "Call list", test: (l) => !l.excluded && !l.email },
-  nosite: { label: "No working site", test: (l) => !l.excluded && l.findings.some((f) => NO_SITE.includes(f)) },
-  excluded: { label: "Excluded", test: (l) => l.excluded },
+let listAsk = 0; // the newest list request: an older answer is never drawn over a newer one
+let drawerAsk = 0; // the same for the panel (also bumped when it closes)
+let searchTimer = 0;
+let counts = null; // page 1's chip counts and facets, kept for pages 2+ of the same filters (the API sends them once)
+
+const body = () => document.getElementById("leads-body");
+const root = () => document.getElementById("drawer-root");
+const hashFor = (query) => {
+  const qs = leadsQueryString(query);
+  return `#/leads${qs ? `?${qs}` : ""}`;
 };
 
-const guessed = (l) => l.audit?.email_source === "guessed";
-const tel = (phone) => `tel:${esc(String(phone).replace(/\s/g, ""))}`;
+// ---------------------------------------------------------------- the list
 
-export function visibleLeads() {
-  const q = state.search.toLowerCase();
-  return state.leads.filter(FILTERS[state.filter].test).filter((l) =>
-    !q || [l.name, l.town, l.email, l.phone, l.trade, l.director_name].some((v) => String(v || "").toLowerCase().includes(q)));
+/** The Leads page for the route's params (#/leads?view=…&job=…): title, then the list as the URL asks for it. */
+export async function leadsPage(params) {
+  clearTimeout(searchTimer);
+  state.leadsQuery = parseLeadsQuery(params);
+  view.innerHTML = `${pageHead("Leads", "Pick today's first emails. Best first.")}<div id="leads-body"><p class="muted">Loading your leads…</p></div>`;
+  await loadList();
 }
 
-// ---------------------------------------------------------------- table
-
-export function leadsTable() {
-  const rows = visibleLeads();
-  const tabs = Object.entries(FILTERS).map(([key, f]) =>
-    `<button class="${state.filter === key ? "active" : ""}" data-filter="${key}">${esc(f.label)}<span class="n">${state.leads.filter(f.test).length}</span></button>`).join("");
-  return `
-    <div class="toolbar">
-      <div class="seg">${tabs}</div>
-      <div class="search-box">${icon("search")}<input id="search" placeholder="Search name, town, email…" value="${esc(state.search)}"></div>
-      <button class="btn secondary" id="csv">${icon("download")} CSV</button>
-    </div>
-    ${selectionBar(rows)}
-    <p class="hint" style="margin:0 0 12px"><b>Score</b> = how much we can help them, out of 100. Best first. <a href="#" id="score-help">${state.showScoreHelp ? "Hide" : "How it's worked out"}</a></p>
-    ${state.showScoreHelp ? scoreHelp() : ""}
-    <div class="table-card"><div class="table-wrap"><table class="leads-table">
-      <thead><tr><th><input type="checkbox" id="sel-all" aria-label="Select all shown" ${rows.length && rows.every((l) => state.selected.has(l.place_id)) ? "checked" : ""}> Score</th><th>Business</th><th>Biggest problem</th><th>Contact</th><th>Google</th><th>Status</th></tr></thead>
-      <tbody>${rows.length ? rows.map(leadRow).join("") : `<tr><td colspan="6" class="empty">No leads here.</td></tr>`}</tbody>
-    </table></div></div>`;
-}
-
-function leadRow(l) {
-  const problems = l.excluded ? [l.exclude_reason] : l.issues;
-  const status = STATUSES.map((s) => `<option ${s === l.status ? "selected" : ""}>${esc(s)}</option>`).join("");
-  return `<tr class="click ${state.drawer === l.place_id ? "sel" : ""}" data-id="${esc(l.place_id)}">
-    <td class="c-score"><div class="score-cell"><input type="checkbox" class="sel" data-sel="${esc(l.place_id)}" aria-label="Select ${esc(l.name)}" ${state.selected.has(l.place_id) ? "checked" : ""}>${ring(l.excluded ? null : l.quality_score)}</div></td>
-    <td class="c-biz"><div class="biz">${esc(l.name)}</div><div class="sub-line">${esc([l.director_name && `Owner: ${l.director_name}${l.audit?.owner_confident ? "" : " (unconfirmed)"}`, l.town].filter(Boolean).join(" · "))}</div></td>
-    <td class="c-problem"><div class="problem">${esc(problems[0] || "Nothing major found")}</div>${problems.length > 1 ? `<div class="sub-line">+${problems.length - 1} more</div>` : ""}</td>
-    <td class="c-contact">${l.phone ? `<a href="${tel(l.phone)}" class="num">${esc(l.phone)}</a>` : `<span class="faint">No phone</span>`}
-      <div class="sub-line">${l.email ? `${esc(l.email)}${guessed(l) ? ' <span class="tag">guessed</span>' : l.audit?.email_source === "ai" ? ' <span class="tag ai">AI found</span>' : ""}` : "No email from the scraper"}</div></td>
-    <td class="c-google"><span class="rating">${l.rating ? `${icon("star")} ${esc(l.rating)}` : "–"} <span class="faint">(${esc(l.review_count || 0)})</span></span>${mapsLine(l)}</td>
-    <td class="c-status"><select class="status-select" data-status="${esc(l.place_id)}" aria-label="Status">${status}</select></td>
-  </tr>`;
-}
-
-/** Bar shown while leads are ticked: add them all to outreach in one go. */
-function selectionBar(rows) {
-  const n = state.selected.size;
-  if (!n) return `<p class="hint" style="margin:0 0 8px">Tick leads to add them to outreach together, or open one and press <b>Start outreach</b>. Nothing is emailed until you do.</p>`;
-  const shown = rows.filter((l) => state.selected.has(l.place_id)).length;
-  return `<div class="sel-bar"><b>${n} selected</b>${shown < n ? `<span class="muted small">(${n - shown} not shown by this filter)</span>` : ""}
-    <button class="btn sm" id="sel-start">${icon("send")} Start outreach</button>
-    <button class="btn secondary sm" id="sel-clear">Clear</button></div>`;
-}
-
-/** Add leads to outreach (or take them back out). Reports anything skipped, in plain English. */
-export async function enrol(ids, action = "start") {
-  const out = await api("/api/outreach/enrol", { method: "POST", body: JSON.stringify({ place_ids: ids, action }) });
-  const done = new Set(ids.filter((id) => !out.skipped.some((s) => s.place_id === id)));
-  state.leads = state.leads.map((l) => {
-    if (!done.has(l.place_id)) return l;
-    const d = out.demos?.[l.place_id];
-    return { ...l, status: out.status, ...(d ? { demo_slug: d.slug, demo_expires: d.expires_at } : {}) };
-  });
-  const skipped = out.skipped.length ? ` Skipped ${out.skipped.length}: ${[...new Set(out.skipped.map((s) => s.reason))].join("; ")}.` : "";
-  toast(action === "start"
-    ? `${out.added} added to outreach.${skipped} The first email goes once sending is switched on.`
-    : `${out.added} taken out of outreach.${skipped}`);
-  return out;
-}
-
-function mapsLine(l) {
-  const m = l.map_rank || {};
-  if (m.avg_rank === undefined) return l.rank ? `<div class="sub-line">#${esc(l.rank)} in search</div>` : "";
-  return `<div class="sub-line">Maps: ${m.found_pct === 0 ? "not in top 20" : `avg #${Math.round(m.avg_rank)}`}</div>`;
-}
-
-function scoreHelp() {
-  return `<div class="card" style="margin-bottom:12px">
-    <div class="help-grid">
-      <div><h3>Website · 45</h3><p>Not mobile-friendly 14 · "Not secure" 8 · Outdated 6 · Old technology 5 · Slow 4–6 · No contact form 4 · Phone not tap-to-call 2</p></div>
-      <div><h3>Local SEO · 30</h3><p>Trade and town in the page title 6+5 · Main heading 2–4 · Business info for Google (schema) 4 · Phone and address on site 3+2 · Google map 2 · Fewer than 30 pages 2–4 · Google description 2</p></div>
-      <div><h3>Google Maps · 25</h3><p>From the heatmap: invisible 22 · rarely in top 20 18 · never top 3 12 · top 3 in under half of town 6 · far fewer reviews than the top 3 +3</p></div>
-    </div>
-    <p class="hint">No website or a broken one maxes Website + Local SEO (75). A site that blocks our checker scores 0 there: look at it yourself.</p>
-  </div>`;
-}
-
-export function bindTable(rerender) {
-  const help = view.querySelector("#score-help");
-  if (help) help.onclick = (e) => { e.preventDefault(); state.showScoreHelp = !state.showScoreHelp; rerender(); };
-  view.querySelectorAll("[data-filter]").forEach((b) => b.onclick = () => { state.filter = b.dataset.filter; rerender(); });
-  const search = view.querySelector("#search");
-  search.oninput = () => {
-    state.search = search.value;
-    const pos = search.selectionStart;
-    rerender();
-    const s = view.querySelector("#search");
-    s.focus();
-    s.setSelectionRange(pos, pos);
-  };
-  view.querySelector("#csv").onclick = downloadCsv;
-  view.querySelectorAll("tr.click").forEach((tr) => tr.onclick = (e) => {
-    if (e.target.closest("a, select, input")) return;
-    const lead = state.leads.find((l) => l.place_id === tr.dataset.id);
-    if (lead) openDrawer(lead, rerender);
-  });
-  view.querySelectorAll("[data-status]").forEach((sel) => sel.onchange = () => saveLead(sel.dataset.status, { status: sel.value }));
-  view.querySelectorAll("[data-sel]").forEach((box) => box.onchange = () => {
-    box.checked ? state.selected.add(box.dataset.sel) : state.selected.delete(box.dataset.sel);
-    rerender();
-  });
-  const all = view.querySelector("#sel-all");
-  if (all) all.onchange = () => {
-    for (const l of visibleLeads()) all.checked ? state.selected.add(l.place_id) : state.selected.delete(l.place_id);
-    rerender();
-  };
-  const start = view.querySelector("#sel-start");
-  if (start) start.onclick = async () => {
-    start.disabled = true;
-    try {
-      await enrol([...state.selected]);
-      state.selected.clear();
-    } catch (err) {
-      alert(err.message);
-    }
-    rerender();
-  };
-  const clear = view.querySelector("#sel-clear");
-  if (clear) clear.onclick = () => { state.selected.clear(); rerender(); };
-}
-
-export async function saveLead(id, patch) {
+async function loadList() {
+  const ask = ++listAsk;
+  const query = state.leadsQuery;
+  const qs = leadsQueryString(query);
+  let data;
   try {
-    const { lead } = await api(`/api/leads/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) });
-    state.leads = state.leads.map((l) => (l.place_id === id ? { ...l, ...lead } : l));
-    return lead;
+    data = await api(`/api/leads${qs ? `?${qs}` : ""}`);
   } catch (err) {
-    alert(err.message);
-    return null;
+    if (ask === listAsk && body()) body().innerHTML = leadsErrorHtml(err.message);
+    return;
+  }
+  if (ask !== listAsk || !body()) return; // a newer request, or Nik has moved to another page
+  state.capacity = data.capacity ?? null;
+  renderList(withCounts(query, data));
+}
+
+// Pages 2+ come without chip counts or facets: reuse page 1's while the filters are the same.
+function withCounts(query, data) {
+  const key = leadsQueryString({ ...query, page: 1 });
+  if (data.grade_counts) {
+    counts = { key, grade_counts: data.grade_counts, view_counts: data.view_counts, facets: data.facets };
+    return data;
+  }
+  return counts?.key === key ? { ...data, grade_counts: counts.grade_counts, view_counts: counts.view_counts, facets: counts.facets } : data;
+}
+
+function renderList(data) {
+  const el = body();
+  // Keep what's being typed in the search box (and where), even if this answer is for fewer letters.
+  const typing = document.activeElement?.id === "f-search" ? document.activeElement : null;
+  const typed = typing && { value: typing.value, start: typing.selectionStart, end: typing.selectionEnd };
+  el.innerHTML = leadsBodyHtml(state.leadsQuery, data, { selected: state.drawer });
+  bindList(el);
+  if (typed) {
+    const box = el.querySelector("#f-search");
+    if (box) {
+      box.value = typed.value;
+      box.focus();
+      try { box.setSelectionRange(typed.start, typed.end); } catch { /* not a text box any more */ }
+    }
   }
 }
 
-function downloadCsv() {
-  const cols = [["Score", (l) => l.quality_score], ["Website /45", (l) => l.score_parts.website], ["Local SEO /30", (l) => l.score_parts.seo],
-    ["Google Maps /25", (l) => l.score_parts.maps], ["Maps avg rank", (l) => l.map_rank.avg_rank], ["Maps top-3 %", (l) => l.map_rank.top3_pct],
-    ["Business", (l) => l.name], ["Owner", (l) => l.director_name], ["Owner found via", (l) => l.audit?.owner_source || ""], ["Phone", (l) => l.phone], ["Email", (l) => l.email],
-    ["Email found", (l) => l.audit?.email_source || ""], ["Website", (l) => l.website], ["Problems", (l) => l.issues.join("; ")],
-    ["Rating", (l) => l.rating], ["Reviews", (l) => l.review_count], ["Google rank", (l) => l.rank], ["Town", (l) => l.town],
-    ["Address", (l) => l.address], ["Status", (l) => l.status], ["Notes", (l) => l.notes], ["Excluded", (l) => l.exclude_reason]];
-  const cell = (v) => {
-    let s = String(v ?? "");
-    if (/^[=+\-@]/.test(s)) s = `'${s}`; // stop spreadsheet formula injection from scraped text
-    return `"${s.replace(/"/g, '""')}"`;
-  };
-  const lines = [cols.map(([h]) => cell(h)).join(","), ...visibleLeads().map((l) => cols.map(([, f]) => cell(f(l))).join(","))];
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
-  a.download = `aetos-leads-${state.filter}.csv`;
-  a.click();
+/** New filters: the URL follows (no reload, so the panel and the page stay put), then the list. */
+function setQuery(next) {
+  clearTimeout(searchTimer);
+  state.leadsQuery = next;
+  history.replaceState(null, "", hashFor(next));
+  return loadList();
 }
 
-// ---------------------------------------------------------------- drawer
+// Any filter change starts again at page 1.
+const change = (patch) => setQuery({ ...state.leadsQuery, ...patch, page: 1 });
 
-const root = () => document.getElementById("drawer-root");
+function toggle(list, value) {
+  const now = Array.isArray(list) ? list : [];
+  const next = now.includes(value) ? now.filter((v) => v !== value) : [...now, value];
+  return next.length ? next : null;
+}
 
+// Ready shows only the A+, A and B chips and none of All's stage, email, researched or excluded filters, so moving to
+// Ready drops those; moving to All keeps everything.
+function switchView(viewName) {
+  const q = state.leadsQuery;
+  if (viewName === q.view) return;
+  if (viewName === "all") return change({ view: "all" });
+  const grades = (q.grades || []).filter((g) => g === "A+" || g === "A" || g === "B");
+  return change({ view: "ready", grades: grades.length ? grades : null, stages: null, email: null, researched: null, excluded: false });
+}
+
+const flagOf = (v) => (v === "1" ? true : v === "0" ? false : null);
+
+function bindList(el) {
+  el.querySelectorAll("[data-view]").forEach((b) => b.onclick = () => switchView(b.dataset.view === "all" ? "all" : "ready"));
+  el.querySelectorAll("[data-grade]").forEach((b) => b.onclick = () => change({ grades: toggle(state.leadsQuery.grades, b.dataset.grade) }));
+  el.querySelectorAll("[data-stage]").forEach((b) => b.onclick = () => change({ stages: toggle(state.leadsQuery.stages, b.dataset.stage) }));
+  const on = (sel, fn) => { const input = el.querySelector(sel); if (input) input.onchange = () => fn(input); };
+  on("#f-trade", (s) => change({ trade: s.value || null }));
+  on("#f-town", (s) => change({ town: s.value || null }));
+  on("#f-email", (s) => change({ email: flagOf(s.value) }));
+  on("#f-researched", (s) => change({ researched: flagOf(s.value) }));
+  on("#f-excluded", (c) => change({ excluded: c.checked }));
+  const search = el.querySelector("#f-search");
+  if (search) {
+    search.oninput = () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => {
+        const q = parseLeadsQuery(new URLSearchParams({ q: search.value })).q; // trimmed and cut as the server does
+        if (q !== state.leadsQuery.q) change({ q });
+      }, SEARCH_WAIT_MS);
+    };
+  }
+  const job = el.querySelector("[data-clear-job]");
+  if (job) job.onclick = () => change({ job: null });
+  const clear = el.querySelector("[data-clear-filters]");
+  if (clear) clear.onclick = () => setQuery({ ...parseLeadsQuery(""), view: state.leadsQuery.view });
+  el.querySelectorAll("[data-page]").forEach((b) => b.onclick = async () => {
+    await setQuery({ ...state.leadsQuery, page: Math.max(1, Number(b.dataset.page) || 1) });
+    window.scrollTo(0, 0);
+  });
+  el.querySelectorAll("tr.click[data-id]").forEach((tr) => tr.onclick = (e) => {
+    if (e.target.closest("a, button, input, select, textarea")) return;
+    openLeadDrawer(tr.dataset.id);
+  });
+}
+
+// ---------------------------------------------------------------- the lead panel
+
+const markRows = (id) => document.querySelectorAll("tr.click[data-id]").forEach((tr) => tr.classList.toggle("sel", tr.dataset.id === id));
+
+/** Close the panel (app.js calls this on every route change, so it never touches the URL). */
 export function closeDrawer() {
   state.drawer = null;
-  root().innerHTML = "";
-  document.querySelectorAll("tr.sel").forEach((tr) => tr.classList.remove("sel"));
+  drawerAsk++;
+  const r = root();
+  if (r) r.innerHTML = "";
+  markRows(null);
 }
 
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && state.drawer && !document.querySelector("dialog[open]")) closeDrawer(); });
+// Nik closing it (×, the dim background, Escape): a #/lead/<id> link becomes the list's own link again.
+function dismissDrawer() {
+  closeDrawer();
+  if (/^#\/?lead\//.test(location.hash)) history.replaceState(null, "", hashFor(state.leadsQuery ?? parseLeadsQuery("")));
+}
 
-/** Full details for one lead in a side panel. onChange re-renders the page behind it after a save. */
-export function openDrawer(lead, onChange = () => {}) {
-  state.drawer = lead.place_id;
-  document.querySelectorAll("tr.click").forEach((tr) => tr.classList.toggle("sel", tr.dataset.id === lead.place_id));
-  const l = lead;
-  const site = safeUrl(l.website);
-  const maps = safeUrl(l.maps_url);
-  const status = STATUSES.map((s) => `<option ${s === l.status ? "selected" : ""}>${esc(s)}</option>`).join("");
-  const problems = (l.excluded ? [l.exclude_reason] : l.issues).map((p) => `<li>${esc(p)}</li>`).join("") || `<li>Nothing major found</li>`;
-  const p = l.score_parts || {};
-  const parts = p.total === undefined ? "" : `<h3>Score breakdown</h3><div class="parts">${PARTS.map(([k, label, max]) => `
-    <div class="part"><span>${label}</span><div class="bar"><i style="width:${Math.round(100 * (p[k] || 0) / max)}%"></i></div><b>${esc(p[k] || 0)}/${max}</b></div>`).join("")}</div>`;
-  const emails = (l.emails || []).length
-    ? `<div class="email-list">${l.emails.map((e) => `<div><a href="mailto:${esc(e)}">${esc(e)}</a>${guessed(l) ? ' <span class="tag">guessed</span>' : ""}</div>`).join("")}</div>
-       ${guessed(l) ? `<p class="hint">Not on their website. Their domain receives email, so these are the usual addresses. Check before a big send.</p>`
-         : l.audit?.pages_checked ? `<p class="hint">Found on their website (${esc(l.audit.pages_checked)} page${l.audit.pages_checked === 1 ? "" : "s"} checked).</p>` : ""}`
-    : `<p class="muted" style="margin:0">No email found${l.audit?.pages_checked ? ` after checking ${esc(l.audit.pages_checked)} pages` : ""}. Call them, or check their socials.</p>`;
-  const socials = Object.entries(l.socials || {}).filter(([, u]) => safeUrl(u))
-    .map(([k, u]) => `<a class="btn secondary sm cap" href="${esc(safeUrl(u))}" target="_blank" rel="noopener noreferrer">${esc(k)} ${icon("external")}</a>`).join("");
-  const m = l.map_rank || {};
-  const mapsFacts = m.avg_rank === undefined ? "" : `<dt>Google Maps</dt><dd>${m.found_pct === 0 ? "Not in the top 20 anywhere in town" : `Average #${Math.round(m.avg_rank)} · top 3 in ${esc(m.top3_pct)}% of town`}</dd>`;
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && state.drawer && !document.querySelector("dialog[open]")) dismissDrawer();
+});
 
-  root().innerHTML = `
-    <div class="scrim" data-x></div>
-    <aside class="drawer" role="dialog" aria-label="${esc(l.name)}">
-      <div class="drawer-head">${ring(l.excluded ? null : l.quality_score, true)}
-        <div class="grow"><h2>${esc(l.name)}</h2><div class="sub-line cap">${esc([l.trade, l.town].filter(Boolean).join(" · "))}</div></div>
-        <button class="icon-btn" data-x aria-label="Close">${icon("x")}</button></div>
-      <div class="drawer-actions">
-        ${l.phone ? `<a class="btn sm" href="${tel(l.phone)}">${icon("phone")} Call</a>` : ""}
-        ${l.email ? `<a class="btn ${l.phone ? "secondary" : ""} sm" href="mailto:${esc(l.email)}">${icon("mail")} Email</a>` : ""}
-        ${site ? `<a class="btn secondary sm" href="${esc(site)}" target="_blank" rel="noopener noreferrer">${icon("globe")} Website</a>` : ""}
-        ${maps ? `<a class="btn secondary sm" href="${esc(maps)}" target="_blank" rel="noopener noreferrer">${icon("pin")} Google</a>` : ""}
-        ${outreachButton(l)}
-        ${l.map_scan_id ? `<a class="btn secondary sm" href="#/maprank?scan=${encodeURIComponent(l.map_scan_id)}&biz=${encodeURIComponent(l.place_id)}">${icon("grid")} Heatmap</a>` : ""}
-      </div>
-      <div class="drawer-body">
-        ${l.excluded ? "" : demoCard(l)}
-        ${l.excluded || !l.phone ? "" : scriptCard(l)}
-        <h3>Status</h3>
-        <select id="d-status" class="status-select" style="width:100%;border-radius:8px;padding:8px 12px;font-size:14px">${status}</select>
-        ${l.excluded ? "" : parts}
-        <h3>${l.excluded ? "Why it's excluded" : "What's wrong online"}</h3><ul class="issues">${problems}</ul>
-        <div id="d-research"><h3 class="research-head">Claude's research</h3><p class="muted small" style="margin:0">Loading…</p></div>
-        <h3>Email</h3>${emails}
-        ${socials ? `<h3>Socials</h3><div class="actions">${socials}</div>` : ""}
-        <h3>Details</h3>
-        <dl class="kv">
-          ${l.phone ? `<dt>Phone</dt><dd><a href="${tel(l.phone)}">${esc(l.phone)}</a></dd>` : ""}
-          ${l.director_name ? `<dt>Owner</dt><dd>${esc(l.director_name)}${l.audit?.owner_source ? ` <span class="faint">(from ${esc(l.audit.owner_source)}${l.audit?.owner_confident ? "" : ", unconfirmed: emails say \"Hi,\""})</span>` : ""}</dd>` : ""}
-          ${l.company_number ? `<dt>Company</dt><dd>${esc(l.company_number)}</dd>` : ""}
-          ${l.address ? `<dt>Address</dt><dd>${esc(l.address)}</dd>` : ""}
-          <dt>Rating</dt><dd>${l.rating ? `${esc(l.rating)}★ from ${esc(l.review_count || 0)} reviews` : "No Google reviews"}</dd>
-          ${mapsFacts}
-          <dt>Found</dt><dd>Searching “${esc(l.trade)}” in ${esc(l.search_town)}, ${esc(ago(l.first_seen_at))}</dd>
-        </dl>
-        <h3>Notes</h3>
-        <textarea id="d-notes" rows="4" placeholder="Called, said call back Friday…">${esc(l.notes)}</textarea>
-        <p class="hint" id="d-saved">Saves when you click away.</p>
-      </div>
+// The panel's frame while it loads, or with an error in place of its content.
+function shellHtml(inner) {
+  return `<div class="scrim" data-x></div>
+    <aside class="drawer" role="dialog" aria-label="Lead">
+      <div class="drawer-head"><div class="grow"></div><button class="icon-btn" data-x aria-label="Close">${icon("x")}</button></div>
+      <div class="drawer-body">${inner}</div>
     </aside>`;
-  root().querySelectorAll("[data-x]").forEach((el) => el.onclick = closeDrawer);
-  root().querySelector("#d-status").onchange = async (e) => {
-    const saved = await saveLead(l.place_id, { status: e.target.value });
-    if (saved) { l.status = saved.status; onChange(); }
-  };
-  const make = root().querySelector("[data-demo-make]");
-  if (make) make.onclick = async () => {
-    make.disabled = true;
-    try {
-      const { demo } = await api("/api/demos", { method: "POST", body: JSON.stringify({ place_id: l.place_id }) });
-      Object.assign(l, { demo_slug: demo.slug, demo_expires: demo.expires_at, demo_views: 0, demo_order_views: 0 });
-      state.leads = state.leads.map((x) => (x.place_id === l.place_id ? { ...x, ...l } : x));
-      openDrawer(l, onChange);
-    } catch (err) {
-      alert(err.message);
-      make.disabled = false;
-    }
-  };
-  const copy = root().querySelector("[data-demo-copy]");
-  if (copy) copy.onclick = async () => {
-    try { await navigator.clipboard.writeText(demoUrl(l)); toast("Demo link copied."); } catch { prompt("Copy the link:", demoUrl(l)); }
-  };
-  const ob = root().querySelector("[data-outreach]");
-  if (ob) ob.onclick = async () => {
-    ob.disabled = true;
-    try {
-      await enrol([l.place_id], ob.dataset.outreach);
-      onChange();
-      const fresh = state.leads.find((x) => x.place_id === l.place_id);
-      if (fresh) openDrawer(fresh, onChange);
-    } catch (err) {
-      alert(err.message);
-      ob.disabled = false;
-    }
-  };
-  root().querySelector("#d-notes").onchange = async (e) => {
-    const saved = await saveLead(l.place_id, { notes: e.target.value });
-    if (saved) { l.notes = saved.notes; root().querySelector("#d-saved").textContent = "Saved."; }
-  };
-  loadResearch(root().querySelector("#d-research"), l.place_id);
 }
 
-const demoLive = (l) => l.demo_slug && Date.parse(l.demo_expires) > Date.now();
-const demoUrl = (l) => (demoLive(l) ? `${location.origin}/d/${l.demo_slug}` : "");
-
-/** Their demo site: open it, copy the link, see whether they've looked. Made automatically on Start outreach. */
-function demoCard(l) {
-  if (!demoLive(l)) {
-    return `<div class="demo-card"><div><b>Demo site</b><div class="muted small">${l.demo_slug ? "Their last preview has ended." : "Made automatically when you press Start outreach."}</div></div>
-      <button class="btn secondary sm" data-demo-make>${icon("layout")} ${l.demo_slug ? "Make a new one" : "Make demo now"}</button></div>`;
+/**
+ * Open the lead panel for one place_id: GET /api/leads/:id (one request), then everything Part A lists. Its answer
+ * carries today's room for first emails when the lead is ready, so Write first email is right however the panel was
+ * opened (a row, Home, a #/lead/<id> link) and however long ago the list loaded.
+ */
+export async function openLeadDrawer(placeId) {
+  const id = typeof placeId === "string" ? placeId : String(placeId ?? "");
+  const r = root();
+  if (!id || !r) return;
+  const ask = ++drawerAsk;
+  state.drawer = id;
+  markRows(id);
+  // Reopening the same lead (after Not a fit) keeps the panel on screen until the new one is ready.
+  if (r.querySelector(".drawer")?.dataset.id !== id) {
+    r.innerHTML = shellHtml(`<p class="muted">Loading…</p>`);
+    r.querySelectorAll("[data-x]").forEach((el) => el.onclick = dismissDrawer);
   }
-  const views = Number(l.demo_views || 0);
-  const orders = Number(l.demo_order_views || 0);
-  return `<div class="demo-card"><div><b>Demo site</b> <span class="badge ${views ? "good" : ""}">${views ? `Viewed ${views}×` : "Not viewed yet"}</span>
-      ${orders ? ` <span class="badge gold">Opened the order page${orders > 1 ? ` ${orders}×` : ""}</span>` : ""}
-      <div class="muted small">Up until ${esc(new Date(l.demo_expires).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }))}</div></div>
-    <div class="actions"><a class="btn secondary sm" href="${esc(demoUrl(l))}" target="_blank" rel="noopener">${icon("external")} Open</a>
-      <button class="btn secondary sm" data-demo-copy>Copy link</button></div></div>`;
-}
-
-/** The call script, filled for this lead (callscript.js). Open it before you dial. */
-function scriptCard(l) {
-  const sections = callScript({ ...l, demo_url: demoUrl(l) }, { sender: state.outreach?.sender?.first || "Nik" });
-  const block = (s) => `<div class="script-sec"><h4>${esc(s.title)}</h4><ul>${s.lines.map((x) => `<li>${esc(x)}</li>`).join("")}</ul></div>`;
-  return `<details class="script"${l.email ? "" : " open"}><summary>${icon("phone")} Call script</summary>
-    ${sections.filter((s) => !s.objection).map(block).join("")}
-    <details class="script-obj"><summary>Objections and answers</summary>${sections.filter((s) => s.objection).map(block).join("")}</details>
-  </details>`;
-}
-
-/** Start outreach (only the owner's click puts a lead into the email sequence). */
-function outreachButton(l) {
-  if (l.excluded) return "";
-  if (l.status === "in outreach") return `<button class="btn secondary sm" data-outreach="stop">${icon("x")} Stop outreach</button>`;
-  if ((l.status || "new") !== "new") return "";
-  if (!l.email) return `<span class="hint" style="align-self:center">No email: call them</span>`;
-  return `<button class="btn sm" data-outreach="start">${icon("send")} Start outreach</button>`;
-}
-
-// ---------------------------------------------------------------- Claude's research card (researchcard.js)
-
-/** Fetch this lead's research when the drawer opens and fill its slot (left alone if the drawer has moved on). */
-async function loadResearch(slot, id) {
-  if (!slot) return;
+  let detail;
+  let capacity;
   try {
-    const data = await api(`/api/research/${encodeURIComponent(id)}`);
-    if (slot.isConnected) showResearch(slot, id, data);
+    ({ detail, capacity } = await api(`/api/leads/${encodeURIComponent(id)}`));
   } catch (err) {
-    if (slot.isConnected) {
-      slot.innerHTML = `<h3 class="research-head">Claude's research</h3><p class="error" style="margin:0">Couldn't load Claude's research (${esc(err.message)}). Close this lead and open it again; if it keeps failing, check your connection.</p>`;
-    }
+    if (ask !== drawerAsk) return;
+    r.innerHTML = shellHtml(`<p class="error" style="margin:0">${esc(err.message)}</p>`);
+    r.querySelectorAll("[data-x]").forEach((el) => el.onclick = dismissDrawer);
+    return;
   }
+  if (ask !== drawerAsk) return; // closed, or another lead opened meanwhile
+  if (capacity) state.capacity = capacity; // the newest room, for anything else that reads it
+  showDrawer(r, id, detail, capacity, ask);
 }
 
-/** Render the card and wire its buttons: Copy the opener, and Research is wrong → note box → Re-check / Cancel. */
+function showDrawer(r, id, detail, capacity, ask) {
+  r.innerHTML = drawerHtml(detail, { capacity: capacity ?? null, sender: "Nik", origin: location.origin, now: new Date() });
+  r.querySelectorAll("[data-x]").forEach((el) => el.onclick = dismissDrawer);
+  bindWriteEmail(r, id, ask);
+  const fit = r.querySelector("[data-not-a-fit]");
+  if (fit) fit.onclick = () => notAFit(id, detail.lead?.name);
+  bindPreview(r);
+  bindNotes(r, id);
+  const slot = r.querySelector("#d-research");
+  if (slot) wireResearch(slot, id, { research: detail.research ?? null, waiting: detail.research_waiting });
+}
+
+// Write first email: stage 6's composer (public/js/compose.js, mountEmail) in the #d-email slot. Until stage 6 ships
+// the file isn't there, and the toast says so.
+function bindWriteEmail(r, id, ask) {
+  const btn = r.querySelector("[data-write-email]");
+  if (!btn) return;
+  btn.onclick = async () => {
+    btn.disabled = true;
+    let compose = null;
+    try {
+      compose = await import("./compose.js");
+    } catch { /* not built yet */ }
+    if (ask !== drawerAsk) return;
+    btn.disabled = false;
+    if (typeof compose?.mountEmail !== "function") {
+      toast(NO_COMPOSER);
+      return;
+    }
+    const slot = r.querySelector("#d-email");
+    if (!slot) return;
+    try {
+      await compose.mountEmail(slot, id);
+      if (ask === drawerAsk && slot.isConnected) slot.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (err) {
+      toast(`Couldn't open the email writer (${String(err?.message || err).replace(/[.\s]+$/, "")}). Close this lead and open it again.`);
+    }
+  };
+}
+
+// Preview: the frame waits in an inert <template> until pressed (leadview.js), then shows and hides.
+function bindPreview(r) {
+  const btn = r.querySelector("[data-preview-toggle]");
+  const box = r.querySelector("[data-preview-box]");
+  if (!btn || !box) return;
+  btn.onclick = () => {
+    const frame = r.querySelector("template[data-preview-frame]");
+    if (!box.firstElementChild && frame) box.append(frame.content.cloneNode(true));
+    box.hidden = !box.hidden;
+    btn.setAttribute("aria-expanded", String(!box.hidden));
+  };
+}
+
+// Notes save when you click away (PATCH {notes}).
+function bindNotes(r, id) {
+  const notes = r.querySelector("#d-notes");
+  const saved = r.querySelector("#d-saved");
+  if (!notes || !saved) return;
+  notes.onchange = async () => {
+    try {
+      await api(`/api/leads/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ notes: notes.value }) });
+      saved.textContent = "Saved.";
+      saved.classList.remove("error");
+    } catch (err) {
+      saved.textContent = `Not saved. ${err.message}`;
+      saved.classList.add("error");
+    }
+  };
+}
+
+// After Not a fit or Research is wrong the lead leaves Ready to email: redraw the list when it's on screen.
+const refreshList = () => { if (body()) loadList(); };
+
+/** Not a fit: "Why isn't it a fit?" → POST /api/leads/:id/not-a-fit {reason}; a refusal shows in the dialog. */
+function notAFit(id, name) {
+  const d = modal(notAFitHtml(name));
+  const form = d.querySelector("#fit-form");
+  const send = d.querySelector("[data-fit-send]");
+  const error = d.querySelector("[data-fit-error]");
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    const reason = notAFitReason(form.querySelector("input[name=fit]:checked")?.value ?? "", d.querySelector("#fit-text").value);
+    send.disabled = true;
+    error.hidden = true;
+    try {
+      await api(`/api/leads/${encodeURIComponent(id)}/not-a-fit`, { method: "POST", body: JSON.stringify({ reason }) });
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+      send.disabled = false;
+      return;
+    }
+    d.close();
+    toast("Marked not a fit. It won't show in Ready to email.");
+    refreshList();
+    if (state.drawer === id) openLeadDrawer(id);
+  };
+}
+
+// ---------------------------------------------------------------- Claude's research card (stage 2's researchcard.js)
+
+/** Draw the card again (after Research is wrong) and wire it. */
 function showResearch(slot, id, data) {
   slot.innerHTML = researchCard(data, { esc, safeUrl });
+  wireResearch(slot, id, data);
+}
+
+/** Wire the card's buttons: Copy the opener, and Research is wrong → note box → Re-check / Cancel. */
+function wireResearch(slot, id, data) {
   const opener = data.research?.opener || "";
   const copy = slot.querySelector("[data-copy-opener]");
   if (copy) copy.onclick = async () => {
@@ -372,6 +340,7 @@ function showResearch(slot, id, data) {
     }
     toast(out.message);
     showResearch(slot, id, { ...data, research: recheckedResearch(data.research, note.value) });
+    refreshList();
   };
 }
 
@@ -393,15 +362,4 @@ async function postRecheck(id, note) {
     return { error: "You've been logged out. Log in again, then press Re-check." };
   }
   return recheckAnswer(resp.status, await resp.json().catch(() => null));
-}
-
-// ---------------------------------------------------------------- All Leads page
-
-export async function leadsPage(fresh = true) {
-  if (fresh) {
-    state.jobId = null;
-    state.leads = (await api("/api/leads")).leads;
-  }
-  view.innerHTML = pageHead("Leads", "Every business from every search, best first. Click one for everything we know about it.") + leadsTable();
-  bindTable(() => leadsPage(false));
 }

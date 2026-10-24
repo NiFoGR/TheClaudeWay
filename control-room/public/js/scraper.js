@@ -1,6 +1,5 @@
-// Lead Scraper page: start a search, watch it live, see the results.
-import { bindTable, leadsTable, NO_SITE } from "./leads.js";
-import { ago, api, esc, icon, kpi, modal, pageHead, state, toast, view } from "./lib.js";
+// Lead Scraper page: start a search, watch it live, then open its leads on the Leads page (#/leads?view=all&job=<id>).
+import { ago, api, esc, icon, modal, pageHead, state, toast, view } from "./lib.js";
 
 export const TRADES = ["roofer", "plumber", "electrician", "heating engineer", "builder", "landscaper", "painter and decorator",
   "locksmith", "pest control", "removals", "mechanic", "car dealer", "driving school", "martial arts gym",
@@ -46,7 +45,6 @@ export function scraperPage() {
   view.querySelectorAll(".run").forEach((r) => r.onclick = () => openJob(r.dataset.id));
   const all = view.querySelector("#all-runs");
   if (all) all.onclick = () => { state.showAllRuns = !state.showAllRuns; scraperPage(); };
-  if (job && job.status === "done") bindTable(scraperPage);
   automaticCard();
 }
 
@@ -150,7 +148,7 @@ function howItWorks() {
   return `<div class="card" style="margin-top:16px"><div class="card-head"><h2>How it works</h2></div><ol class="steps">
     <li><b>Type a niche and a town</b>, choose how many leads, press <b>Find leads</b>.</li>
     <li>It scouts Google Maps, checks every website against the SEO playbook, finds emails and owners' names, maps where they rank, and skips chains. 2–8 minutes; you can leave the page.</li>
-    <li><b>Your leads appear here</b>, best first. Use the tabs to see who to email and who to call.</li>
+    <li><b>Press See these leads</b> when it's done: they open on the Leads page, best first.</li>
   </ol><p class="hint">First time? Check <a href="#/setup">Setup</a> shows everything connected.</p></div>`;
 }
 
@@ -206,14 +204,33 @@ function jobResults(job) {
   if (job.status === "failed") {
     return `${title}<div class="card"><p class="error" style="margin:0;overflow-wrap:anywhere">${esc(job.error || "Unknown error")}</p><p class="hint">Check <a href="#/setup">Setup</a>, fix anything red, then press Find leads again.</p></div>`;
   }
-  const pitch = state.leads.filter((l) => !l.excluded);
-  const tiles = [
-    kpi("Worth pitching", pitch.length, `of ${state.leads.length} found`, "accent"),
-    kpi("No working website", pitch.filter((l) => l.findings.some((f) => NO_SITE.includes(f))).length, "easiest sells"),
-    kpi("With an email", pitch.filter((l) => l.email).length, `${pitch.filter((l) => l.audit?.email_source === "guessed").length} guessed`),
-    kpi("Call list", pitch.filter((l) => !l.email).length, "no email found"),
-  ].join("");
-  return `${title}<div class="kpis" style="margin-bottom:16px">${tiles}</div>${leadsTable()}`;
+  return `${title}${seeLeadsHtml(job)}`;
+}
+
+/**
+ * A finished run: "{pitchable} worth pitching of {found} found." (the run's history), then "See these {n} leads" →
+ * the Leads page, All leads, this run only, where n is `leads_now` (GET /api/jobs: the leads whose last run is this
+ * one, exactly what the link lists; `found` when it's missing). A later search that finds some again lists them
+ * under that run, so n can be smaller than found: a note says so, and when none are left there's no button, just a
+ * link to All leads. Show excluded is on in the link because the run's leads include the excluded ones.
+ */
+export function seeLeadsHtml(job) {
+  const whole = (v) => (v === null || v === undefined || v === "" ? null : Number.isSafeInteger(Number(v)) && Number(v) >= 0 ? Number(v) : null);
+  const found = whole(job?.found) ?? 0;
+  if (!found) return `<div class="card"><p class="muted" style="margin:0">This search didn't find any businesses.</p></div>`;
+  const pitchable = whole(job.pitchable);
+  const now = whole(job.leads_now) ?? found;
+  const history = pitchable === null ? "" : `<b>${esc(pitchable)} worth pitching</b> <span class="muted">of ${esc(found)} found.</span>`;
+  if (!now) {
+    return `<div class="card job-done">
+    <div>${history}<div class="muted small">A later search found all of these again: they're listed under that run. <a href="#/leads?view=all">See all leads</a></div></div></div>`;
+  }
+  const gone = Math.max(0, found - now);
+  const note = gone ? `<div class="muted small">${esc(gone)} of them ${gone === 1 ? "was" : "were"} found again by a later search, so ${gone === 1 ? "it's" : "they're"} listed under that run.</div>` : "";
+  const href = `#/leads?view=all&job=${encodeURIComponent(job.id)}&excluded=1`;
+  return `<div class="card job-done">
+    <div>${history}${note}</div>
+    <a class="btn" href="${esc(href)}">${icon("users")} ${now === 1 ? "See this lead" : `See these ${esc(now)} leads`}</a></div>`;
 }
 
 async function startScrape(e) {
@@ -231,7 +248,6 @@ async function startScrape(e) {
     const { job } = await api("/api/scrape", { method: "POST", body: JSON.stringify(body) });
     state.jobs = [job, ...state.jobs.filter((j) => j.id !== job.id)];
     state.jobId = job.id;
-    state.leads = [];
     scraperPage();
     poll();
   } catch (ex) {
@@ -241,11 +257,9 @@ async function startScrape(e) {
   }
 }
 
+// Its leads are on the Leads page (seeLeadsHtml's link), so opening a run fetches nothing more.
 export async function openJob(id) {
   state.jobId = id;
-  state.leads = [];
-  const job = state.jobs.find((j) => j.id === id);
-  if (job && job.status === "done") state.leads = (await api(`/api/leads?job=${encodeURIComponent(id)}`)).leads;
   scraperPage();
 }
 
