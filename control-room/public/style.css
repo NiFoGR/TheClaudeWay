@@ -460,8 +460,36 @@ dialog .card { border: 0; padding: 0; margin: 0 !important; }
 @media (max-width: 860px) {
   .email-grid, .fu-row { grid-template-columns: 1fr; }
 }
-.ai-card { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; }
 .tag.ai { background: var(--gold-soft); color: var(--gold); }
+
+/* Claude's research card in the lead drawer (researchcard.js). A+ is the one gold grade; A to D are neutral. Its
+   heading is the first child of the card's slot, so it keeps the drawer's usual gap above (not .drawer h3:first-child's 0). */
+.drawer h3.research-head { margin-top: 22px; }
+.research-card { background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r); padding: 12px 14px; font-size: 13px; overflow-wrap: anywhere; }
+.research-card p { margin: 0 0 6px; }
+.research-card h4 { margin: 14px 0 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.research-state { font-size: 14px; }
+.research-old { opacity: 0.55; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.grade-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 8px; }
+.grade { display: inline-grid; place-items: center; min-width: 36px; height: 30px; padding: 0 8px; border-radius: 8px; font-size: 15px; font-weight: 750;
+  background: var(--surface-3); color: var(--text); border: 1px solid var(--line-2); }
+.grade.aplus { background: var(--gold); color: var(--gold-ink); border-color: var(--gold); }
+.research-cap { margin-top: -2px; }
+.points { display: grid; gap: 8px; margin: 4px 0 2px; }
+.point { display: grid; gap: 4px; }
+.point b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.point .why { color: var(--text-2); }
+.research-list { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.research-list.emails { list-style: none; padding-left: 0; }
+.research-list .star { color: var(--gold); }
+.opener-box { margin: 0 0 8px; padding: 10px 12px; background: var(--surface-3); border-left: 3px solid var(--gold); border-radius: 0 8px 8px 0; font-size: 13.5px; line-height: 1.55; }
+.research-notes { white-space: pre-line; color: var(--text-2); }
+details.research-checked { margin-top: 12px; }
+details.research-checked > summary { cursor: pointer; font-weight: 600; color: var(--text-2); }
+details.research-checked ol { margin: 6px 0 0; padding-left: 20px; color: var(--text-2); font-size: 12px; display: grid; gap: 2px; }
+.recheck { margin-top: 12px; }
+.recheck-box { display: grid; gap: 8px; }
+.recheck-box label { margin: 0; }
 
 /* selecting leads for outreach */
 .score-cell { display: flex; align-items: center; gap: 10px; }

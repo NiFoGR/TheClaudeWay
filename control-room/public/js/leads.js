@@ -1,6 +1,7 @@
 // The lead table (Lead Scraper results and All Leads) and the lead details drawer.
 import { callScript } from "./callscript.js";
 import { ago, api, esc, icon, pageHead, ring, safeUrl, state, toast, view } from "./lib.js";
+import { RECHECK_OFFLINE, recheckAnswer, recheckedResearch, researchCard } from "./researchcard.js";
 
 export const STATUSES = ["new", "in outreach", "contacted", "replied", "call booked", "won", "lost", "not interested"];
 export const NO_SITE = ["no_website", "profile_only", "site_down", "site_broken", "bad_certificate"];
@@ -52,7 +53,7 @@ function leadRow(l) {
     <td class="c-biz"><div class="biz">${esc(l.name)}</div><div class="sub-line">${esc([l.director_name && `Owner: ${l.director_name}${l.audit?.owner_confident ? "" : " (unconfirmed)"}`, l.town].filter(Boolean).join(" · "))}</div></td>
     <td class="c-problem"><div class="problem">${esc(problems[0] || "Nothing major found")}</div>${problems.length > 1 ? `<div class="sub-line">+${problems.length - 1} more</div>` : ""}</td>
     <td class="c-contact">${l.phone ? `<a href="${tel(l.phone)}" class="num">${esc(l.phone)}</a>` : `<span class="faint">No phone</span>`}
-      <div class="sub-line">${l.email ? `${esc(l.email)}${guessed(l) ? ' <span class="tag">guessed</span>' : l.audit?.email_source === "ai" ? ' <span class="tag ai">AI found</span>' : ""}` : l.audit?.ai_research ? "No email (AI searched too)" : "No email found"}</div></td>
+      <div class="sub-line">${l.email ? `${esc(l.email)}${guessed(l) ? ' <span class="tag">guessed</span>' : l.audit?.email_source === "ai" ? ' <span class="tag ai">AI found</span>' : ""}` : "No email from the scraper"}</div></td>
     <td class="c-google"><span class="rating">${l.rating ? `${icon("star")} ${esc(l.rating)}` : "–"} <span class="faint">(${esc(l.review_count || 0)})</span></span>${mapsLine(l)}</td>
     <td class="c-status"><select class="status-select" data-status="${esc(l.place_id)}" aria-label="Status">${status}</select></td>
   </tr>`;
@@ -230,7 +231,7 @@ export function openDrawer(lead, onChange = () => {}) {
         <select id="d-status" class="status-select" style="width:100%;border-radius:8px;padding:8px 12px;font-size:14px">${status}</select>
         ${l.excluded ? "" : parts}
         <h3>${l.excluded ? "Why it's excluded" : "What's wrong online"}</h3><ul class="issues">${problems}</ul>
-        ${aiCard(l)}
+        <div id="d-research"><h3 class="research-head">Claude's research</h3><p class="muted small" style="margin:0">Loading…</p></div>
         <h3>Email</h3>${emails}
         ${socials ? `<h3>Socials</h3><div class="actions">${socials}</div>` : ""}
         <h3>Details</h3>
@@ -287,6 +288,7 @@ export function openDrawer(lead, onChange = () => {}) {
     const saved = await saveLead(l.place_id, { notes: e.target.value });
     if (saved) { l.notes = saved.notes; root().querySelector("#d-saved").textContent = "Saved."; }
   };
+  loadResearch(root().querySelector("#d-research"), l.place_id);
 }
 
 const demoLive = (l) => l.demo_slug && Date.parse(l.demo_expires) > Date.now();
@@ -326,26 +328,71 @@ function outreachButton(l) {
   return `<button class="btn sm" data-outreach="start">${icon("send")} Start outreach</button>`;
 }
 
-/** What Claude found when it researched this lead (emails with proof, owner, its own review of the website). */
-function aiCard(l) {
-  const r = l.audit?.ai_research;
-  if (!r) return "";
-  const link = (u, text) => (safeUrl(u) ? `<a href="${esc(safeUrl(u))}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>` : esc(text));
-  const rv = r.review || {};
-  return `<h3>Claude's research <span class="faint" style="text-transform:none;letter-spacing:0">· ${esc(ago(r.done_at))}</span></h3>
-    <div class="ai-card">
-      ${rv.verdict || rv.summary ? `<p style="margin:0 0 8px">${rv.verdict ? `<b>${esc(rv.verdict)}.</b> ` : ""}${esc(rv.summary || "")}</p>` : ""}
-      ${rv.problems?.length ? `<ul class="issues">${rv.problems.map((p) => `<li>${esc(p)}</li>`).join("")}</ul>` : ""}
-      ${rv.good?.length ? `<p class="small muted" style="margin:8px 0 0">Good: ${rv.good.map(esc).join(" · ")}</p>` : ""}
-      ${r.website_score != null ? `<p class="small" style="margin:8px 0 0">Website rated <b>${esc(r.website_score)}/45</b> for how much we can help${r.score_reason ? `: ${esc(r.score_reason)}` : ""}</p>` : ""}
-      ${r.too_big ? `<p class="small" style="margin:6px 0 0"><b>Excluded:</b> ${esc(r.too_big_reason || "not owner-operated")}</p>` : ""}
-      ${r.best_email ? `<p class="small" style="margin:6px 0 0">Best email: ${esc(r.best_email)}${r.best_email_why ? ` (${esc(r.best_email_why)})` : ""}</p>` : ""}
-      ${r.wrong_findings?.length ? `<p class="small faint" style="margin:6px 0 0">Removed as wrong: ${r.wrong_findings.map(esc).join(" · ")}</p>` : ""}
-      ${r.emails?.length ? `<p class="small" style="margin:8px 0 0">${r.emails.map((e) => `${esc(e.email)} (${link(e.source_url, e.where || "source")})`).join("<br>")}</p>` : ""}
-      ${r.owner ? `<p class="small" style="margin:6px 0 0">Owner: ${esc(r.owner.full)} (${link(r.owner.source_url, "source")})</p>` : ""}
-      ${r.website ? `<p class="small" style="margin:6px 0 0">Website not linked on Google: ${link(r.website, r.website)}</p>` : ""}
-      ${r.notes ? `<p class="small faint" style="margin:6px 0 0">${esc(r.notes)}</p>` : ""}
-    </div>`;
+// ---------------------------------------------------------------- Claude's research card (researchcard.js)
+
+/** Fetch this lead's research when the drawer opens and fill its slot (left alone if the drawer has moved on). */
+async function loadResearch(slot, id) {
+  if (!slot) return;
+  try {
+    const data = await api(`/api/research/${encodeURIComponent(id)}`);
+    if (slot.isConnected) showResearch(slot, id, data);
+  } catch (err) {
+    if (slot.isConnected) {
+      slot.innerHTML = `<h3 class="research-head">Claude's research</h3><p class="error" style="margin:0">Couldn't load Claude's research (${esc(err.message)}). Close this lead and open it again; if it keeps failing, check your connection.</p>`;
+    }
+  }
+}
+
+/** Render the card and wire its buttons: Copy the opener, and Research is wrong → note box → Re-check / Cancel. */
+function showResearch(slot, id, data) {
+  slot.innerHTML = researchCard(data, { esc, safeUrl });
+  const opener = data.research?.opener || "";
+  const copy = slot.querySelector("[data-copy-opener]");
+  if (copy) copy.onclick = async () => {
+    try { await navigator.clipboard.writeText(opener); toast("Opener copied."); } catch { prompt("Copy the opener:", opener); }
+  };
+  const open = slot.querySelector("[data-recheck-open]");
+  if (!open) return;
+  const box = slot.querySelector("[data-recheck-box]");
+  const note = slot.querySelector("[data-recheck-note]");
+  const send = slot.querySelector("[data-recheck-send]");
+  const error = slot.querySelector("[data-recheck-error]");
+  const showError = (message) => { error.textContent = message; error.hidden = !message; };
+  open.onclick = () => { open.hidden = true; box.hidden = false; note.focus(); };
+  slot.querySelector("[data-recheck-cancel]").onclick = () => { box.hidden = true; open.hidden = false; showError(""); };
+  send.onclick = async () => {
+    send.disabled = true;
+    showError("");
+    const out = await postRecheck(id, note.value);
+    if (!slot.isConnected) return;
+    if (out.error) {
+      showError(out.error);
+      send.disabled = false;
+      return;
+    }
+    toast(out.message);
+    showResearch(slot, id, { ...data, research: recheckedResearch(data.research, note.value) });
+  };
+}
+
+/**
+ * POST the note to "Research is wrong" → {message} (the route's toast) or {error} in plain English for under the box
+ * (researchcard.js recheckAnswer). Its own fetch, not lib.js api(), so a dropped connection gets Part A's own words.
+ */
+async function postRecheck(id, note) {
+  let resp;
+  try {
+    resp = await fetch(`/api/research/${encodeURIComponent(id)}/wrong`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ note }),
+    });
+  } catch {
+    return { error: RECHECK_OFFLINE };
+  }
+  if (resp.status === 401) {
+    location.href = "/login";
+    return { error: "You've been logged out. Log in again, then press Re-check." };
+  }
+  return recheckAnswer(resp.status, await resp.json().catch(() => null));
 }
 
 // ---------------------------------------------------------------- All Leads page
