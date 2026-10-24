@@ -88,3 +88,36 @@ Routines have vanished before, so this can happen. You'll see it as a red light 
 
 The stage that writes a Routine's prompt adds its section here: its name, model, triggers and schedule, the "Aetos"
 environment, and its row on Setup → Claude.
+
+### research (`aetos-research`)
+
+Researches the leads each search keeps, 8 a run: who runs each business and the email that reaches them (with
+the page it was seen on), 1–3 true ways we can help, words for their demo site and the first two lines of your email.
+Claude scores four points; the Control Room turns them into a grade from A+ to D. Prompt: `routines/research.md`
+(written in stage 2, `docs/rebuild/03-research-grade.md`).
+
+1. Make the shared "Aetos" environment first if it doesn't exist yet (section 1): the `AETOS_AGENT` network secret
+   and the `CONTROL_ROOM_URL` environment variable.
+2. claude.ai/code/routines → New task → Set up manually (section 2):
+   - **Name:** `aetos-research`.
+   - **Repository:** `NiFoGR/TheClaudeWay`.
+   - **Model:** Sonnet.
+   - **Environment:** "Aetos".
+   - **Prompt:** the whole contents of `routines/research.md`, pasted as it is.
+   - **Schedule:** daily at 06:47, Europe/London (UK time).
+3. Add the API trigger (section 3): Edit → in the Trigger row press + → API → Generate token (shown once: copy it
+   straight away), then copy the trigger's Fire URL (it ends in `/fire`).
+4. In the Control Room: Setup → Claude → the Research row → paste the URL and the token → Save → Test fire. Within a
+   few minutes the row says "Last ran just now". A test only posts the heartbeat: no lead is claimed or researched.
+5. Delete the old "Aetos lead research (daily)" Routine in claude.ai/code/routines (switched off since 19 Oct).
+   `aetos-research` replaces it. If the old one were switched back on, it would take leads from this one's queue and
+   post its research to an address that no longer exists, so that research would be lost.
+
+What starts it: the 06:47 schedule; a finished search that queued new leads (`research queued: <n> leads`); and
+"Research is wrong" in a lead's drawer (`research queued: 1 lead (Nik asked)`). The Control Room fires it at most once
+every 30 minutes (after a search a Test fire counts too; "Research is wrong" doesn't count one, as a test only posts
+its heartbeat); leads queued in between wait for the run that's going or the next one.
+
+If it stops: Setup → Health's research light goes red after 26 hours without research while leads are waiting. Open
+claude.ai/code/routines, check `aetos-research` is on and its last run finished, then press Run now. If it's gone,
+make it again from this section and paste the new URL and token on Setup (section 6).

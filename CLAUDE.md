@@ -87,7 +87,7 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
   Money, Setup: health lights, mailboxes and the SMTP test, DNS, receiving replies, Claude's access key and Routines,
   business details); lead score = Website 45 + Local SEO 30 + Google Maps 25 (`lead-manager/aetos_leads/scoring.py`);
   email finding in `lead-manager/aetos_leads/contacts.py`; owner's first name in `owner.py` (website → Google reviews →
-  email → business name, Companies House only as a fallback; never a word from the business name, the town or a famous person; only their own words or email count as confirmed (`owner_confident`), emails greet a guessed name with plain "Hi," and Claude checks guesses). Demo sites + order page built (`functions/_lib/demo.js` + `demo-db.js`, routes `/d/:slug`, `/d/:slug/order`, beacon `/d/:slug/e`; tables `demos`, `demo_events`; one neutral template awaiting the owner's look/trade decision; views/orders count as outreach wins). Funnel draft in `docs/funnel.md` (7 decisions open). Demos use their own logo/colour/photos (`aetos_leads/brand.py`, free, from their site) and best Google reviews. Daily search: every morning from 6am, if fewer than 30 good leads are waiting, searches the next town on your list; new leads go to Claude's research queue (`control-room/functions/_lib/find.js`, tick step `daily_find`; territory on the Lead Scraper page's Automatic search card). Claude's lead research is a daily scheduled Routine "Aetos lead research (daily)" (13:47 UK; Routines made from a session have vanished twice: if research stops, What to do/SITREP warn, recreate it), researching the best 15 waiting a day, picks first, then writes `SITREP.md` (committed with [CI Skip]; pull before pushing). "What to do" checklist on Home (`_lib/today.js`, `api/today.js`): daily steps from live numbers + one-time setup; add a step whenever a new feature needs the owner. Today's picks (Outreach page, `api/outreach/picks.js`): the owner approves who's emailed (final say). Decisions in `docs/funnel.md`: no phone pings (SITREP instead), replies: rules → Haiku → Sonnet, Namecheap mailboxes. Next: sending + replies (when mailboxes exist), chasing hot leads, aetoswebsites.com, Outreach sending, Onboarding, client second brain. The rebuild plan (`docs/rebuild/`) is the to-do list.
+  email → business name, Companies House only as a fallback; never a word from the business name, the town or a famous person; only their own words or email count as confirmed (`owner_confident`), emails greet a guessed name with plain "Hi," and Claude checks guesses). Demo sites + order page built (`functions/_lib/demo.js` + `demo-db.js`, routes `/d/:slug`, `/d/:slug/order`, beacon `/d/:slug/e`; tables `demos`, `demo_events`; one neutral template awaiting the owner's look/trade decision; views/orders count as outreach wins). Funnel draft in `docs/funnel.md` (7 decisions open). Demos use their own logo/colour/photos (`aetos_leads/brand.py`, free, from their site) and best Google reviews. Daily search: every morning from 6am, if fewer than 30 good leads are waiting, searches the next town on your list; new leads go to Claude's research queue (`control-room/functions/_lib/find.js`, tick step `daily_find`; territory on the Lead Scraper page's Automatic search card). Claude's lead research is the Routine `aetos-research` (daily 06:47 UK, plus an API fire when a search queues new leads; Routines have vanished before: if research stops, Setup → Health's research light goes red, recreate it from `routines/README.md`), researching 8 queued leads a run, re-checks first. "What to do" checklist on Home (`_lib/today.js`, `api/today.js`): daily steps from live numbers + one-time setup; add a step whenever a new feature needs the owner. Today's picks (Outreach page, `api/outreach/picks.js`): the owner approves who's emailed (final say). Decisions in `docs/funnel.md`: no phone pings (SITREP instead), replies: rules → Haiku → Sonnet, Namecheap mailboxes. Next: sending + replies (when mailboxes exist), chasing hot leads, aetoswebsites.com, Outreach sending, Onboarding, client second brain. The rebuild plan (`docs/rebuild/`) is the to-do list.
 - Call script per lead (`public/js/callscript.js`, pure + tested): playbook structure, only proven facts, today's price, objections; "I've built you a site" only once `demo_url` exists.
 - Money page: clients (build fee + retainer after the free days), costs you add, and Google API cost estimated from
   calls logged per run (`aetos_leads/usage.py` → `api_usage` table; prices and free allowances in
@@ -104,15 +104,23 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
   (`docs/outreach-weekly-review.md`) via `/api/agent/*` with `OUTREACH_AGENT_TOKEN`; the owner approves every version.
   Sending (Gmail API + a cron Worker) is built when the mailboxes exist. **Replies must be fast: set up per inbox when
   the mailboxes are bought** (each inbox's new-mail check fires the reply Routine's API trigger, like Find leads does).
-- AI lead research (80/20): the scraper does everything free first, then `aetos_leads/research.py` flags only leads
-  worth pitching (score ≥ 35) with a to-do list (size / email / best email / owner / website / review). Finished
-  searches queue them in `research` (tick step `daily_find`), which fires a Claude Routine (API trigger, owner's
-  subscription, Sonnet) at most every 6 hours;
-  Claude does only those to-dos within a budget (`docs/lead-research-routine.md`) and posts to `/api/agent/leads/:id`
-  (merge: `_lib/research.js`): emails/owner with source URLs, the decision maker's email, its website rating (replaces
-  the automated Website /45), false alarms removed, big firms excluded. Research carries over on re-scrapes
-  (`store.carry_over`). Email order (`contacts.rank_emails`): owner's → director@/owner@ → a named person in a small
-  business → info@ → named staff of a bigger firm → departments.
+- AI lead research and grade A+ to D (stage 2, `docs/rebuild/03-research-grade.md`): the scraper does everything free
+  first; every lead it keeps (score ≥ 35 or not checkable, not suppressed) is queued in `research` (`enqueueResearch` in
+  `_lib/find.js`, tick step `daily_find`), which fires the Routine `aetos-research` (Sonnet, owner's subscription; also
+  daily 06:47 UK; prompt `routines/research.md`, made by hand from `routines/README.md`). Claude takes 8 a run from
+  `GET /api/agent/research-queue` (3-hour claim, re-checks first), does five minimum steps per lead (Facebook search,
+  their contact/about pages, Companies House officers, an email search, Yell/Checkatrade) and posts one JSON per lead
+  to `POST /api/agent/research/:place_id`: four points (need, means, reach, fit, 0–5) with reasons, owner and emails
+  each with the source URL it was seen on, best email, 1–3 angle facts, the email opener, demo copy, a site review and
+  everything it `searched`. The server checks every field (`validateResearch` in `_lib/research.js`; unknown fields are
+  400s; the town as a first name is rejected, a word of the business name is saved not confident) and computes the
+  grade itself (`gradeFrom` in `_lib/grade.js`; Claude never sends one); D1 reads/writes in `_lib/research-db.js`.
+  The lead drawer's "Claude's research" card (`public/js/researchcard.js`) shows it; "Research is wrong" re-queues the
+  lead with the owner's note (`POST /api/research/:place_id/wrong`). Health light `research`: red after 26 h without a
+  post while leads wait, amber when under 40% get an email. `aetos_leads/research.py`'s `ai_needs` is only a hint list;
+  Claude's research is saved only in the `research` table. Best email order (the scraper's `contacts.rank_emails`
+  too): owner's → director@/owner@ → a named person in a small business → info@ → named staff of a bigger firm (the
+  scraper ranks departments last; Claude never picks one).
 - Stripe (`functions/_lib/stripe.js`, `stripe-events.js`): Setup's button creates products, payment links and the webhook
   from `STRIPE_SECRET_KEY` (Cloudflare secret); ids + webhook secret live in the `settings` table. Webhook payloads are
   pinned to API version 2024-06-20. Card clients' income = actual `payments`; their schedule is only the forecast.
