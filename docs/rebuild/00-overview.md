@@ -549,8 +549,9 @@ and the remaining steps still run):
 9. `calls` [5] (stage 8): expire unconfirmed offers, add call-day todos.
 10. `sites` [5] (stage 10): client-site DNS checks, go-live, countdown warnings, chat-lead emails.
 11. `care` [10] (stage 11): monthly care checks.
-12. `purge` [monthly] (file 11): delete non-clients' `prospects`/`messages`/`research` rows with no message in 12
-    months (`suppression` is kept).
+12. `purge` [monthly] (file 11): delete non-clients' `prospects`/`messages` rows with no message in 12 months and
+    blank their `research` rows to a data-free `skipped` row, never deleted, so stage 1's research queue never takes
+    them again (`suppression` is kept).
 13. `health` [0] (stage 0): only in the `?reason=health` invocation (the relay calls it after every cron tick):
     compute lights, add/close `health` and stage 0's `setup` todos in one batched sync, beat `health`. Every other
     tick skips it and beats `tick` itself.

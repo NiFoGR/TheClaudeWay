@@ -430,11 +430,18 @@ The privacy notice (stage 0) promises: "If we contacted you and you didn't becom
 - **Who is deleted:** a `place_id` that has no `clients` row, whose last contact is more than 12 months ago. Last
   contact = the newest of its `messages.created_at`, `prospects.updated_at` and `research.researched_at`
   (`queued_at` when not researched). A lead with no dated row at all is never touched.
-- **What is deleted:** its `prospects`, `messages` and `research` rows. Also processed `inbound_raw` rows older
+- **What is deleted:** its `prospects` and `messages` rows, and everything its `research` row holds: that row is
+  blanked to a data-free `skipped` row (every data column NULL, `too_big = 0`, both dates NULL, notes `Skipped:
+  details deleted 12 months after last contact.`), never deleted. Stage 1's research queue treats any `research` row
+  as handled, so a deleted row would put the lead back in the queue the next morning: researched again, a new demo,
+  and emailed again. With both dates NULL the purge never selects it again. Also processed `inbound_raw` rows older
   than the same 12-month cutoff (their `headers` still hold From and Subject), but always keeping the newest row,
   because Setup's "Last email received" reads it by rowid.
-- **What is kept:** `suppression` (so a "no thanks" or bounce is never emailed again), every client's rows, and the
-  scraped `leads` row (public business listing, owned by the scraper).
+- **What is kept:** `suppression` (so a "no thanks" or bounce is never emailed again), every client's rows, the
+  scraped `leads` row (public business listing, owned by the scraper), and the blanked `research` row (no personal
+  data; it only stops the lead being researched, demoed and emailed again). Stage 3's card shows it as "Skipped:
+  details deleted 12 months after last contact."; stage 4 keeps it out of Ready and `goodWaiting` doesn't count it.
+  "Research is wrong" is the only way to bring the lead back, by Nik's choice.
 - **Limits:** at most 90 leads per round, and only as many rounds as the tick's query budget allows (stage 0's
   `ctx.budget.left()`); the rest waits for the next tick.
 - **Result line:** "purged <n> leads" / "purged <n> leads, more next tick" / "nothing to purge" / "done this month" /
@@ -476,8 +483,9 @@ failing `purge` step shows in the tick result and the `tick` heartbeat detail li
    - Stage 0's `routine:weekly-kpis` light is green.
 8. **Nav:** the 9 items appear in the exact order. `#/roadmap` and `#/outreach` open Todo; `#/lead/<id>/thread` opens
    that lead's Replies thread. No request goes to `/api/today` or `/api/overview` (DevTools Network tab).
-9. **Purge:** `purge.test` passes: a non-client last contacted 12 months and a day ago loses its `prospects`,
-   `messages` and `research` rows and keeps its `suppression` row; a client and a lead contacted 11 months ago keep
+9. **Purge:** `purge.test` passes: a non-client last contacted 12 months and a day ago loses its `prospects` and
+   `messages` rows, its `research` row is blanked to a data-free `skipped` row, and it keeps its `suppression` row;
+   the next morning's research queue doesn't take it again; a client and a lead contacted 11 months ago keep
    everything.
 
 ---
@@ -1373,12 +1381,14 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
 
 **Interfaces:**
 - Consumes: `getSetting`, `setSetting`, `ukDate`, `ukToUtc` (stage 0); `iso` from `_lib/util.js`; `runTick`'s
-  `ctx = {DB, env, now, reason, results, budget}` (stage 0; `budget.left()` = the queries this step may still use).
+  `ctx = {DB, env, now, reason, results, budget}` (stage 0; `budget.left()` = the queries this step may still use);
+  (test only) `runDailyFind(DB, env, now, {start, fire})` from `_lib/find.js` (stage 1).
 - Produces:
   - `PURGE_BATCH = 90`
   - `purgeCutoff(now) → ISO string`: UK midnight at the start of the same UK calendar date one year earlier (29 Feb →
     28 Feb).
-  - `purgeOld(DB, now, {maxRounds}) → Promise<{purged, done}>`: each round is 1 select + 1 `DB.batch` of 3 deletes;
+  - `purgeOld(DB, now, {maxRounds}) → Promise<{purged, done}>`: each round is 1 select + 1 `DB.batch` of 3
+    statements (2 deletes and the `research` blanking update);
     `done` is true when the last select returned fewer than `PURGE_BATCH` ids.
   - `purgeStep = {name: "purge", everyMinutes: 60, run}`.
 
@@ -1387,8 +1397,8 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
 
   | place | rows | last contact | expected |
   | --- | --- | --- | --- |
-  | old1 | prospect `lost`, 2 messages (newest 2025-10-20T09:00Z), research, suppression row for its email | 2025-10-20 | prospect, messages, research gone; suppression kept |
-  | old2 | research only, `researched_at` 2025-09-01T07:00Z, no prospect | 2025-09-01 | research gone |
+  | old1 | `leads` row (score 60), prospect `lost`, 2 messages (newest 2025-10-20T09:00Z), research, suppression row for its email | 2025-10-20 | prospect, messages gone; research blanked (`skipped`, no data, no dates); suppression and lead kept |
+  | old2 | `leads` row (score 60), research only, `researched_at` 2025-09-01T07:00Z, no prospect | 2025-09-01 | research blanked; lead kept |
   | recent | prospect, message 2025-11-01T09:00Z, research 2025-09-01 | 2025-11-01 | kept |
   | client1 | prospect `won`, messages 2025-01-10, `clients` row with this `place_id` | 2025-01-10 | kept |
   | nodate | research with `researched_at` and `queued_at` NULL | none | kept |
@@ -1401,8 +1411,27 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
     const left = async (t) => (await DB.prepare(`SELECT DISTINCT place_id FROM ${t} ORDER BY place_id`).all()).results.map((x) => x.place_id);
     assert.deepEqual(await left("prospects"), ["client1", "recent"]);
     assert.deepEqual(await left("messages"), ["client1", "recent"]);
-    assert.deepEqual(await left("research"), ["nodate", "recent"]);
+    assert.deepEqual(await left("research"), ["nodate", "old1", "old2", "recent"]);
+    for (const r of (await DB.prepare("SELECT * FROM research WHERE place_id IN ('old1','old2')").all()).results) {
+      assert.equal(r.status, "skipped");
+      assert.equal(r.notes, "Skipped: details deleted 12 months after last contact.");
+      assert.equal(r.too_big, 0); assert.equal(r.queued_at, null); assert.equal(r.researched_at, null);
+      for (const col of ["grade", "points", "grade_reason", "angle", "opener", "owner", "best_email", "best_email_why",
+        "emails", "copy", "site_review", "searched"]) assert.equal(r[col], null, col);
+    }
     assert.equal((await DB.prepare("SELECT COUNT(*) AS n FROM suppression").first()).n, 1);
+    assert.deepEqual(await purgeOld(DB, NOW, { maxRounds: 5 }), { purged: 0, done: true });   // never selected again
+  });
+  test("a purged lead isn't queued for research again", async () => {
+    // a fresh fakeD1: old2 alone (its `leads` row, score 60, and its research row researched 2025-09-01T07:00Z)
+    assert.deepEqual(await purgeOld(DB, NOW, { maxRounds: 5 }), { purged: 1, done: true });
+    await setSetting(DB, "research:enqueued_at", "2026-10-22T05:05:00Z");   // the previous day's enqueue
+    const fired = [];
+    const fire = async (db, name, text) => { fired.push(text); return { ok: true, status: 200 }; };
+    const out = await runDailyFind(DB, {}, new Date("2026-10-23T05:05:00Z"), { start: async () => "", fire });   // 06:05 UK, next morning
+    assert.match(out, /^queued 0(;|$)/);
+    assert.deepEqual(fired, []);
+    assert.equal((await DB.prepare("SELECT status FROM research WHERE place_id = 'old2'").first()).status, "skipped");
   });
   test("big backlogs go in rounds and stop at the budget", async () => {
     // seed 95 research-only leads researched 2025-01-01
@@ -1433,13 +1462,15 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
        AND place_id NOT IN (SELECT place_id FROM clients WHERE place_id IS NOT NULL)
     ORDER BY last LIMIT ?2
     ```
-  - Delete with one `DB.batch` of `DELETE FROM prospects|messages|research WHERE place_id IN (…)`. Never touch
-    `suppression`, `clients`, `client_links` or `leads`.
+  - One `DB.batch` of 3 statements: `DELETE FROM prospects WHERE place_id IN (…)`, `DELETE FROM messages WHERE
+    place_id IN (…)` and `UPDATE research SET status = 'skipped', grade = NULL, points = NULL, grade_reason = NULL, angle = NULL, opener = NULL, owner = NULL, best_email = NULL, best_email_why = NULL, emails = NULL, copy = NULL, site_review = NULL, searched = NULL, too_big = 0, notes = 'Skipped: details deleted 12 months after last contact.', queued_at = NULL, researched_at = NULL WHERE place_id IN (…)`. The `research` row is
+    never deleted: stage 1's queue treats any row as handled. Never touch `suppression`, `clients`, `client_links` or
+    `leads`.
   - `run(ctx)`: `month = ukDate(now).slice(0, 7)`; if `purge:month` equals it, return "done this month" (1 query).
     Otherwise `maxRounds = Math.min(5, Math.floor((ctx.budget.left() - 2) / 4))`; with 0 rounds return "deferred". Run `purgeOld`;
     when `done`, set `purge:month = month`. Return "nothing to purge", "purged <n> leads" or "purged <n> leads, more
     next tick".
-- [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/purge.test.mjs` passes (3 tests),
+- [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/purge.test.mjs` passes (4 tests),
   and `node --test control-room/tests/tick.test.mjs` still passes.
 - [ ] **Step 5: Commit.** `git add control-room/functions/_lib/purge.js control-room/functions/_lib/tick.js
   control-room/tests/purge.test.mjs` then `git commit -m "Purge non-customers' data 12 months after last contact"
@@ -1473,6 +1504,8 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
 - **`_lib/kpis-db.js`:** `loadKpiRows`, `kpiPayload`.
 - **`_lib/purge.js`:** `purgeStep` (tick step `purge`, placed after `care` and before `health` in overview §8),
   `purgeOld`, `purgeCutoff`. Settings key `purge:month`. This is stage 0's promised 12-month retention purge.
+  `research` rows are blanked to a data-free `skipped` row, never deleted; stage 1's queue treats any `research` row
+  as handled, so a purged lead is never researched or emailed again on its own.
 - **Routes:**
   - `GET /api/todo`, `GET /api/todo/count`, `PATCH /api/todo/:id`, `POST /api/todo/:id/send`;
   - `GET /api/kpis`, `GET /api/agent/kpis`, `POST /api/agent/kpis/:week`;

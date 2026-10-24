@@ -494,7 +494,8 @@ OFFSET (page−1)×50`.
 
 **Interfaces:**
 - Consumes: `offerFor(now)` and `GUARANTEE` from stage 0's `_lib/offer.js`; `isHot`, `STAGE_LABELS` (Task 1);
-  `parseResearch(row)` from stage 2's `_lib/research.js`; `parseJson` from `_lib/util.js`.
+  `parseResearch(row)` from stage 2's `_lib/research.js`; `parseJson` and `mapsFromAnotherTown(mapRank, lead)` from
+  `_lib/util.js`.
 - Produces: `leadDetail(DB, placeId, now) → Promise<Detail|null>`:
   ```
   { lead: {place_id, name, trade, town, search_town, address, postcode, phone, website, maps_url, rating, review_count,
@@ -516,8 +517,11 @@ OFFSET (page−1)×50`.
   ```
   The research row goes through `parseResearch` (bad JSON → `null`/`[]`, never a throw); other JSON columns through
   `parseJson`. `findings` and `reviews` come from `json_extract(l.audit, '$.findings')` / `'$.reviews'`; `audit`
-  itself is never selected. `demo.url` is relative (`/d/<slug>`), so Nik's own visits from the Control Room host
-  never count. `demo.template` is stage 4's `templateIdFor(lead.trade)`, loaded only when a live demo exists with
+  itself is never selected. **No Maps lines from another town's scan** (stage 1's false claim #7; this payload skips
+  `leadRow`, which guards every other reader): select `json_extract(l.audit, '$.map_rank') AS audit_map_rank` too, and
+  when `mapsFromAnotherTown(parseJson(audit_map_rank, {}), lead)` (`_lib/util.js`) is true, `findings` leaves out every
+  `maps_*`/`reviews_behind` code and `map_rank` is `null`. `demo.url` is relative (`/d/<slug>`), so Nik's own visits
+  from the Control Room host never count. `demo.template` is stage 4's `templateIdFor(lead.trade)`, loaded only when a live demo exists with
   `await import("./demo/data.js").then(m => m.templateIdFor(trade)).catch(() => null)` (null before stage 4 ships,
   which hides the Preview toggle).
 
@@ -534,13 +538,18 @@ OFFSET (page−1)×50`.
     scalar subquery, + one batch of demo, messages, calls counted as 3 statements → total ≤ 4).
   - `test("bad json and missing lead")`: research `angle = "not json"` → `d.research.angle` deep-equals `[]`;
     `leadDetail(DB, "nope", now)` → `null`.
+  - `test("no Maps lines from another town")`: a Warrington lead with a `lead_map_rank` row, audit findings
+    `["no_website", "maps_invisible", "reviews_behind"]` and `audit.map_rank` `{avg_rank: 21, top3_pct: 0, found_pct: 0,
+    scan_town: "Runcorn"}` → `d.lead.findings` deep-equals `["no_website"]`, `d.map_rank === null`; the same with
+    `{scan_town: "Runcorn", home: false}`; a `"St. Helens"` lead with `scan_town: "Saint Helens"` keeps both.
   - `test("long bodies are cut")`: a 9,000-character body → returned length ≤ 5,000 + `"…"`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/shortlist-db.test.mjs` → fails:
   `leadDetail` is not exported.
 - [ ] **Step 3: Implement `leadDetail(DB, placeId, now)` in `control-room/functions/_lib/shortlist-db.js`** — first
   statement joins leads/research/prospects/lead_map_rank with the suppression EXISTS and
-  `(SELECT COUNT(*) FROM research WHERE status = 'queued') AS research_waiting`; if found, one `DB.batch` of live
-  demo, messages (`ORDER BY created_at LIMIT 100`), calls (`ORDER BY slot_at DESC LIMIT 5`).
+  `(SELECT COUNT(*) FROM research WHERE status = 'queued') AS research_waiting` (and `audit_map_rank` for the Maps
+  guard above); if found, one `DB.batch` of live demo, messages (`ORDER BY created_at LIMIT 100`), calls
+  (`ORDER BY slot_at DESC LIMIT 5`).
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/shortlist-db.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/shortlist-db.js control-room/tests/shortlist-db.test.mjs`
   + `git commit -m "Shortlist: one-request lead panel data" -m "$TRAILER"`.

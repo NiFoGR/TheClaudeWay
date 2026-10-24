@@ -1971,8 +1971,9 @@ Everything in overview §8 is built here with exactly those signatures. These ar
   Profile." to the landing's guarantee paragraph.
 - **Stage 4 (05):** the demo footer links "How we use your information" to `https://aetoswebsites.com/privacy`
   (Q-N).
-- **File 11:** the monthly `purge` tick step (before `health`) that deletes non-clients' `prospects`/`messages`/
-  `research` rows with no message in 12 months, keeping `suppression` (Q-P; needed by Oct 2027).
+- **File 11:** the monthly `purge` tick step (before `health`) that deletes non-clients' `prospects`/`messages`
+  rows with no message in 12 months and blanks their `research` rows to a data-free `skipped` row (so stage 1 never
+  queues them again), keeping `suppression` (Q-P; needed by Oct 2027).
 
 ## Questions for Nik
 

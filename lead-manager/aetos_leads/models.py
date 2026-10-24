@@ -39,4 +39,6 @@ class Lead:
     exclude_reason: str = ""
     quality_score: int = 0  # 0-100, how much we can help: higher = better lead (see scoring.py)
     score_parts: dict = field(default_factory=dict)  # {"website": .., "seo": .., "maps": ..}
-    map_rank: dict = field(default_factory=dict)  # {"avg_rank", "top3_pct", "found_pct"} from the Map Rank scan
+    # From the Map Rank scan of the lead's own town: {"avg_rank", "top3_pct", "found_pct", "scan_town", "home": True,
+    # "leader_reviews"}; {"scan_town", "home": False} (no numbers) when the scan was of another town (qualify.score)
+    map_rank: dict = field(default_factory=dict)

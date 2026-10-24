@@ -94,7 +94,8 @@ export function facts(lead, extra = {}) {
     f.competitor = cleanBusiness(c.name);
     f.competitor_top3 = String(Math.round(c.top3_pct));
   }
-  if (extra.spots) f.spots = String(extra.spots);
+  // the size of the scan behind {top3}: without a Maps result for their own town it isn't about them
+  if (extra.spots && f.top3 !== undefined) f.spots = String(extra.spots);
   if (lead.rating) f.rating = String(lead.rating);
   if (lead.review_count) f.reviews = String(lead.review_count);
   if (extra.sender?.first) f.sender_first = extra.sender.first;

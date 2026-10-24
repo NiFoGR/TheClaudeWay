@@ -1,7 +1,8 @@
 name: Reset leads
 
-# Deletes every lead and Lead Scraper run from the Control Room's database, to start fresh.
-# Keeps clients, money, Google usage costs, outreach versions and Map Rank heatmaps.
+# Deletes every lead, Claude's research on them and every Lead Scraper run from the Control Room's database, to start fresh.
+# Keeps clients, money, Google usage costs, outreach versions and Map Rank heatmaps, and who has been emailed or
+# opted out (prospects, suppression): losing those could mean emailing someone twice.
 # Run by hand: Actions → Reset leads → Run workflow, type DELETE.
 on:
   workflow_dispatch:
@@ -36,7 +37,7 @@ jobs:
           import os, httpx
           url = f"https://api.cloudflare.com/client/v4/accounts/{os.environ['CLOUDFLARE_ACCOUNT_ID']}/d1/database/{os.environ['D1_DATABASE_ID']}/query"
           headers = {"Authorization": f"Bearer {os.environ['CLOUDFLARE_API_TOKEN']}"}
-          for table in ("leads", "jobs", "job_progress", "lead_map_rank"):
+          for table in ("leads", "research", "jobs", "job_progress", "lead_map_rank"):
               before = httpx.post(url, json={"sql": f"SELECT COUNT(*) AS n FROM {table}"}, headers=headers, timeout=30).json()
               r = httpx.post(url, json={"sql": f"DELETE FROM {table}"}, headers=headers, timeout=30).json()
               if not r.get("success"):

@@ -14,7 +14,7 @@ Chains, franchises, closed businesses and front-desk businesses (dentists, clini
 | `*.json` | Everything, for the Control Room |
 
 The "Problems" column is written to be quoted politely in outreach, e.g. *Not mobile-friendly*,
-*Looks outdated (copyright 2016)*, *Phone number isn't tap-to-call on mobile*, *No website*.
+*Looks outdated (copyright 2016)*, *No tap-to-call phone link on the home page*, *No website*.
 
 ## Run it from GitHub (PC can be off)
 

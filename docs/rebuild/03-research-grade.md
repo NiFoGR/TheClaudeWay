@@ -61,7 +61,7 @@ Four points, each a whole number 0–5, each with a one-line reason from Claude.
 
 | Column | What Claude sends / what's stored |
 | --- | --- |
-| `status` | `queued` → `done` on every valid post (even when nothing was found) → `queued` again on "Research is wrong". `skipped` when the scraper excluded the lead or deleted it before research, when the lead is suppressed (opted out, bounced or blocked), or when Nik marks it "Not a fit" (stage 3). |
+| `status` | `queued` → `done` on every valid post (even when nothing was found) → `queued` again on "Research is wrong". `skipped` when the scraper excluded the lead or deleted it before research, when the lead is suppressed (opted out, bounced or blocked), when Nik marks it "Not a fit" (stage 3), or when file 11's 12-month purge blanks the row (every data column and both dates NULL, notes `Skipped: details deleted 12 months after last contact.`; stage 1 never queues a lead that has any row). |
 | `grade` | Computed by `gradeFrom`. |
 | `points` | Stored as `{need, means, reach, fit, total, capped, reasons: {need, means, reach, fit}}` (the four numbers stay at the top level as the overview says). |
 | `grade_reason` | 1–2 sentences for Nik, ≤ 300 chars. |
@@ -115,7 +115,8 @@ Response:
 ```
 `previous` is the parsed earlier research and `nik_note` the newest `[Nik …]` line when this is a re-check.
 `map_rank` is `null` when the lead has no `lead_map_rank` row. **No false Maps lines:** when `audit.map_rank.home
-=== false`, or `audit.map_rank.scan_town` isn't the lead's own town (case-insensitive; older rows), `map_rank` is
+=== false`, or `audit.map_rank.scan_town` isn't the lead's own town (older rows; compared as stage 1's `townKey`, so
+"St. Helens" = "Saint Helens": `mapsFromAnotherTown(audit.map_rank, lead)` in `_lib/util.js`), `map_rank` is
 `null` and `findings` leaves out every Maps line (finding codes starting `maps_` and `reviews_behind`), so Claude can
 never quote a Maps result from another town's scan. `remaining` = queued rows not handed out in this call.
 
@@ -615,7 +616,7 @@ Claude's notes; then `extra` lines),
 **Files:** Create `control-room/functions/_lib/research-db.js`; Rewrite `control-room/functions/api/agent/research-queue.js`;
 Test `control-room/tests/research-queue.test.mjs`.
 **Interfaces:** Consumes `requireAgent(request, env, DB)`, `getSetting/setSetting` (overview §8), `parseResearch`,
-`latestNikNote` (Task 3), `leadRow`, `db`, `iso` (util.js), `leadSuppressed({email, website, company_number},
+`latestNikNote` (Task 3), `leadRow`, `mapsFromAnotherTown`, `db`, `iso` (util.js), `leadSuppressed({email, website, company_number},
 suppressionRows) → boolean` (stage 1, `_lib/find.js`). Produces
 `claimQueue(DB, {limit = 8, now = new Date(), origin}) → Promise<{leads: QueueLead[], remaining: number}>`
 (QueueLead = the Part A response item), `CLAIM_HOURS = 3`, route `GET /api/agent/research-queue`.
@@ -645,9 +646,10 @@ suppressionRows) → boolean` (stage 1, `_lib/find.js`). Produces
 - [ ] **Step 3: Implement `claimQueue` in `control-room/functions/_lib/research-db.js` and the route** — skip-update
   first (excluded, missing, and suppressed via `leadSuppressed` against the `suppression` rows), then one SELECT joining `research`, `leads`, `lead_map_rank` and the claim setting (`LEFT JOIN settings c ON
   c.key = 'research:claim:' || r.place_id`, excluded when `c.value >= now − 3 h`) with the Part A ORDER BY, then one
-  `INSERT OR REPLACE` batch of claims (claim value `iso(now)`); when building each item, drop Maps findings and set
-  `map_rank: null` unless `audit.map_rank.home !== false` and `audit.map_rank.scan_town` matches the lead's town
-  (case-insensitive); the route clamps `limit` to 1–8 and passes `new URL(request.url).origin`.
+  `INSERT OR REPLACE` batch of claims (claim value `iso(now)`); when building each item, set `map_rank: null` when
+  `mapsFromAnotherTown(l.audit.map_rank, l)` (stage 1, `_lib/util.js`; `leadRow` has already dropped that lead's
+  `maps_*`/`reviews_behind` findings, but not the `lead_map_rank` join); the route clamps `limit` to 1–8 and passes
+  `new URL(request.url).origin`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/research-queue.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/research-db.js control-room/functions/api/agent/research-queue.js control-room/tests/research-queue.test.mjs` +
   `git commit -m "Research queue: 8 at a time, claimed for 3 hours, re-checks first" (+ trailers)`.

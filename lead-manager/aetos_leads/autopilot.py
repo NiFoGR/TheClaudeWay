@@ -169,6 +169,6 @@ def sitrep(d1, now: datetime | None = None) -> str:
     L += ["## Next", "",
           f"- **Tomorrow's search:** " + (f"paused: {stats['picks']} leads are ready, enough for about {stats['picks'] // 12} days of emails"
                                           if paused and t.get("on") else f"{t['trade']} in {upcoming}")
-          + ("" if t.get("on") else " (autopilot is OFF: Lead Scraper page)"),
+          + ("" if t.get("on") else " (automatic search is OFF: Lead Scraper page)"),
           "- Full to-do list: 'What to do' on the Control Room's Home page.", ""]
     return "\n".join(L)

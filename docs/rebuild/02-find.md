@@ -25,7 +25,7 @@ decision from GitHub's cron into the tick, and connects finished searches to the
 | Automatic search decision | The first tick at or after 06:00 UK each day (tick step `daily_find`, position 7 in overview §8, after `pick`). Exactly once per UK day. |
 | Manual search | Nik presses **Find leads** on the Lead Scraper page (any time). |
 | Research enqueue | In `daily_find`: whenever a search has finished since the last enqueue, and once a day with the morning decision. |
-| Research Routine fire | Right after an enqueue, if the queue is non-empty and the research Routine wasn't fired in the last 6 hours. |
+| Research Routine fire | Right after an enqueue that queued at least one lead, unless a research fire was attempted in the last 30 minutes. |
 | Stale runs | Tick step `stale_jobs` (position 8), every 15 minutes. |
 
 ### Who does what
@@ -54,6 +54,11 @@ wins (`qualify.mark_exclusions`):
 | `Chain / national brand` | Name matches the `CHAINS` brand list (unambiguous national brands only). |
 | `Multiple branches (chain)` | Same real website host on listings in **different** towns (this run or earlier leads). The earlier lead is excluded too, unless it already has a `prospects` row. |
 | `Front desk / gatekeeper` | Google types include one of `FRONT_DESK_TYPES` (dentist, doctor, hospital, lawyer, bank, school, supermarket, …), or the name contains dental, dentist(s), doctor(s), medical, NHS, veterinary, vets, physio…, solicitor(s), council, optician(s), pharmacy, chemist. "Tree Surgery", "Lawn Clinic", "Driveway Clinic" are trades and stay. |
+
+**A lead already in outreach** (a `prospects` row, `store.D1.in_pipeline()`) is never set aside as a duplicate or a
+branch, whether or not this search found it again: a duplicate or same-site group holding one keeps it, and the
+group's other listings are still set aside (`Duplicate listing of {its name}` / `Multiple branches (chain)`). `Closed`,
+`Chain / national brand` and `Front desk / gatekeeper` still apply to it.
 
 **Score (0–100) = Website 45 + Local SEO 30 + Google Maps 25** (`scoring.RULES`, unchanged values):
 
@@ -101,13 +106,23 @@ Runcorn returned 60 found but only 36 new because 24 were already found from Wid
 | 6 | Duplicates and franchise branches across runs aren't caught (only within one run), so one business can be researched and emailed twice. | Compare with earlier leads. | 5 |
 | 7 | A Warrington business found from a Runcorn search gets "Not in Google Maps' top 20 anywhere we checked across Runcorn" (+22 points), and every re-scrape from another town rewrites its Maps score. | Maps findings only in the lead's own town; keep home-town Maps on re-scrape. | 6 |
 | 8 | A "Website by Pixel Studio · hello@pixelstudio.co.uk" footer becomes the lead's only email: we'd email their web designer. | Off-domain addresses next to designer-credit words are dropped. | 7 |
+| 9 | The form on its own page (`/contact` has the details, `/get-a-quote` the form) or a form builder's iframe/script (Jotform, Google Forms, HubSpot, Ninja Forms…) → false "No contact or quote form", quoted on calls. A Google map iframe lazy-loaded or held back by a cookie plugin (`data-lazy-src`, `data-litespeed-src`, `data-cookieblock-src`…) or drawn with Google's Maps JavaScript → false "No Google map on the website". | Read every contact-hint page, up to 3 (`contacts.MAX_CONTACT_PAGES`; one that won't load sets `contact_unread`); `audit.FORM_EMBED` counts as a form; an iframe with any attribute pointing at Google Maps, or a `maps.googleapis.com/maps/api/js` script, counts as a map. | 2 |
+| 10 | A lead already in outreach that a later search finds again could be marked a duplicate or a branch, and that run's save wrote `excluded = 1` over its row (only `exclude_chains`, for leads not found again, spared it). | `store.D1.in_pipeline()`; `mark_exclusions(..., in_pipeline)` keeps it in every group and never sets it aside as either. | 5 |
+| 11 | The Reset leads workflow deleted the leads but not the `research` queue: the daily search was skipped for leads that no longer existed and the research Routine kept firing for them. | The reset also deletes `research` (keeps `prospects` and `suppression`: who was emailed or opted out). | 8 |
 
 Checked and left as is: copyright-year rule (has a 2023-in-2026 test), firewall 401/403/406/429/503, retry on slow
 first load, certificate errors, placeholder emails, glued addresses, font credits, phone formats, owner-name
 exclusions (business words, town, famous names), Companies House match basis, D1 parameter chunking, usage counting.
 
-Existing rows keep their old issue lines until their town is searched again; stage 2 must not quote a Maps line for
-a lead whose `audit.map_rank.scan_town` isn't its own town (cross-stage interface).
+Existing rows keep their old issue lines until their town is searched again (D1 isn't cleaned up). What's handed out
+never quotes them: `leadRow` (`_lib/util.js`, which `/api/leads`, `/api/leads/:id`, picks, overview and the outreach
+previews all read through) drops the `maps_*`/`reviews_behind` findings and hands out `map_rank: {}` when
+`mapsFromAnotherTown(audit.map_rank, lead)` is true: `audit.map_rank.home === false`, or `audit.map_rank.scan_town`
+isn't the lead's own town (`town`, else `search_town`; compared with `townKey`). `audit` and `issues` are left as
+saved, because `mergeResearch` writes them back. So the call script and the outreach facts (`{problem}`, `{top3}`,
+`{competitor}`, `{spots}`) say nothing from another town's scan; `facts()` also gives `{spots}` only with `{top3}`.
+Later stages that read a lead without `leadRow` (stage 2's research queue, stage 3's `leadDetail`) must apply the same
+guard (cross-stage interface).
 
 ### Daily automatic search
 
@@ -146,10 +161,14 @@ In `daily_find`, an enqueue runs when a `jobs` row became `done` after `settings
 morning decision. It inserts `research (place_id, status 'queued', queued_at)` with INSERT OR IGNORE for every lead
 handed to research (rule above), so a lead already queued, done or skipped is never touched. On the first run this
 queues the existing landscapers that qualify (about 200 of the 287), including leads the old Routine looked at (its
-research quality was too low to keep, decisions.md). After an enqueue, if `research` has any `queued` row and no
-`routine_fires` row for `research` in the last 6 hours (failed attempts count, so a broken Routine isn't hammered),
-it calls `fireRoutine(DB, "research", "research queued: {n} leads")`. The Routine's own 06:47 schedule is the daily
-catch-up.
+research quality was too low to keep, decisions.md). After an enqueue that queued at least one lead, unless a
+research fire was attempted in the last 30 minutes (any `routine_fires` row for `research`; failed attempts count, so
+a broken Routine isn't hammered; the same duplicate guard as stage 2's re-check), it calls
+`fireRoutine(DB, "research", "research queued: {n} leads")` ({n} = every `queued` row). So every search that queues a
+lead wakes Claude (overview §7: "API fire after each scrape"), a burst of searches fires once, and a morning with
+nothing new doesn't fire: the Routine's own 06:47 schedule is the daily catch-up. The queue never re-queues a lead
+that has any `research` row, so a lead is handed to Claude once (file 11's purge blanks its row rather than deleting
+it, for the same reason).
 
 `scrape-leads.yml` loses its "Hand the hard cases to Claude" step and the engine stops writing `for_claude`; the
 `CLAUDE_ROUTINE_URL`/`CLAUDE_ROUTINE_TOKEN` GitHub secrets become unused (Nik may delete them; nothing breaks if not).
@@ -263,15 +282,21 @@ The workflow's own timeout is 30 minutes, so a healthy run never hits 45. The pa
 6. **Live, every excluded lead** of that run has a correct reason (none of them a sole trader wrongly called a chain
    or front desk).
 7. **Live, enqueue:** within 10 minutes of deploy, `SELECT COUNT(*) FROM research WHERE status = 'queued'` equals the
-   count from the handed-to-research SQL in task 11; `routine_fires` has one `research` row (or, if the Routine isn't
-   set up yet, a `health` todo from `fireRoutine`).
+   count from the handed-to-research SQL in task 11, and `routine_fires` has exactly one `research` row with reason
+   `research queued: {n} leads`. If the Routine is connected, that row's `error` is NULL. If it isn't set up yet,
+   `error` is "The Research Routine isn't connected: paste its URL and token on Setup → Claude.", the
+   `routine:research` light is amber, and the `setup:routine:research` todo is open
+   (`SELECT dedupe FROM todos WHERE status = 'open' AND kind = 'setup'`). No health todo is expected. If it is
+   connected but Claude refuses the fire, the next health run adds `health:routine:research` with the fire's error as
+   its fix.
 8. **Live, daily decision:** on three consecutive mornings the Scraper page shows a today line by 06:10 UK; each
    matches the counts (`pipelineCounts`) at that time; at most one automatic job per day; no town repeated within
    30 days.
 9. **Live, stale:** insert `jobs` row `('stale-test','landscaper','Test',60,'running', …)` with `updated_at` 2 hours
    ago; within 15 minutes it is `failed` with the exact error text and one `health` todo exists; then delete both.
 10. A finished search (manual or automatic) has its qualifying leads in `research` as `queued` within 10 minutes of
-    the job showing Done.
+    the job showing Done, and when it queued at least one, `routine_fires` has a `research` row from then (unless one
+    was attempted in the 30 minutes before).
 
 ---
 
@@ -296,10 +321,10 @@ D1, `node --test` with `tests/helpers/fakeD1.mjs`; plain-JS front end.
 - Commands that must pass before any push: `cd lead-manager && python -m pytest -q`; `node --test control-room/tests/*.test.mjs mail-relay/tests/*.test.mjs`; `for f in control-room/public/js/*.js; do node --check "$f"; done`.
 - Every commit: `git commit -m "<message>" -m "$TRAILER"` where `TRAILER` is the two lines `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` and `Claude-Session: https://claude.ai/code/session_017h4iwgwaGCvQ5f9mmF4rDY`.
 - Decision time: first tick with UK time ≥ `06:00`; one decision per UK day, claimed by compare-and-set on `settings.find:day`.
-- `GOOD_WAITING_MIN = 30`, `RESEARCH_QUEUE_MAX = 40`, `RECENT_DAYS = 30`, `MIN_RESEARCH_SCORE = 35` (equals `research.MIN_SCORE`), `STALE_MINUTES = 45`, `RESEARCH_FIRE_GAP_HOURS = 6`.
+- `GOOD_WAITING_MIN = 30`, `RESEARCH_QUEUE_MAX = 40`, `RECENT_DAYS = 30`, `MIN_RESEARCH_SCORE = 35` (equals `research.MIN_SCORE`), `STALE_MINUTES = 45`, `RESEARCH_FIRE_GAP_MINUTES = 30`.
 - Territory setting key `territory`, JSON `{on, trade, towns, next, max}`, same shape and defaults in JS and Python.
 - Timestamps written by this stage use util `now()` / `iso(date)` format `YYYY-MM-DDTHH:MM:SSZ` (no milliseconds), so string comparison with Python's `_now()` is exact. `iso` is defined in `_lib/util.js` (Task 10); `find.js` only re-exports it.
-- `daily_find` uses at most 14 D1 statements per run; `stale_jobs` at most 6 (D1 free plan: 50 per invocation). Stage 0's `runTick` counts queries tick-wide (`ctx.budget` is an object; the remaining count is `ctx.budget.left()`) and defers a step (result `"deferred"`) when fewer than 10 are left; both steps are idempotent, so a deferred run simply happens on a later tick. Neither step reads `ctx.budget` itself; their fixed caps keep them inside it. `health` runs in its own `/api/tick?reason=health` invocation, so nothing here is reserved for it.
+- `daily_find` uses at most 14 D1 statements per run (`DAILY_FIND_MAX`); `stale_jobs` at most 6 (D1 free plan: 50 per invocation). Stage 0's `runTick` counts queries tick-wide (`ctx.budget` is an object; the remaining count is `ctx.budget.left()`) and defers a step (result `"deferred"`) when fewer than 10 are left; both steps are idempotent, so a deferred run simply happens on a later tick. `daily_find` reads `ctx.budget.left()` and keeps one query for the tick's closing beat (as `send` does): it uses at most `min(14, left − 1)`, and a part without room waits for the next tick, writing nothing: the research queue and its fire need 10 (`"research queue on the next tick"`; the decision then waits too, as it reads the queue), the decision 8 (`"deciding on the next tick"`, checked before `claimDay`, so a day is never claimed without room to save it), today's failed-search check 3 (`"checking today's search on the next tick"`). `stale_jobs` (at most 6, and 4 as built, under the 10 the tick starts a step with) needs no budget check. `health` runs in its own `/api/tick?reason=health` invocation, so nothing here is reserved for it.
 - GitHub holds no Claude tokens; only the app fires Routines (`fireRoutine`).
 - Every issue line quoted to prospects needs a regression test; any new false alarm from real data → a test first.
 - Scraped text is rendered with `esc()` only.
@@ -368,7 +393,7 @@ D1, `node --test` with `tests/helpers/fakeD1.mjs`; plain-JS front end.
 
 **Files:** Modify `lead-manager/aetos_leads/audit.py`, `lead-manager/aetos_leads/contacts.py`; Test `lead-manager/tests/test_leads.py`, `lead-manager/tests/test_contacts.py`.
 
-**Interfaces:** Produces `audit.analyse_html(html, final_url, town, load_seconds, today=None, trade="", phone="", postcode="", extra_pages: list[str] = ()) -> tuple[list[tuple[str, str]], dict]`; `contacts.find` always fetches the first link whose hint is one of `contact`, `get-in-touch`, `enquir`, `quote`.
+**Interfaces:** Produces `audit.analyse_html(html, final_url, town, load_seconds, today=None, trade="", phone="", postcode="", extra_pages: list[str] = ()) -> tuple[list[tuple[str, str]], dict]`; `contacts.find` always fetches the contact-hint links (`contact`, `get-in-touch`, `enquir`, `quote`), up to 3 (`contacts.MAX_CONTACT_PAGES`), and sets `contact_unread` when any of them won't load (not 404/410); `audit.FORM_EMBED` (a form builder's iframe or script) counts as a form; an iframe counts as a Google map when any of its attributes points at Google Maps (lazy-load and cookie plugins move it out of `src`), and so does a `maps.googleapis.com/maps/api/js` script.
 
 - [ ] **Step 1: Write the failing tests:**
   ```python
@@ -393,7 +418,7 @@ D1, `node --test` with `tests/helpers/fakeD1.mjs`; plain-JS front end.
   ```
   Also update `test_pipeline_end_to_end`: `respx.get("http://smithroofing.co.uk/contact-us.html").mock(return_value=httpx.Response(404))`.
 - [ ] **Step 2: Run to verify they fail** — `cd lead-manager && python -m pytest -q -k "site_wide or contact_page_is_fetched"` → FAIL (`unexpected keyword argument 'extra_pages'`; contact route not called).
-- [ ] **Step 3: Implement** — in `contacts.find`, never skip the first contact-hint link; in `audit.audit_lead`, call `contacts.find` before `analyse_html` and pass `extra_pages=found["htmls"][1:]`; in `analyse_html`, the form, map iframe, phone (text or `tel:`) and postcode checks pass if any of homepage + `extra_pages` passes. Title, H1, schema, viewport, description and tap-to-call stay homepage-only.
+- [ ] **Step 3: Implement** — in `contacts.find`, never skip the contact-hint links (up to 3); in `audit.audit_lead`, call `contacts.find` before `analyse_html` and pass `extra_pages=found["htmls"][1:]`; in `analyse_html`, the form, map iframe, phone (text or `tel:`) and postcode checks pass if any of homepage + `extra_pages` passes. Title, H1, schema, viewport, description and tap-to-call stay homepage-only.
 - [ ] **Step 4: Run tests** — `cd lead-manager && python -m pytest -q` → PASS.
 - [ ] **Step 5: Commit** — `git add lead-manager/aetos_leads/audit.py lead-manager/aetos_leads/contacts.py lead-manager/tests && git commit -m "Audit: form, map, phone and address are checked on the contact page too" -m "$TRAILER"`
 
@@ -453,7 +478,7 @@ D1, `node --test` with `tests/helpers/fakeD1.mjs`; plain-JS front end.
 
 **Files:** Modify `lead-manager/aetos_leads/qualify.py`, `pipeline.py`, `store.py`, `__main__.py`; Test `lead-manager/tests/test_leads.py`; move `FakeD1` from `tests/test_autopilot.py` to `tests/conftest.py`.
 
-**Interfaces:** Produces `qualify.mark_exclusions(leads, known: list[dict] = ()) -> list[str]` (known = `{place_id, name, website, phone, town}` of saved, non-excluded leads; returns known place_ids that are now branches); `pipeline.run(..., known: list[dict] = ())` and `Result.chain_ids: list[str]`; `store.D1.known_leads() -> list[dict]` (`SELECT place_id, name, website, phone, town FROM leads WHERE excluded = 0`); `store.D1.exclude_chains(place_ids: list[str]) -> None` (`UPDATE leads SET excluded = 1, exclude_reason = 'Multiple branches (chain)' WHERE place_id IN (…) AND place_id NOT IN (SELECT place_id FROM prospects)`).
+**Interfaces:** Produces `qualify.mark_exclusions(leads, known: list[dict] = (), in_pipeline=frozenset()) -> list[str]` (known = `{place_id, name, website, phone, town}` of saved, non-excluded leads; in_pipeline = place_ids with a `prospects` row, never set aside as a duplicate or a branch and always the listing a group keeps; returns known place_ids, none in in_pipeline, that are now branches); `pipeline.run(..., known: list[dict] = (), in_pipeline=frozenset())` and `Result.chain_ids: list[str]`; `store.D1.in_pipeline() -> set[str]` (`SELECT place_id FROM prospects`); `store.D1.known_leads() -> list[dict]` (`SELECT place_id, name, website, phone, town FROM leads WHERE excluded = 0`); `store.D1.exclude_chains(place_ids: list[str]) -> None` (`UPDATE leads SET excluded = 1, exclude_reason = 'Multiple branches (chain)' WHERE place_id IN (…) AND place_id NOT IN (SELECT place_id FROM prospects)`).
 
 - [ ] **Step 1: Write the failing tests:**
   ```python
@@ -478,7 +503,7 @@ D1, `node --test` with `tests/helpers/fakeD1.mjs`; plain-JS front end.
       assert [(r["place_id"], r["excluded"]) for r in rows] == [("a", 1), ("b", 0)]
   ```
 - [ ] **Step 2: Run to verify they fail** — `cd lead-manager && python -m pytest -q -k "earlier_leads or exclude_chains"` → FAIL (`unexpected argument known`; no `exclude_chains`).
-- [ ] **Step 3: Implement** — known leads join the phone and host groups (a known place_id equal to a run lead's is ignored); a known lead always wins as the kept listing; `__main__.scrape` passes `known=d1.known_leads()` and calls `d1.exclude_chains(result.chain_ids)` after `d1.save`.
+- [ ] **Step 3: Implement** — known leads join the phone and host groups (a known place_id equal to a run lead's is ignored); a known lead always wins as the kept listing; `__main__.scrape` passes `known=d1.known_leads()` (plus `known_branches()`) and `in_pipeline=d1.in_pipeline()`, and calls `d1.exclude_chains(result.chain_ids)` after `d1.save`.
 - [ ] **Step 4: Run tests** — `cd lead-manager && python -m pytest -q` → PASS.
 - [ ] **Step 5: Commit** — `git add lead-manager && git commit -m "Exclusions: catch duplicates and franchise branches across earlier searches" -m "$TRAILER"`
 
@@ -537,7 +562,7 @@ D1, `node --test` with `tests/helpers/fakeD1.mjs`; plain-JS front end.
 
 ### Task 8: Workflows: no Claude hand-off from GitHub, daily cron stays off
 
-**Files:** Modify `.github/workflows/scrape-leads.yml` (delete step "Hand the hard cases to Claude"), `.github/workflows/daily.yml` (header line: `# Replaced by the Control Room's daily_find tick step (docs/rebuild/02-find.md). Keep the schedule commented out.`), `lead-manager/aetos_leads/__main__.py` (delete the `for_claude` print and `GITHUB_OUTPUT` write); Create `lead-manager/tests/test_workflows.py`.
+**Files:** Modify `.github/workflows/scrape-leads.yml` (delete step "Hand the hard cases to Claude"), `.github/workflows/daily.yml` (header line: `# Replaced by the Control Room's daily_find tick step (docs/rebuild/02-find.md). Keep the schedule commented out.`), `lead-manager/aetos_leads/__main__.py` (delete the `for_claude` print and `GITHUB_OUTPUT` write), `.github/workflows/reset-leads.yml` (also deletes `research`: `for table in ("leads", "research", "jobs", "job_progress", "lead_map_rank"):`; `prospects` and `suppression` are kept; test `test_reset_clears_the_research_queue`); Create `lead-manager/tests/test_workflows.py`.
 
 **Interfaces:** None new.
 
@@ -689,21 +714,21 @@ maybeFireResearch(DB, now, {fire = fireRoutine} = {}) → Promise<"fired"|"empty
     assert.deepEqual(await ids(DB, "SELECT place_id FROM research WHERE status = 'queued' ORDER BY place_id"), ["a", "c"]);
     assert.equal(await enqueueResearch(DB, new Date("2026-10-19T06:00:00Z")), 0);
   });
-  test("fires the research Routine at most every 6 hours, only with a queue", async () => {
+  test("fires the research Routine at most every 30 minutes, only with a queue", async () => {
     const DB = fakeD1(); const fired = [];
     const fire = async (db, name, text) => { fired.push([name, text]); return { ok: true, status: 200 }; };
     assert.equal(await maybeFireResearch(DB, new Date("2026-10-19T05:00:00Z"), { fire }), "empty");
     // insert 2 queued research rows
     assert.equal(await maybeFireResearch(DB, new Date("2026-10-19T05:00:00Z"), { fire }), "fired");
     assert.deepEqual(fired, [["research", "research queued: 2 leads"]]);
-    // insert routine_fires row (routine 'research', at '2026-10-19T00:30:00Z', http_status 500)
+    // insert routine_fires row (routine 'research', at '2026-10-19T05:30:01Z', http_status 500); exactly 30 minutes old no longer counts
     assert.equal(await maybeFireResearch(DB, new Date("2026-10-19T06:00:00Z"), { fire }), "recent");
   });
   ```
 - [ ] **Step 2: Run to verify they fail** — `node --test control-room/tests/find.test.mjs` → FAIL (`enqueueResearch is not a function`).
-- [ ] **Step 3: Implement** — select candidates `place_id, email, website, company_number` from `leads l` with `l.excluded = 0 AND (l.quality_score >= 35 OR EXISTS (SELECT 1 FROM json_each(l.audit, '$.findings') WHERE value = 'not_checked')) AND l.place_id NOT IN (SELECT place_id FROM research)`, filter with `leadSuppressed`, then one statement `INSERT OR IGNORE INTO research (place_id, status, queued_at) SELECT value, 'queued', ? FROM json_each(?)`. Fire guard: `SELECT 1 FROM routine_fires WHERE routine = 'research' AND at > ?` (now − 6 h); `fireRoutine` returning `ok: false` → `"failed"`.
+- [ ] **Step 3: Implement** — select candidates `place_id, email, website, company_number` from `leads l` with `l.excluded = 0 AND (l.quality_score >= 35 OR EXISTS (SELECT 1 FROM json_each(l.audit, '$.findings') WHERE value = 'not_checked')) AND l.place_id NOT IN (SELECT place_id FROM research)`, filter with `leadSuppressed`, then one statement `INSERT OR IGNORE INTO research (place_id, status, queued_at) SELECT value, 'queued', ? FROM json_each(?)`. Fire guard: `SELECT 1 FROM routine_fires WHERE routine = 'research' AND at > ?` (now − 30 min); `fireRoutine` returning `ok: false` → `"failed"`.
 - [ ] **Step 4: Run tests** — `node --test control-room/tests/*.test.mjs` → PASS.
-- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/find.js control-room/tests/find.test.mjs && git commit -m "Research queue: every pitchable lead goes to Claude once; fire at most every 6 hours" -m "$TRAILER"`
+- [ ] **Step 5: Commit** — `git add control-room/functions/_lib/find.js control-room/tests/find.test.mjs && git commit -m "Research queue: every pitchable lead goes to Claude once; fire after an enqueue that queued a lead, at most every 30 minutes" -m "$TRAILER"`
 
 ### Task 12: Tick step `daily_find`
 
@@ -712,8 +737,8 @@ maybeFireResearch(DB, now, {fire = fireRoutine} = {}) → Promise<"fired"|"empty
 **Interfaces:** Consumes `decideFind`, `todayLine` (Task 9), `startScrape`, `pipelineCounts`, `recentJobs`, `loadTerritory`, `saveTerritory`, `enqueueResearch`, `maybeFireResearch` (Tasks 10–11), `addTodo`, `closeTodos` (`_lib/todo.js`), `beat` (`_lib/routines.js`), `registerLight(fn)` and (tests only) `healthFromDb(DB, env, now) → {lights, gaps}` (`_lib/health.js`, stage 0), `ukParts`, `ukDate`. Produces:
 ```js
 claimDay(DB, ukToday) → Promise<boolean>        // INSERT … ON CONFLICT(key) DO UPDATE SET value = excluded.value WHERE settings.value != excluded.value; changes === 1
-runDailyFind(DB, env, now, {start, fire} = {}) → Promise<string>
-STEPS entry {name: "daily_find", everyMinutes: 5, run: (ctx) => runDailyFind(ctx.DB, ctx.env, ctx.now)}   // slot 7: after "pick", before "stale_jobs"
+runDailyFind(DB, env, now, {start, fire, budget} = {}) → Promise<string>   // budget: the tick's ctx.budget; without it the cap is 14
+STEPS entry {name: "daily_find", everyMinutes: 5, run: (ctx) => runDailyFind(ctx.DB, ctx.env, ctx.now, { budget: ctx.budget })}   // slot 7: after "pick", before "stale_jobs"
 leadSearchLight(beatRow|null, now) → {name: "lead_search", level: "green"|"red"|"grey", detail, fix}   // pure; Part A's table
 registerLight(async (DB, env, now) => leadSearchLight(await DB.prepare("SELECT ok, last_at, detail FROM heartbeats WHERE name = 'find'").first(), now))
 settings: "find:day", "find:today" (JSON {day, at, search, town?, job_id?, reason?, n?, error?}), "research:enqueued_at"
@@ -795,7 +820,7 @@ settings: "find:day", "find:today" (JSON {day, at, search, town?, job_id?, reaso
   });
   ```
 - [ ] **Step 2: Run to verify they fail** — `node --test control-room/tests/daily-find.test.mjs` → FAIL (`runDailyFind is not a function`, `leadSearchLight is not a function`).
-- [ ] **Step 3: Implement `runDailyFind`** — order: (1) enqueue + `maybeFireResearch` when a job became done after `research:enqueued_at`, or when it's ≥ 06:00 UK and `research:enqueued_at` is from an earlier UK day; (2) if UK time ≥ `FIND_FROM` and `claimDay` wins: decide, start or skip, save `find:today`, todos and `beat(DB, "find", ok, todayLine(...))` as in Part A; `closeTodos(DB, "health:find:towns")` when a search starts; (3) if `find:today.job_id`'s job is `failed`, add the `health:find:failed:<id>` todo and beat `find` not ok. Return a short summary, e.g. `"searched Warrington; queued 12; fired research"`. Add the pure `leadSearchLight` per Part A's light table (levels only `green`/`red`/`grey`), and call `registerLight(...)` once at module load of `find.js` (the tick imports `find.js`, so the light is registered whenever `/api/tick` or `/api/health` runs; `api/health.js` imports `_lib/find.js` for the side effect if it doesn't already).
+- [ ] **Step 3: Implement `runDailyFind`** — order: (1) enqueue when a job became done after `research:enqueued_at`, or when it's ≥ 06:00 UK and `research:enqueued_at` is from an earlier UK day, then `maybeFireResearch` only when that enqueue queued at least one lead; (2) if UK time ≥ `FIND_FROM` and `claimDay` wins: decide, start or skip, save `find:today`, todos and `beat(DB, "find", ok, todayLine(...))` as in Part A; `closeTodos(DB, "health:find:towns")` when a search starts; (3) if `find:today.job_id`'s job is `failed`, add the `health:find:failed:<id>` todo and beat `find` not ok. Return a short summary, e.g. `"queued 12; fired research; searched Warrington"`. Stay within `min(14, ctx.budget.left() − 1)` as Global Constraints say (each part checked before it starts; nothing claimed or written for a part that waits). Add the pure `leadSearchLight` per Part A's light table (levels only `green`/`red`/`grey`), and call `registerLight(...)` once at module load of `find.js` (the tick imports `find.js`, so the light is registered whenever `/api/tick` or `/api/health` runs; `api/health.js` imports `_lib/find.js` for the side effect if it doesn't already).
 - [ ] **Step 4: Run tests** — `node --test control-room/tests/*.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib control-room/functions/api control-room/tests/daily-find.test.mjs && git commit -m "Tick: daily lead search when the pipeline is low; queue research after every search; lead_search light" -m "$TRAILER"`
 
@@ -910,19 +935,31 @@ PUT  /api/territory {on, trade, towns, max} → {territory} | 400 {error}
   or older than 26 h, grey before the first beat). Its todo dedupe is `health:lead_search`, which is no prefix of
   this stage's `health:find:*` todos.
 - **Produces for stage 2 (research):** `research` rows `status 'queued'` with `queued_at` for every handed-to-research
-  lead; `fireRoutine(DB, "research", "research queued: {n} leads")` payload (this text is the agreed one). Stage 2
+  lead; `fireRoutine(DB, "research", "research queued: {n} leads")` payload (this text is the agreed one), fired after
+  every enqueue that queued at least one lead unless a research fire was attempted in the last 30 minutes. The queue
+  never re-queues a lead that has any `research` row, including file 11's purged rows (a data-free `skipped` row with
+  both dates NULL). Stage 2
   must mark `skipped` the queued rows whose lead is now excluded or matches `leadSuppressed`, must drop
   `maps_*`/`reviews_behind` findings and pass `map_rank: null` when `audit.map_rank.home === false` or
-  `audit.map_rank.scan_town` isn't the lead's town (older rows). `audit.ai_needs` stays as a hint list only. Stage 2
+  `audit.map_rank.scan_town` isn't the lead's town (older rows): `mapsFromAnotherTown(audit.map_rank, lead)` from
+  `_lib/util.js` is that test (`leadRow` already drops those findings and hands out `map_rank: {}`, but the queue's
+  `map_rank` comes from `lead_map_rank`, which `leadRow` doesn't see). `audit.ai_needs` stays as a hint list only. Stage 2
   stores "too big" only in `research.too_big`; this stage has no "too big" exclusion, and `research.carry_over` stays
   for maps carry-over only.
 - **Produces for stages 2, 3, 6 and the Todo board:** `leadSuppressed(lead, suppressionRows)` (pure, `_lib/find.js`);
   `pipelineCounts(DB)` (`goodWaiting` is the shortlist's "A+/A/B not emailed" count); `health` todo dedupe prefixes
   `health:stale:`, `health:find:` (no light covers them, so the Todo board shows them).
+- **Produces for every stage that hands a lead out:** `mapsFromAnotherTown(mapRank, lead) → boolean` (pure,
+  `_lib/util.js`; true when `mapRank.home === false` or `mapRank.scan_town` isn't `lead.town || lead.search_town` by
+  `townKey`, which `_lib/territory.js` now exports). `leadRow` applies it: `findings` without `maps_*`/`reviews_behind`
+  and `map_rank: {}` (never `null`), `audit`/`issues` untouched. Code that skips `leadRow` applies it itself: stage 2's
+  research queue (`map_rank: null`), stage 3's `leadDetail` (`findings[]` and `map_rank`). `facts()` (`_lib/outreach.js`)
+  sets `{spots}` only when `{top3}` is set.
 - **Produces for Map Rank:** stale scans are failed with `STALE_SCAN_ERROR`; care scans (`source = 'care'`) are left to
   stage 11.
 - **Settings keys introduced:** `find:day`, `find:today`, `research:enqueued_at` (`territory` kept).
-- **Python:** `qualify.mark_exclusions(leads, known=())` returns chain place_ids; `store.D1.known_leads()`,
+- **Python:** `qualify.mark_exclusions(leads, known=(), in_pipeline=frozenset())` returns chain place_ids (a lead with
+  a `prospects` row is never set aside as a duplicate or a branch); `store.D1.known_leads()`, `store.D1.in_pipeline()`,
   `store.D1.exclude_chains(ids)`; `audit.town_key(name)`; `lead.map_rank["home"]`.
 
 ## Questions for Nik
