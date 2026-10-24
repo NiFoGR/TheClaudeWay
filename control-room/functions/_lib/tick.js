@@ -29,6 +29,7 @@ import { sendStep } from "./mail/outbox.js";
 import "./research-db.js"; // no tick step: imported so its research health light is registered
 import { beat } from "./routines.js";
 import { setSetting } from "./settings.js";
+import { pickStep } from "./shortlist-db.js";
 import { db } from "./util.js";
 
 export const TICK_BUDGET = Object.freeze({ total: 50, minToStart: 10 });
@@ -54,6 +55,7 @@ export const STEPS = [
   sendStep,
   // slot: hot (every 5 min; stages 4 and 6)
   // slot: pick (every 30 min; stage 3)
+  { name: "pick", everyMinutes: 30, run: (ctx) => pickStep(ctx) },
   // slot: daily_find (every 5 min; stage 1)
   dailyFindStep,
   // slot: stale_jobs (every 15 min; stage 1)
