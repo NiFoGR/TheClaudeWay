@@ -15,10 +15,10 @@ const STAGES = {
   maps: ["Mapping Google Maps rankings across town", 85, 95],
   saving: ["Saving to your Control Room", 95, 100],
 };
-const STUCK_MINUTES = 40;
 
-export const isStuck = (j) => (j.status === "queued" || j.status === "running") && Date.now() - Date.parse(j.created_at) > STUCK_MINUTES * 60000;
-export const inProgress = (j) => (j.status === "queued" || j.status === "running") && !isStuck(j);
+// Queued or running, as the server says: the tick's stale_jobs step fails a run with no progress for 45 minutes, so
+// the page never guesses that a run is stuck.
+export const inProgress = (j) => j.status === "queued" || j.status === "running";
 export const tradeList = () => `<datalist id="trades">${TRADES.map((t) => `<option value="${esc(t)}">`).join("")}</datalist>`;
 
 export function scraperPage() {
@@ -35,7 +35,7 @@ export function scraperPage() {
       ${tradeList()}
     </form>
     <p class="error" id="scrape-error" hidden></p>
-    <div id="autopilot"></div>
+    <div id="automatic"></div>
     ${job ? jobResults(job) : ""}
     ${state.jobs.length ? `
       <div class="section-title"><h2>Your searches</h2>${state.jobs.length > RUNS_SHOWN ? `<button class="btn ghost sm" id="all-runs">${state.showAllRuns ? "Show fewer" : `Show all ${state.jobs.length}`}</button>` : ""}</div>
@@ -47,45 +47,102 @@ export function scraperPage() {
   const all = view.querySelector("#all-runs");
   if (all) all.onclick = () => { state.showAllRuns = !state.showAllRuns; scraperPage(); };
   if (job && job.status === "done") bindTable(scraperPage);
-  autopilotCard();
+  automaticCard();
 }
 
-/** The daily autopilot: one town a morning from your list, then Claude, then the SITREP. */
-async function autopilotCard() {
-  const el = view.querySelector("#autopilot");
+// The card is redrawn from the last /api/territory answer whenever the page redraws (every 3 s while a search runs),
+// so it doesn't blink. It asks again when you open the page, after a save, when a search starts, finishes or fails,
+// and otherwise at most once a minute: each answer costs several database reads. `shown` is the newest answer drawn,
+// so a slow older answer never replaces it.
+const AUTOMATIC_REFRESH_MS = 60000;
+const automatic = { data: null, at: 0, runs: "", ask: 0, shown: 0 };
+const runsSeen = () => state.jobs.map((j) => `${j.id}:${j.status}`).join(",");
+
+/** The automatic search: from 6am each morning the tick searches the next town on your list when the pipeline is low
+ *  (_lib/find.js, tick step daily_find). The card says what it did today and what it will do next. */
+async function automaticCard(force = false) {
+  if (!view.querySelector("#automatic")) return;
+  if (automatic.data) renderAutomatic(automatic.data);
+  const runs = runsSeen();
+  if (!force && automatic.data && automatic.runs === runs && Date.now() - automatic.at < AUTOMATIC_REFRESH_MS) return;
+  const ask = ++automatic.ask;
+  Object.assign(automatic, { runs, at: Date.now() });
+  let data;
+  try {
+    data = await api("/api/territory");
+  } catch (err) {
+    if (ask < automatic.shown) return;
+    automatic.at = 0; // ask again on the next redraw
+    if (!automatic.data) renderAutomatic({ error: err.message });
+    return;
+  }
+  if (ask < automatic.shown) return;
+  Object.assign(automatic, { data, shown: ask });
+  renderAutomatic(data);
+}
+
+function renderAutomatic(a) {
+  const el = view.querySelector("#automatic");
   if (!el) return;
-  let a;
-  try { a = await api("/api/autopilot"); } catch { return; }
+  el.innerHTML = automaticHtml(a);
+  const edit = el.querySelector("#auto-edit");
+  if (edit) edit.onclick = () => editAutomatic(a.territory);
+}
+
+/** The card for a GET /api/territory answer {territory, upcoming, today}, or {error} when it couldn't be read.
+ *  Part A's exact copy; every value is escaped (today's line can quote GitHub's own words). */
+export function automaticHtml(a) {
+  const head = `${icon("spark")} Automatic search`;
+  // The text column may shrink and break a long word (a URL in GitHub's error), so a phone never scrolls sideways.
+  const text = '<div style="min-width:0;overflow-wrap:anywhere">';
+  if (!a?.territory) {
+    if (!a?.error) return "";
+    const why = String(a.error).replace(/[\s.]+$/, "");
+    return `<div class="card autopilot">${text}<b>${head}</b>
+      <div class="small error" style="margin-top:4px">Couldn't load the automatic search: ${esc(why)}. Reload the page to try again.</div></div></div>`;
+  }
   const t = a.territory;
-  el.innerHTML = `<div class="card autopilot"><div><b>${icon("spark")} Autopilot ${t.on ? '<span class="badge good">On</span>' : '<span class="badge">Off</span>'}</b>
-      <div class="muted small">${t.on ? `Every morning: ${esc(t.trade)} in the next town on your list (${t.towns.length} towns, ${esc(t.max)} leads each). Next: <b>${esc(a.upcoming)}</b>.` : "Switched off: nothing is searched automatically."}
-      ${a.last ? ` Last: ${esc(a.last.town)}, ${esc(ago(a.last.created_at))}.` : ""}</div></div>
-    <button class="btn secondary sm" id="ap-edit">Edit</button></div>`;
-  el.querySelector("#ap-edit").onclick = () => {
-    const m = modal(`<div class="modal-head"><h2>Autopilot</h2><button class="icon-btn" data-close aria-label="Close">${icon("x")}</button></div>
-      <form class="modal-body" id="ap-form">
-        <label class="check"><input type="checkbox" name="on" ${t.on ? "checked" : ""}> Search one town every morning</label>
-        <label for="ap-trade">Niche</label><input id="ap-trade" name="trade" list="trades" value="${esc(t.trade)}" required>
-        <label for="ap-towns">Towns, in order (one per line). A town searched in the last 30 days is skipped.</label>
-        <textarea id="ap-towns" name="towns" rows="10">${esc(t.towns.join("\n"))}</textarea>
-        <label for="ap-max">Leads per search</label><input id="ap-max" name="max" type="number" min="10" max="300" value="${esc(t.max)}">
-        <p class="error" id="ap-error" hidden></p>
-        <button class="btn" type="submit">Save</button>${tradeList()}
-      </form>`);
-    m.querySelector("#ap-form").onsubmit = async (e) => {
-      e.preventDefault();
-      const f = e.target;
-      try {
-        await api("/api/autopilot", { method: "PUT", body: JSON.stringify({ on: f.on.checked, trade: f.trade.value, towns: f.towns.value, max: Number(f.max.value) }) });
-        m.close();
-        toast("Autopilot saved.");
-        autopilotCard();
-      } catch (err) {
-        const box = m.querySelector("#ap-error");
-        box.textContent = err.message;
-        box.hidden = false;
-      }
-    };
+  const rule = t.on
+    ? `Every morning from 6am it searches ${esc(t.trade)} in the next town on your list, when fewer than 30 good leads are waiting and Claude has fewer than 40 to research. Next town: <b>${esc(a.upcoming)}</b>.`
+    : "Switched off: nothing is searched automatically.";
+  return `<div class="card autopilot">${text}<b>${head} ${t.on ? '<span class="badge good">On</span>' : '<span class="badge">Off</span>'}</b>
+      <div class="small"><b>Today:</b> ${esc(a.today)}</div>
+      <div class="muted small">${rule}</div></div>
+    <button class="btn secondary sm" id="auto-edit">Edit</button></div>`;
+}
+
+/** The Edit dialog for the territory {on, trade, towns, max}. `novalidate`: the server's plain-English errors show
+ *  ("Type the niche to search, e.g. landscaper", …), not the browser's own. */
+export function automaticFormHtml(t) {
+  const towns = Array.isArray(t?.towns) ? t.towns : [];
+  return `<div class="modal-head"><h2>Automatic search</h2><button class="icon-btn" data-close aria-label="Close">${icon("x")}</button></div>
+    <form class="modal-body" id="auto-form" novalidate>
+      <label class="check"><input type="checkbox" name="on" ${t?.on ? "checked" : ""}> Search one town every morning</label>
+      <label for="auto-trade">Niche</label><input id="auto-trade" name="trade" list="trades" value="${esc(t?.trade)}" required>
+      <label for="auto-towns">Towns, in order (one per line). A town searched in the last 30 days is skipped.</label>
+      <textarea id="auto-towns" name="towns" rows="10">${esc(towns.join("\n"))}</textarea>
+      <label for="auto-max">Leads per search</label><input id="auto-max" name="max" type="number" min="10" max="300" value="${esc(t?.max)}">
+      <p class="error" id="auto-error" hidden></p>
+      <button class="btn" type="submit">Save</button>${tradeList()}
+    </form>`;
+}
+
+function editAutomatic(t) {
+  const m = modal(automaticFormHtml(t));
+  m.querySelector("#auto-form").onsubmit = async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    try {
+      const saved = await api("/api/territory", { method: "PUT", body: JSON.stringify({ on: f.on.checked, trade: f.trade.value, towns: f.towns.value, max: Number(f.max.value) }) });
+      m.close();
+      toast("Saved.");
+      if (automatic.data && saved?.territory) automatic.data = { ...automatic.data, territory: saved.territory };
+      automaticCard(true);
+    } catch (err) {
+      const box = m.querySelector("#auto-error");
+      box.textContent = err.message;
+      box.hidden = false;
+    }
   };
 }
 
@@ -98,14 +155,12 @@ function howItWorks() {
 }
 
 export function runRow(j) {
-  const stuck = isStuck(j);
-  const badge = stuck ? ["bad", "Stuck"] : { queued: ["warn", "Starting"], running: ["warn", "Working"], done: ["good", "Done"], failed: ["bad", "Failed"] }[j.status] || ["", j.status];
-  const meta = j.status === "done" ? `${j.pitchable} worth pitching of ${j.found} found`
+  const badge = { queued: ["warn", "Starting"], running: ["warn", "Working"], done: ["good", "Done"], failed: ["bad", "Failed"] }[j.status] || ["", j.status];
+  const meta = j.status === "done" ? `${esc(j.pitchable)} worth pitching of ${esc(j.found)} found`
     : j.status === "failed" ? esc(j.error || "")
-    : stuck ? "No word from GitHub for 40+ min. Check the Actions tab, then try again."
     : progressText(j);
   return `<div class="run ${j.id === state.jobId ? "active" : ""}" data-id="${esc(j.id)}">
-    <div><b>${esc(j.trade)}</b> <span class="muted">in</span> <b>${esc(j.town)}</b><div class="meta">${meta}</div></div>
+    <div style="min-width:0;overflow-wrap:anywhere"><b>${esc(j.trade)}</b> <span class="muted">in</span> <b>${esc(j.town)}</b><div class="meta">${meta}</div></div>
     <span class="meta">${esc(ago(j.created_at))}</span>
     <span class="badge ${badge[0]}">${esc(badge[1])}</span>
     ${inProgress(j) ? `<div class="progress slim"><i style="width:${progressPct(j)}%"></i></div>` : ""}</div>`;
@@ -133,9 +188,6 @@ function progressText(j) {
 
 function jobResults(job) {
   const title = `<div class="section-title"><h2 class="cap">${esc(job.trade)} in ${esc(job.town)}</h2><span class="muted small">${esc(ago(job.created_at))}</span></div>`;
-  if (isStuck(job)) {
-    return `${title}<div class="card"><p class="error" style="margin:0">That search looks stuck. Open GitHub → Actions → Scrape leads to see what happened, then start it again.</p></div>`;
-  }
   if (inProgress(job)) {
     const stage = STAGES[job.progress_stage];
     const pct = progressPct(job);
@@ -152,7 +204,7 @@ function jobResults(job) {
       <p class="hint">Updates by itself. You can leave and come back.</p></div>`;
   }
   if (job.status === "failed") {
-    return `${title}<div class="card"><p class="error" style="margin:0">${esc(job.error || "Unknown error")}</p><p class="hint">Check <a href="#/setup">Setup</a>, fix anything red, then press Find leads again.</p></div>`;
+    return `${title}<div class="card"><p class="error" style="margin:0;overflow-wrap:anywhere">${esc(job.error || "Unknown error")}</p><p class="hint">Check <a href="#/setup">Setup</a>, fix anything red, then press Find leads again.</p></div>`;
   }
   const pitch = state.leads.filter((l) => !l.excluded);
   const tiles = [
@@ -213,6 +265,7 @@ export function poll() {
 }
 
 export async function scraperRoute() {
+  Object.assign(automatic, { data: null, at: 0 }); // never show an earlier visit's "Today:" line
   state.jobs = (await api("/api/jobs")).jobs;
   if (state.jobId) await openJob(state.jobId);
   else scraperPage();

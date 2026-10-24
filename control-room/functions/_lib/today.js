@@ -29,7 +29,7 @@ export function steps(n, manual = {}, now = Date.now()) {
     { key: "routine", title: "Claude researching leads daily",
       how: "Runs by itself every afternoon (Routine \"Aetos lead research (daily)\" at claude.ai/code/routines). If this stays unticked, tell Claude: it recreates it.",
       done: !!n.lastResearchAt && now - Date.parse(n.lastResearchAt) < 2 * DAY, auto: true },
-    { key: "autopilot", title: "Autopilot on", how: "Lead Scraper page → Autopilot → Edit.", done: !!n.autopilotOn, auto: true, href: "#/scraper" },
+    { key: "autopilot", title: "Automatic search on", how: "Lead Scraper page → Automatic search → Edit.", done: !!n.autopilotOn, auto: true, href: "#/scraper" },
     { key: "domain", title: "Move aetoswebsites.com to Cloudflare", how: "Steps in docs/setup-domain-email-stripe.md (Namecheap → Cloudflare nameservers, then control.aetoswebsites.com).",
       done: !!manual.domain },
     { key: "mailboxes", title: "Buy the mailboxes", how: "Namecheap Private Email on aetoswebsites.com, then add it on Setup → Mailboxes. Cold emails start 14 days after the date you bought it, to warm it up.",
