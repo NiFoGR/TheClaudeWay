@@ -349,17 +349,41 @@ function onSubmit(d, save, after = () => {}) {
   };
 }
 
+// Lead suggestions for "Add a client": the Leads page's own search (GET /api/leads, All leads, scraper exclusions left
+// out, best grade first, 50 at most) on what's typed, so any lead can be picked and linked.
+const leadsMatching = async (q) =>
+  (await api(`/api/leads?view=all${q ? `&q=${encodeURIComponent(q)}` : ""}`)).rows || [];
+const SEARCH_MAX = 100; // characters: the Leads page's search cap
+const sameName = (name) => (l) => String(l?.name ?? "").toLowerCase() === name.toLowerCase();
+
+/**
+ * The lead "Add a client" links to: the one named exactly as typed (trimmed, any case) among the suggestions `shown`,
+ * else among a fresh `search(name)` for it, because the suggestions can be a keystroke behind what was typed or
+ * pasted, and hold 50 at most. None (or the search fails) → null: the client is saved unlinked and the server links
+ * it only when exactly one lead has that name.
+ */
+export async function leadForClient(name, shown, search) {
+  const typed = String(name ?? "").trim();
+  if (typed.length < 2) return null;
+  const same = sameName(typed);
+  const hit = (Array.isArray(shown) ? shown : []).find(same);
+  if (hit) return hit;
+  try {
+    const rows = await search(typed.slice(0, SEARCH_MAX));
+    return (Array.isArray(rows) ? rows : []).find(same) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function addClient() {
   let leads = [];
-  try {
-    leads = (await api("/api/leads")).leads.filter((l) => !l.excluded);
-  } catch { /* the form still works without suggestions */ }
-  const hot = ["call booked", "replied", "won", "contacted"];
-  leads.sort((a, b) => (hot.indexOf(a.status) + 1 || 9) - (hot.indexOf(b.status) + 1 || 9));
+  let asked = null;
+  let timer = 0;
   const d = modal(`<form>${head("Add a client")}
     <div class="modal-body">
       <div><label for="c-name">Business</label><input id="c-name" list="c-leads" required minlength="2" maxlength="120" placeholder="Start typing a lead's name…" autocomplete="off">
-        <datalist id="c-leads">${leads.slice(0, 300).map((l) => `<option value="${esc(l.name)}">${esc(l.town || "")}${l.status !== "new" ? ` · ${esc(l.status)}` : ""}</option>`).join("")}</datalist>
+        <datalist id="c-leads"></datalist>
         <p class="hint" id="c-lead-note">If they're one of your leads, that lead is marked as won.</p></div>
       <div><label>Package</label><div class="pkg-options">${Object.entries(PACKAGES).map(([k, p], i) => `
         <label class="pkg"><input type="radio" name="pkg" value="${k}" ${i === 0 ? "checked" : ""}><span><b>${p.label}</b><small>${p.note}</small></span></label>`).join("")}</div></div>
@@ -379,23 +403,51 @@ async function addClient() {
   };
   d.querySelectorAll("input[name=pkg]").forEach((r) => r.onchange = fill);
   fill();
-  const match = () => leads.find((l) => l.name.toLowerCase() === d.querySelector("#c-name").value.trim().toLowerCase());
-  d.querySelector("#c-name").oninput = () => {
+  const typed = () => d.querySelector("#c-name").value.trim();
+  const match = () => leads.find(sameName(typed()));
+  const note = () => {
     const l = match();
-    d.querySelector("#c-lead-note").textContent = l ? `Linked to your lead in ${l.town || l.search_town}: it'll be marked as won.` : "If they're one of your leads, that lead is marked as won.";
+    d.querySelector("#c-lead-note").textContent = l ? `Linked to your lead${l.town ? ` in ${l.town}` : ""}: it'll be marked as won.` : "If they're one of your leads, that lead is marked as won.";
   };
-  onSubmit(d, (form) => api("/api/money/clients", {
-    method: "POST",
-    body: JSON.stringify({
-      name: form.querySelector("#c-name").value.trim(),
-      package: form.querySelector("input[name=pkg]:checked").value,
-      build: form.querySelector("#c-build").value,
-      monthly: form.querySelector("#c-monthly").value,
-      free_days: Number(form.querySelector("#c-free").value),
-      paid_on: form.querySelector("#c-paid").value,
-      place_id: match()?.place_id || "",
-    }),
-  }), () => { confetti(); toast("Client added. Get that money."); });
+  const suggest = async () => {
+    const q = typed().slice(0, SEARCH_MAX);
+    asked = q;
+    let rows;
+    try {
+      rows = await leadsMatching(q);
+    } catch {
+      return; // the last suggestions stay; the form still works without them
+    }
+    if (asked !== q) return; // a newer search is on its way
+    leads = rows;
+    d.querySelector("#c-leads").innerHTML = leads.map((l) =>
+      `<option value="${esc(l.name)}">${esc(l.town || "")}${l.stage ? ` · ${esc(l.stage_label)}` : ""}</option>`).join("");
+    note();
+  };
+  d.querySelector("#c-name").oninput = () => {
+    note();
+    clearTimeout(timer);
+    timer = setTimeout(suggest, 250);
+  };
+  suggest();
+  // The lead is found when the form is sent, not from the last suggestions: Enter can come before they arrive.
+  // onSubmit has already disabled the button, so the extra wait can't send it twice.
+  onSubmit(d, async (form) => {
+    clearTimeout(timer);
+    const lead = await leadForClient(typed(), leads, leadsMatching);
+    return api("/api/money/clients", {
+      method: "POST",
+      body: JSON.stringify({
+        name: form.querySelector("#c-name").value.trim(),
+        package: form.querySelector("input[name=pkg]:checked").value,
+        build: form.querySelector("#c-build").value,
+        monthly: form.querySelector("#c-monthly").value,
+        free_days: Number(form.querySelector("#c-free").value),
+        paid_on: form.querySelector("#c-paid").value,
+        place_id: lead?.place_id || "",
+      }),
+    });
+  }, () => { confetti(); toast("Client added. Get that money."); });
 }
 
 function addEntry() {
