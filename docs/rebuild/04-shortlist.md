@@ -86,18 +86,29 @@ due"`, `"{n} already sent"`, `"{n} first email(s) waiting to go"`, joined with "
 | No cold mailbox | warn | `Add your mailbox on Setup to start emailing.` | "Open Setup" → `#/setup` |
 | Every cold mailbox paused | warn | `Sending is paused: {paused_reason of the first one}. Fix it on Setup.` | "Open Setup" → `#/setup` |
 | cap = 0 (warming up) | info | `Your mailbox is warming up. First emails can go from {Tue 3 Nov}.` | none |
-| room = 0 | info | `No room for more first emails today ({details}). The next ones can go tomorrow.` | none |
+| room = 0 | info | `No room for more first emails today ({details}). The next ones can go tomorrow.` ("tomorrow" → `on {Mon 26 Oct}` when tomorrow isn't a send day, i.e. on a Saturday) | none |
+| outside the send window (Sunday, or from 19:00 UK) | ok | `You can write {room} first email(s) now. They go out {Mon 26 Oct} from 07:00 ({details}).` | none |
 | otherwise | ok | `You can send {room} first email(s) today ({details}).` | none |
 
 Example: one mailbox past week 6 (10 a day), 7 follow-ups due, nothing sent → "You can send 3 first emails today (10
 a day, 7 follow-ups already due)."
 
-"Warming up from" = the first UK day, scanning today + 0…60 days with `addUkDays`, on which any active cold mailbox
-has `mailboxCap > 0`.
+**Send window:** stage 0's outbox sends cold email (`first`, `followup`) only inside `COLD_WINDOW` (Mon–Sat
+07:00–19:00 UK, `_lib/mail/outbox.js`), so the banner never says "today" when nothing can go today. `capacityNow`
+adds `today` (UK day), `sendDay` = `ukDate(nextUkWindowStart(now, COLD_WINDOW))` (today inside the window, else
+the next window's day: Monday on a Sunday or a Saturday evening) and `nextDay` = the first send day after today
+(`ukDate(nextUkWindowStart(ukToUtc(addUkDays(today, 1), "00:00"), COLD_WINDOW))`). The outside-the-window row applies
+when `sendDay ≠ today`; the room = 0 row says `on {nextDay}` when `nextDay` isn't the day after today. Without these
+fields (`capacityBanner` called with only the numbers) the text is the table's other rows.
+
+"Warming up from" = the first UK day, scanning today + 0…60 days with `addUkDays`, that is a send day of
+`COLD_WINDOW` (Mon–Sat, never a Sunday) and on which any active cold mailbox has `mailboxCap > 0`.
 
 ### The lead panel (drawer)
 
-Opens from a row click or `/#/lead/<place_id>`. Loads with one request (`GET /api/leads/:id`). Sections, top to
+Opens from a row click, Home's next leads or `/#/lead/<place_id>`. Loads with one request (`GET /api/leads/:id`),
+whose answer also carries today's room (`capacity`, as `capacityNow` gives it) when the stage is `ready`, so
+**Write first email** is right however the panel was opened and however long ago the list loaded. Sections, top to
 bottom:
 
 1. **Head:** name, "trade · town", grade badge, stage badge (+ "Hot" when hot), "Do not email" tag when suppressed,
@@ -116,11 +127,16 @@ bottom:
    with its note box. Its empty states ("Not queued for research", "Waiting for Claude") are stage 2's.
 4. **Demo:** link, expiry date, views; **Preview** toggle that loads stage 4's preview
    (`/api/demo/preview?template=<id>&place_id=<id>`) in a small frame only when pressed; then the `#d-demo` slot
-   that stage 4 fills with its demo card. No live demo: "No demo yet. It's made automatically once the trade's
-   template is approved."
+   that stage 4 fills with its demo card. No live demo: "No demo yet. One is made automatically when Claude grades a
+   lead A+, A or B and finds an email." (stage 4's own rule, so it's true for a C or D lead too; once stage 4 ships,
+   its card in `#d-demo` shows the link, views, expiry and the reason, and this section keeps only the heading,
+   **Preview** and the slot: see Cross-stage interfaces).
 5. **Google Maps:** average rank, top-3 % of town, found %, "Heatmap" link. None: "Not scanned yet."
 6. **Email:** the empty `#d-email` slot (stage 6 mounts the composer or the thread here), then the read-only
    **Conversation**: every message, oldest first, plain text (who, when, subject, body). None: "Nothing sent yet."
+   It is the element right after the slot (`<div class="conversation" data-conversation>`) and hides itself once the
+   slot has content (`#d-email:not(:empty) + [data-conversation] { display: none; }`), so stage 6's thread replaces it
+   and the messages never show twice; if the slot is emptied it's back.
 7. **Top reviews:** up to 3 (stars, author, text).
 8. **Call script** (collapsed; open by default when there's no email), then the empty `#d-call` slot (stage 8 mounts
    its call box here).
@@ -169,6 +185,10 @@ Tick step `pick`, every 30 minutes. From 07:00 UK, when room > 0 and ready leads
 - First run of a new UK day closes every older `pick:` todo. Later runs that day update the open todo's title so the
   numbers stay true; when room reaches 0 or nothing is ready, today's todo is closed (done). A dismissed or closed
   todo is not reopened that day.
+- Only inside stage 0's send window for cold email (`COLD_WINDOW`, Mon–Sat 07:00–19:00 UK), so "today" is true. On a
+  Sunday the first run still closes older `pick:` todos but makes none (result `no first emails go out today
+  (Sunday)`); Monday 07:00 makes the next. From 19:00 on a send day today's todo is closed (done) and none is made or
+  retitled (result `sending has stopped for today`), so no "today" title stays open overnight.
 
 ### Edge cases
 
@@ -196,8 +216,19 @@ Empty states:
 - All leads, filters match nothing: "No leads match these filters." + "Clear filters".
 - API error: the error's own plain-English text in red, with "Open Setup to see what's connected."
 
-**Lead Scraper page:** finished runs show "See these {n} leads" → `#/leads?view=all&job=<id>` instead of their own
-table. **Home:** its "next leads" open the new drawer.
+**Lead Scraper page:** finished runs show "{pitchable} worth pitching of {found} found." (the run's history) and
+"See these {n} leads" ("See this lead" for 1) → `#/leads?view=all&job=<id>&excluded=1` instead of their own table.
+`{n}` is the run's leads now (`GET /api/jobs` `leads_now` = leads whose `last_job_id` is the run), which is exactly
+what the link lists: a later search that finds a lead again moves it to that run, so `{n}` can be less than
+`{found}`, with the note "{found − n} of them were found again by a later search, so they're listed under that
+run." When none are left: no button, just "A later search found all of these again: they're listed under that run."
+and a "See all leads" link to `#/leads?view=all`. **Home:** its "next leads" open the new drawer. Nothing moves
+`leads.status` any more (only Stripe and Money set `won`), so "Contact these next" (`api/overview.js`) also leaves
+out leads with research `skipped` (Not a fit) or `too_big`, leads with a prospect past `ready`, and leads on the
+do-not-contact list (the address we'd write to, its domain or the company number); its links, the "All leads" link
+and the four pipeline tiles open `#/leads?view=all` (Won opens Money). The tiles' numbers still count
+`leads.status`, so Contacted, Replied and Calls booked (and Money's pipeline card) stop moving from here until stage
+11 Task 10 (Money counts `prospects`) and Task 11 (Home is removed). Test `leads-api › Home's Contact these next`.
 
 ## Todos added
 
@@ -222,7 +253,9 @@ None new. A throwing `pick` step shows in the tick result and the `tick` heartbe
 4. **Capacity matches the outbox:** test `shortlist-db › capacity` gives room 3 for cap 10 / 7 follow-ups due /
    nothing sent, and room 0 after 2 sends and 1 queued first email (10 − 2 − 7 − 1). Live: with no mailbox the banner shows the Setup
    text; after stage 0's mailbox exists the number equals cap − sent − due − queued from SQL (from stage 6, the
-   smaller of that and `roomForFirsts(...).total`).
+   smaller of that and `roomForFirsts(...).total`). The panel gets the same room in its own answer (test `leads-api ›
+   GET /api/leads/:id sends today's room`), so a `ready` lead opened from Home with no mailbox shows **Write first
+   email** disabled with "Add a mailbox first".
 5. **Drawer under 1 second:** test `leadDetail` runs ≤ 4 statements with 40 messages seeded (no N+1). Live: DevTools
    → Network, `GET /api/leads/<id>` under 1,000 ms for 5 random leads.
 6. **List under D1 limits:** test `listLeads` runs ≤ 12 statements for a 50-row page. Live: `GET /api/leads` under
@@ -230,8 +263,9 @@ None new. A throwing `pick` step shows in the tick result and the `tick` heartbe
 7. **No raw HTML or audit blobs leave the API:** test: neither response has an `audit` key or the text `<html`.
 8. **Escaping:** test `leadview` renders a name `<img src=x onerror=alert(1)>`, a `javascript:` website and a review
    containing `</p><script>` as inert text.
-9. **Pick todo:** tests at 06:59 / 07:00 UK in BST (20 Oct) and GMT (26 Oct). Live: the morning after deploy, the
-   `todos` table has `pick:<date>` only if room > 0 and Ready isn't empty.
+9. **Pick todo:** tests at 06:59 / 07:00 UK in BST (20 Oct) and GMT (26 Oct); a Sunday (25 Oct) makes none and
+   19:30 UK on Saturday closes that day's. Live: the morning after deploy, the `todos` table has `pick:<date>` only if
+   room > 0 and Ready isn't empty, and never one for a Sunday.
 10. **Actions:** tests: Not a fit removes the lead from Ready, writes `[Nik <date>] Not a fit: <reason>` on top of the
     notes, and is refused once emailed. (Research is wrong and its 30-minute fire guard are stage 2's tests.)
 11. **Call script:** contains the exact §9 guarantee lines, weekday £1,950 / 60 days, weekend around £2,000 → £1,750 /
@@ -264,7 +298,8 @@ plain browser JS.
   UTC storage with UK-time rules via `ukTime.js`, plain-English errors, tests before push.
 - Page size 50; search `q` capped at 100 characters; LIKE patterns escape `\ % _` with `ESCAPE '\'`.
 - Grade URL tokens `ap a b c d none`; stage tokens `ready emailed viewed replied needs_nik call_booked won lost none`.
-- `GET /api/leads` ≤ 12 D1 statements; `GET /api/leads/:id` ≤ 4 statements in one `DB.batch` after the lead lookup.
+- `GET /api/leads` ≤ 12 D1 statements; `GET /api/leads/:id` ≤ 4 statements in one `DB.batch` after the lead lookup
+  (`leadDetail`), plus `capacityNow`'s 4 only when the lead's stage is `ready`.
   No new indexes (overview §4's `research_status`, `prospects_stage`, `demos_place`, `messages_place` cover it).
   Grade counts and facets run only when `page = 1`.
 - API responses never include `leads.audit` or any HTML; message bodies cut to 5,000 characters, review text to 600.
@@ -299,7 +334,8 @@ Prices, `GUARANTEE` and `offerFor` are stage 0's `_lib/offer.js` (01 Task 6). Th
 **Files:** Create `control-room/functions/_lib/shortlist.js`; Test `control-room/tests/shortlist.test.mjs`.
 
 **Interfaces:**
-- Consumes: `addUkDays(ukDateStr, n)` from `_lib/ukTime.js`; `mailboxCap(mailbox, ukToday)` from `_lib/mail/capacity.js`.
+- Consumes: `addUkDays(ukDateStr, n)` from `_lib/ukTime.js`; `mailboxCap(mailbox, ukToday)` from `_lib/mail/capacity.js`;
+  `COLD_WINDOW` from `_lib/mail/outbox.js` (send days for `warmupFrom`, 07:00 for the banner).
 - Produces:
   - `GRADES = ["A+","A","B","C","D"]`, `GRADE_TOKENS = {ap:"A+", a:"A", b:"B", c:"C", d:"D", none:null}`
   - `STAGE_TOKENS = ["ready","emailed","viewed","replied","needs_nik","call_booked","won","lost","none"]`
@@ -311,7 +347,8 @@ Prices, `GUARANTEE` and `offerFor` are stage 0's `_lib/offer.js` (01 Task 6). Th
   - `warmupFrom(mailboxes, ukToday) → "YYYY-MM-DD"|null`
   - `readyGrades(room, top) → ["A+","A"] | ["A+","A","B"]`
   - `capacityBanner(c) → {tone: "warn"|"info"|"ok", text: string, link: {href, label}|null}` where
-    `c = {mailboxes, paused: [{address, reason}], cap, sent, followupsDue, firstQueued, room, warmupFrom}`
+    `c = {mailboxes, paused: [{address, reason}], cap, sent, followupsDue, firstQueued, room, warmupFrom}`, plus
+    optional `today`, `sendDay`, `nextDay` (UK days, from `capacityNow`) for the send-window wording in Part A
   - `pickTitle({top, b, room, bIncluded}) → string|null`
   - `isHot(prospect, now) → boolean`: the one hot rule for every stage (stage 4's `hotStep` imports it): stage is
     `emailed` or `viewed`, no `last_inbound_at`, and views ≥ 2 or a view in the last 24 h
@@ -423,10 +460,12 @@ Test `control-room/tests/shortlist-db.test.mjs`.
 
 **Interfaces:**
 - Consumes: Task 1 exports; `followupsDueToday` (Task 2); `sentToday(DB, now)` from `_lib/mail/outbox.js` (counts
-  `sent` today plus any `sending`); `mailboxCap`; `ukDate`; `fakeD1()`.
+  `sent` today plus any `sending`); `mailboxCap`; `ukDate`, `ukToUtc`, `addUkDays`, `nextUkWindowStart`; `COLD_WINDOW`
+  from `_lib/mail/outbox.js`; `fakeD1()`.
 - Produces:
-  - `capacityNow(DB, now) → Promise<{mailboxes, paused, cap, sent, followupsDue, firstQueued, room, warmupFrom, banner}>`
-    (stage 6 Task 6 later caps `room` with `roomForFirsts(DB, now).total` inside this function)
+  - `capacityNow(DB, now) → Promise<{mailboxes, paused, cap, sent, followupsDue, firstQueued, room, warmupFrom, today,
+    sendDay, nextDay, banner}>` (stage 6 Task 6 later caps `room` with `roomForFirsts(DB, now).total` inside this
+    function; `sendDay` is the same day as `roomForFirsts`' `day`)
   - `readyCounts(DB, now, room) → Promise<{top, b, b_included, grades, waiting_demo}>`
   - `listLeads(DB, filters, now) → Promise<{rows, total, page, pages, grade_counts: {"A+","A","B","C","D","none"} | null, view_counts: {ready, all} | null, facets: {trades: [{value, n}], towns: [{value, n}]} | null, capacity, ready}>`
   - Row shape: `{place_id, name, trade, town, phone, website, rating, review_count, quality_score, excluded, grade, grade_reason, research_status, email, suppressed, stage, stage_label, views, last_view_at, hot, demo_slug, top_issue, owner_first}` (`owner_first` only when `research.owner.confident`; `top_issue` = `json_extract(leads.issues,'$[0]')`)
@@ -567,7 +606,8 @@ Modify `control-room/functions/_lib/shortlist-db.js`; Test `control-room/tests/l
 - Consumes: `listLeads`, `leadDetail`, `parseLeadFilters`; `db`, `json`, `bad`, `now` from `_lib/util.js`; `ukDate`
   from `_lib/ukTime.js`.
 - Produces:
-  - `GET /api/leads?<filters>` → `listLeads` result; `GET /api/leads/:id` → `{detail}` or 404
+  - `GET /api/leads?<filters>` → `listLeads` result; `GET /api/leads/:id` → `{detail, capacity}` (`capacity` =
+    `capacityNow(DB, now)` when `detail.prospect.stage === "ready"`, else `null`) or 404
     `{error: "That lead isn't in the database any more. Close this panel and refresh."}`.
   - `PATCH /api/leads/:id {notes}` → `{notes}` (status editing removed; any other field → 400 "Only notes can be
     changed here.").
@@ -602,7 +642,8 @@ Modify `control-room/functions/_lib/shortlist-db.js`; Test `control-room/tests/l
 `control-room/tests/pick.test.mjs`.
 
 **Interfaces:**
-- Consumes: `capacityNow`, `readyCounts` (Task 3); `pickTitle` (Task 1); `ukParts`, `ukDate`, `ukToUtc`;
+- Consumes: `capacityNow`, `readyCounts` (Task 3); `pickTitle` (Task 1); `ukParts`, `ukDate`, `ukToUtc`,
+  `inUkWindow`; `COLD_WINDOW` from `_lib/mail/outbox.js`;
   `iso(date)` from `_lib/util.js` (the shared `YYYY-MM-DDTHH:MM:SSZ` formatter added in 02 Task 10; never imported
   from `find.js`); `addTodo`, `closeTodos` from `_lib/todo.js`;
   `getSetting`, `setSetting` from `_lib/settings.js`.
@@ -612,9 +653,12 @@ Modify `control-room/functions/_lib/shortlist-db.js`; Test `control-room/tests/l
 Algorithm (order matters):
 ```
 if ukParts(now).hh < 7 → return "before 07:00"
-today = ukDate(now); cap = capacityNow(DB, now); counts = readyCounts(DB, now, cap.room)
-title = pickTitle({top: counts.top, b: counts.b, room: cap.room, bIncluded: counts.b_included})
+today = ukDate(now); sendsToday = COLD_WINDOW.days.includes(ukParts(now).weekday); open = sendsToday && inUkWindow(now, COLD_WINDOW)
+if open → cap = capacityNow(DB, now); counts = readyCounts(DB, now, cap.room)
+          title = pickTitle({top: counts.top, b: counts.b, room: cap.room, bIncluded: counts.b_included})
 if getSetting(DB, "pick:last") !== today → closeTodos(DB, "pick:"); setSetting(DB, "pick:last", today); fresh = true
+if !sendsToday → return "no first emails go out today (Sunday)"
+if !open → (unless fresh) closeTodos(DB, "pick:" + today); return "sending has stopped for today"
 if !title → closeTodos(DB, "pick:" + today); return "nothing to pick"
 if fresh → addTodo(DB, {kind: "pick", title, detail: "Open Leads → Ready to email, and write each first email from the lead's panel.",
                         link: "/#/leads?view=ready", due_at: iso(ukToUtc(today, "07:00")), dedupe: "pick:" + today})
@@ -780,8 +824,11 @@ return title
   - `app.js`: route via `parseRoute(location.hash)`, then `PAGES.find((p) => p.route === page)` (stage 0's registry);
     an unknown page falls back to the `home` entry, so `parseRoute` never needs editing when a stage adds a `PAGES`
     entry; `leadId` set → `leadsPage(params)` then `openLeadDrawer(leadId)`; nav "Leads" stays.
-  - `scraper.js`: drop the `leadsTable`/`bindTable` import; a finished run shows "See these {found} leads" →
-    `#/leads?view=all&job=<id>`.
+  - `scraper.js`: drop the `leadsTable`/`bindTable` import; a finished run shows "See these {n} leads" →
+    `#/leads?view=all&job=<id>&excluded=1`, `{n}` = the run's `leads_now` from `GET /api/jobs` (Part A, What Nik
+    sees; `found` when it's missing).
+  - `leads.js`: the panel renders with the `capacity` from its own `GET /api/leads/:id` answer (never a copy kept
+    from the list), so it's right when opened from Home or long after the list loaded.
   - `home.js`: `openDrawer(lead, …)` → `openLeadDrawer(lead.place_id)`.
   - `style.css`: `.chips`, `.chip.on`, `.chip.off`, grade badges extending stage 2's `.grade`/`.grade.aplus` rules
     (A+ gold fill `#C9A13B` on charcoal, A gold outline, B/C/D greys; one set of rules, not a second copy), `.banner.ok|info|warn`,
@@ -812,17 +859,28 @@ return title
   links from stages 4–8 use `/#/lead/<place_id>`. File 11 owns routing once it ships and keeps both.
 - Drawer mount points rendered by `drawerHtml`: `#d-demo` (stage 4 mounts its demo card), `#d-email` (stage 6's
   `mountEmail`), `#d-call` (stage 8's call box).
+- Stage 6's thread in `#d-email` replaces the read-only Conversation, which hides itself once the slot has content
+  (`#d-email:not(:empty) + [data-conversation]` in `style.css`); stage 6 needs no change to `leadview.js` for it, and
+  reuses stage 3's `.thread`, `.msg`, `.msg-head`, `.msg-subject` and `.msg-body` rules (no second copy).
+- Stage 4 takes over the demo facts: once its `demoCardHtml` is mounted in `#d-demo` it shows the link, views, expiry
+  and the no-demo reason, and stage 4's Task 14 trims `leadview.js` `demoHtml` to the heading, **Preview** and the
+  slot (05-demo.md Task 14).
+- `GET /api/leads/:id` → `{detail, capacity}`: `capacity` is `capacityNow` for a `ready` lead (else `null`), so stage
+  6 Task 6's `roomForFirsts` cap reaches the panel's **Write first email** with no change here.
 - `public/js/html.js` is the source of `esc`, `safeUrl`, `icon` (importable in node tests); `lib.js` re-exports them,
   so stage 0's test "setup.js imports esc from ./lib.js" still passes.
 - `research.status = 'skipped'` with a notes line `[Nik YYYY-MM-DD] Not a fit: <reason>` means Nik rejected it;
   stage 2's queue must never re-queue a `skipped` lead on its own.
+- Not a fit lines share stage 2's `[Nik …]` format; stage 11's 'Research is wrong' count must skip lines whose text
+  starts 'Not a fit'.
 
 **Assumed from other stages (exact shapes this file relies on):**
 - Stage 0: `fakeD1()` from `control-room/tests/helpers/fakeD1.mjs` returns a D1-compatible DB (`prepare/bind/first/
   all/run/batch/exec`) with the full schema (all overview §4 tables) applied; `_lib/tick.js` exports a mutable `STEPS`
   array with a marker for every overview §8 slot; `todo.js`, `settings.js`, `ukTime.js`, `mail/capacity.js`,
   `mail/outbox.js` exactly as overview §8; `sentToday` counts `first`/`followup` messages `sent` since UK midnight
-  plus any `sending`; `suppression.value` is always stored lower-case. `_lib/offer.js` (01 Task 6) exports
+  plus any `sending`; `mail/outbox.js` exports `COLD_WINDOW = {start: "07:00", end: "19:00", days: [1..6]}` (when cold
+  email may go) and `ukTime.js` exports `inUkWindow(date, window)` and `nextUkWindowStart(date, window)`; `suppression.value` is always stored lower-case. `_lib/offer.js` (01 Task 6) exports
   `PACKAGES`, `offerFor(date) → {weekend, full, website, banner}`, `formatPounds(pence)` and
   `GUARANTEE {headline, section}`, with `PACKAGES.weekend.wasBuild = 195000`.
 - Stage 0/4: `_lib/session.js` keeps stage 0's cookie name `cr_session` and its token derivation.

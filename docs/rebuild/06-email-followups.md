@@ -633,7 +633,10 @@ today inside the window, else the next window start);
 today + pending `next_followup_at` by end of today with `followup_step < 9`; stage 3's `followupsDueToday` is left as
 it is);
 modified stage 3 `capacityNow(DB, now)`: `room = min(<stage 3's formula>, (await roomForFirsts(DB, now)).total)`, so
-the Leads banner never offers more first emails than Send allows (the banner text itself is unchanged).
+the Leads banner never offers more first emails than Send allows (the banner text itself is unchanged). Keep stage 3's
+`today`, `sendDay` and `nextDay` fields as they are: `sendDay` is the same day as `roomForFirsts`' `day`, and outside
+the send window the banner already says "You can write {room} first email(s) now. They go out {Mon 26 Oct} from 07:00
+(…)" instead of "today" (04-shortlist.md Part A).
 
 - [ ] **Step 1: Write the failing test**
 ```js
@@ -1003,8 +1006,11 @@ test("bad example input", async () => { /* kind "x" → 400 "Pick Example reply 
 `drawerHtml` already renders the empty mount `<div id="d-email"></div>`, and its **Write first email** button already
 does `import("./compose.js").then(m => m.mountEmail(document.getElementById("d-email"), id))` and scrolls to it; this
 task only adds: when the drawer opens for a lead whose prospect has a first email (queued, sent or failed), call
-`mountEmail` the same way so the thread shows without a click), `control-room/public/style.css` (`.compose`,
-`.compose-help`, `.preview-mail`, `.checks`, `.thread`, `.msg`, `.badge.you/.claude/.system/.them`). Test
+`mountEmail` the same way so the thread shows without a click; stage 3's read-only Conversation sits right after the
+slot and hides itself once the slot has content (`#d-email:not(:empty) + [data-conversation]`), so the thread
+replaces it with no change to `leadview.js`), `control-room/public/style.css` (reuse stage 3's `.thread`, `.msg`,
+`.msg-head`, `.msg-subject` and `.msg-body` rules, extending them where A8 needs more, never a second copy; add only
+`.compose`, `.compose-help`, `.preview-mail`, `.checks` and `.badge.you/.claude/.system/.them`). Test
 `control-room/tests/compose-ui.test.mjs`.
 
 **Interfaces:**
@@ -1171,6 +1177,8 @@ test("cap respected; follow-ups before first emails; none skipped", async () => 
   drawer thread.
 - `public/js/compose.js` `mountEmail(el, placeId)` — stage 3's `drawerHtml` renders the empty `#d-email` mount and its
   **Write first email** button does `import("./compose.js").then(m => m.mountEmail(document.getElementById("d-email"), id))`.
+  Stage 3's read-only Conversation (`[data-conversation]`, right after the mount) hides itself once the mount has
+  content, so the thread mounted here is the only copy of the messages.
 - The Voice page: `GET /api/voice` (`api/voice/index.js`), `api/voice/followups/*`, `api/voice/examples/*`,
   `public/js/voice.js` and `voice.test.mjs` are this stage's and the only ones. Stage 7 adds `seedVoice` into this
   `GET /api/voice`, widens `has_price_reply` to `/price|how much|cost/i` over `situation`/`body` of `example` rows,

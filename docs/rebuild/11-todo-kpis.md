@@ -227,8 +227,11 @@ open Setup." It never shows a blank page.
 **Research quality**
 - From `research` rows with `status = 'done'` researched that week: researched, with a `best_email`, email hit rate,
   too big.
-- "Research wrong" flags: the count of `[Nik YYYY-MM-DD]` lines in `research.notes` dated that week (stage 2's
-  format).
+- "Research wrong" flags (`wrong_flags`): the count of `[Nik YYYY-MM-DD]` lines in `research.notes` dated that week
+  (stage 2's format), except Nik's "Not a fit" lines (stage 3's `[Nik YYYY-MM-DD] Not a fit: <reason>`): he turned the
+  lead down, Claude's research wasn't wrong. A line is skipped when its text, after removing
+  `^\s*\[Nik ([^\]]*)\]\s*`, matches stage 2's `NOT_A_FIT = /^not a fit\b\s*:?\s*/i`
+  (`control-room/public/js/researchcard.js`).
 
 **Rates**
 - A rate is `{k, n, pct, early}`. `pct = round(1000·k/n)/10`, or `null` when n = 0. `early = n < 30`.
@@ -328,7 +331,7 @@ p5 A.
 | Calls | p1 `confirmed`, created 2026-10-20T15:05Z; p9 `offered`, created 2026-10-21T09:00Z |
 | Orders | p5, paid_on 2026-10-24, 175000 |
 | Escalation todos | p3, dedupe `escalation:i4`, created 2026-10-21T07:05Z |
-| Research | p1 done with email 2026-10-19T07:00Z; p2 done with email 2026-10-20T07:00Z; p7 done, no email, 2026-10-21T07:00Z; p8 skipped 2026-10-21; p9 done with email 2026-10-12T07:00Z, notes `[Nik 2026-10-22] wrong owner` |
+| Research | p1 done with email 2026-10-19T07:00Z; p2 done with email 2026-10-20T07:00Z; p7 done, no email, 2026-10-21T07:00Z; p8 skipped 2026-10-21; p9 done with email 2026-10-12T07:00Z, notes `[Nik 2026-10-22] wrong owner`; p10 skipped 2026-10-21, notes `[Nik 2026-10-21] Not a fit: Wrong trade` (Nik's Not a fit: not a "Research wrong" flag) |
 
 **Expected numbers**
 
@@ -927,6 +930,7 @@ JS, `style.css`.
     assert.deepEqual(n.totals, { sent: 9, bounced: 1, human_replies: 4, positive_replies: 3, opt_outs: 1, calls_booked: 1, orders: 1, revenue_pence: 175000 });
     assert.deepEqual(n.grades.map((x) => [x.grade, x.emailed, x.viewed.pct, x.replied.pct, x.won.pct]),
       [["A+", 1, 100, 100, 0], ["A", 3, 66.7, 66.7, 33.3], ["B", 2, 0, 0, 0], ["C", 0, null, null, null], ["D", 0, null, null, null]]);
+    // wrong_flags: p9's "[Nik 2026-10-22] wrong owner" counts; p10's "[Nik 2026-10-21] Not a fit: Wrong trade" doesn't.
     assert.deepEqual(n.research, { researched: 3, with_email: 2, hit_rate: rate(2, 3), wrong_flags: 1, too_big: 0 });
     assert.deepEqual(["2026-W40", "2026-W41", "2026-W42", "2026-W43"].map((w) => trendRow(computeWeek(rows, weekStartOf(w))).first_sent), [0, 0, 1, 5]);
   });

@@ -226,7 +226,9 @@ the home page.
   last viewed, then newest. Empty: "No demo sites yet. One is made automatically when Claude grades a lead A+, A or
   B and finds an email."
 
-**Lead drawer:** a "Demo site" card, mounted into stage 3's empty `<div id="d-demo"></div>`:
+**Lead drawer:** a "Demo site" card, mounted into stage 3's empty `<div id="d-demo"></div>`. It owns the demo facts:
+stage 3's "Demo site" section keeps only its heading, the **Preview** toggle and the slot (Task 14), so the link,
+views and expiry show once, and a lead that won't get a demo never reads "made automatically":
 - Ready: link text `aetoswebsites.com/d/<slug>`, badge "Viewed 3× · last Tue 14:05" or "Not viewed yet",
   "Ends 17 Apr 2027", buttons **"Open demo"** (new tab) and **"Copy link"** (copies the full
   `https://aetoswebsites.com/d/<slug>`). "Open demo" here and on the Demo page links to the relative `/d/<slug>` on
@@ -868,9 +870,15 @@ of that template, newest research first: first with ≥ 2 photos, first with 0 p
 **Files:** Create `control-room/public/js/demo.js`; Modify `control-room/public/js/app.js` (add
 `{route: "demo", label: "Demo", icon, render: demoPage, nav: false}` to `PAGES`: routed, no nav item; stage 3's
 `parseRoute` passes any first hash segment through as `page` and `PAGES.find` resolves it, and stage 0's
-`shell.test.mjs` only checks its 5 routes are present, so it still passes), `control-room/public/js/leads.js` (replace the old `demoCard`: fetch `GET /api/demo/lead/:id` and
-put `demoCardHtml` into stage 3's `#d-demo` mount point; remove "Make demo now"), `control-room/public/style.css`
-(`.demo-look`, `.demo-frame` 390×700 with scroll, `.demo-card`); Test `control-room/tests/demo-ui.test.mjs`.
+`shell.test.mjs` only checks its 5 routes are present, so it still passes), `control-room/public/js/leads.js` (wiring
+only: when the panel is drawn, fetch `GET /api/demo/lead/:id` and put `demoCardHtml` into stage 3's `#d-demo` mount
+point), `control-room/public/js/leadview.js` (`demoHtml`: keep `<h3>Demo site</h3>`, the **Preview** toggle (only when
+`demo.template` is set) and `<div id="d-demo"></div>`; drop its own link, "Ends …", "Viewed n×" / "Not viewed yet"
+and its no-demo line, because `demoCardHtml` now shows them), `control-room/tests/leadview.test.mjs` (move its
+demo link, ends, views and no-demo assertions to `demo-ui.test.mjs`; keep the Preview, relative-href (the Actions
+row's **Open demo**) and mount-point tests), `control-room/public/style.css` (`.demo-look`, `.demo-frame` 390×700
+with scroll, `.demo-card`); Test `control-room/tests/demo-ui.test.mjs`. The drawer's Actions row already has
+**Open demo**, so the card's own one is optional.
 
 **Interfaces:**
 Consumes: Task 13 routes; `esc`, `safeUrl`, `api`, `toast`, `pageHead`, `fmtDate` from `lib.js`.
@@ -898,7 +906,7 @@ Produces: `demoPage()` (route `#/demo`), `demoCardHtml(info) → string` (pure, 
   that one check to it here) and the drawer's `#d-demo` mount; "Approve this look" posts `{template, version}` and shows
   the API's error text in a toast.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs && for f in control-room/public/js/*.js; do node --check "$f"; done` → PASS.
-- [ ] **Step 5: Commit** — `git add control-room/public/js/demo.js control-room/public/js/app.js control-room/public/js/leads.js control-room/public/style.css control-room/tests/demo-ui.test.mjs && git commit -m "Demo page: approve looks, see demos and views; demo card in the lead drawer" -m "$TRAILER"`
+- [ ] **Step 5: Commit** — `git add control-room/public/js/demo.js control-room/public/js/app.js control-room/public/js/leads.js control-room/public/js/leadview.js control-room/public/style.css control-room/tests/demo-ui.test.mjs control-room/tests/leadview.test.mjs && git commit -m "Demo page: approve looks, see demos and views; demo card in the lead drawer" -m "$TRAILER"`
 
 Then run the Part A "Perfect when" live checks 6–12 on the deployed site.
 
@@ -925,7 +933,8 @@ Then run the Part A "Perfect when" live checks 6–12 on the deployed site.
   unchanged), `isOwnerRequest(request, env)` — **stage 0's** middleware imports these instead of keeping its own copy.
 - `GET /api/demo/preview?template=<id>&place_id=<id>` — **stage 3's** lead drawer frames this for its demo preview
   (it allows `frame-ancestors 'self'`; the public `/d/<slug>` page never can be framed and has no `?preview=1`).
-- `demoCardHtml(info)` — mounted into stage 3's `<div id="d-demo"></div>` in the lead drawer.
+- `demoCardHtml(info)` — mounted into stage 3's `<div id="d-demo"></div>` in the lead drawer; it takes over the demo
+  facts there (stage 3's `demoHtml` keeps only the heading, **Preview** and the slot, Task 14).
 - Tick step `hot` (position 5, every 5 minutes) is fully owned here, including what overview §8 lists as "stage 4/6";
   stage 6 doesn't add another hot step. It also runs `syncDemoExpiry` and the missing-demo safety net.
 - `checkDemoHtml(html, data, {mode, now})` — stage 10 can reuse it as a pre-launch check for client sites.
