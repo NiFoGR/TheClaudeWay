@@ -2,6 +2,7 @@
 // node --test control-room/tests/lead-row.test.mjs
 import assert from "node:assert/strict";
 import test from "node:test";
+import { GUARANTEE, offerFor } from "../functions/_lib/offer.js";
 import { facts } from "../functions/_lib/outreach.js";
 import { leadRow } from "../functions/_lib/util.js";
 import { callScript } from "../public/js/callscript.js";
@@ -23,7 +24,9 @@ const HOME = {
   audit: JSON.stringify({ findings: ["maps_invisible"], map_rank: { ...RUNCORN_MAPS, scan_town: "Saint Helens" } }),
 };
 const MAPS_LINE = /top 20|top 3 in|more reviews/;
-const lines = (lead) => callScript(lead, { today: new Date("2026-10-07T10:00:00") }).flatMap((s) => s.lines);
+// The call script takes today's offer and the guarantee from the payload (stage 3), as GET /api/leads/:id sends them.
+const DAY = new Date("2026-10-07T10:00:00Z");
+const lines = (lead) => callScript(lead, { today: DAY, offer: offerFor(DAY), guarantee: GUARANTEE }).flatMap((s) => s.lines);
 
 test("a lead found from another town's search has no Maps lines in the call script or the emails", () => {
   const lead = leadRow(AWAY);
@@ -35,7 +38,7 @@ test("a lead found from another town's search has no Maps lines in the call scri
   // the size of that town's scan isn't about them either ("I checked 49 spots around Warrington")
   assert.equal(f.spots, undefined);
   assert.deepEqual(lead.findings, []);
-  // {} and never null: callScript and facts read `lead.map_rank || lead.audit?.map_rank`
+  // {} and never null: facts reads `lead.map_rank || lead.audit?.map_rank` (callScript reads only `lead.map_rank`)
   assert.deepEqual(lead.map_rank, {});
 });
 
