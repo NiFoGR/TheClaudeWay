@@ -1,4 +1,5 @@
 import { SCHEMA, SCHEMA_VERSION } from "./schema.js";
+import { townKey } from "./territory.js";
 
 let schemaReady = false;
 
@@ -71,6 +72,10 @@ async function migrate(DB) {
 
 export const now = () => new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 
+// Any time (a Date, or anything new Date() reads) as stored: UTC "YYYY-MM-DDTHH:MM:SSZ", no milliseconds, the same
+// text as now() and Python's _now(), so stored times compare as strings. Every stage imports it from here.
+export const iso = (d = new Date()) => new Date(d).toISOString().replace(/\.\d{3}Z$/, "Z");
+
 export function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -81,6 +86,20 @@ export function json(data, status = 200) {
 export const bad = (message, status = 400) => json({ error: message }, status);
 
 const JSON_COLUMNS = ["emails", "socials", "issues", "audit"];
+
+// A finding from the Map Rank scan (scoring.maps_findings and scoring.reviews_finding in Python).
+const MAPS_FINDING = /^(maps_|reviews_behind$)/;
+
+/**
+ * True when a lead's saved Map Rank part (audit.map_rank) is from a scan of another town: marked so (`home` false,
+ * 02-find), or older rows saved before that whose `scan_town` isn't the lead's own town (its town, else the town
+ * searched; compared with townKey, so "St. Helens" = "Saint Helens"). A Map Rank part without `scan_town` can't be
+ * checked and counts as theirs.
+ */
+export function mapsFromAnotherTown(mapRank, lead) {
+  const m = mapRank || {};
+  return m.home === false || (!!m.scan_town && townKey(m.scan_town) !== townKey(lead?.town || lead?.search_town));
+}
 
 export function leadRow(row) {
   const out = { ...row, excluded: !!row.excluded };
@@ -95,6 +114,13 @@ export function leadRow(row) {
   out.findings = out.audit.findings || [];
   out.score_parts = out.audit.score || {};
   out.map_rank = out.audit.map_rank || {};
+  // Another town's scan says nothing about this lead (false claim #7): the call script and the emails read these two,
+  // so its Maps findings and numbers aren't handed out. `audit` and `issues` stay as saved (mergeResearch writes them
+  // back), and map_rank is {} rather than null, which `lead.map_rank || lead.audit.map_rank` would read past.
+  if (mapsFromAnotherTown(out.map_rank, out)) {
+    if (Array.isArray(out.findings)) out.findings = out.findings.filter((f) => !MAPS_FINDING.test(f));
+    out.map_rank = {};
+  }
   return out;
 }
 
