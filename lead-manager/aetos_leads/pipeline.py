@@ -7,7 +7,7 @@ import logging
 from pathlib import Path
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -48,15 +48,20 @@ async def _audit_all(leads: list[Lead], progress: Progress) -> None:
 class Result:
     leads: list[Lead]
     scan: Scan | None
+    chain_ids: list[str] = field(default_factory=list)  # earlier leads now known to be branches (store.D1.exclude_chains)
 
 
 def run(trade: str, town: str, places_key: str, companies_house_key: str = "", max_results: int = 60,
-        progress: Progress = _quiet, map_scan: bool = True) -> Result:
-    """Scout → check websites → directors → Google Maps heatmap → score. progress() is called as it goes."""
+        progress: Progress = _quiet, map_scan: bool = True, known: list[dict] = (),
+        in_pipeline=frozenset()) -> Result:
+    """Scout → check websites → directors → Google Maps heatmap → score. progress() is called as it goes.
+    known = saved, not-excluded leads ({place_id, name, website, phone, town}): duplicates and branches of earlier
+    searches are set aside too; in_pipeline = place_ids already in outreach, never set aside as either
+    (qualify.mark_exclusions)."""
     with httpx.Client(timeout=30) as client:
         leads = places.search(client, places_key, trade, town, max_results)
         progress("scouting", len(leads), max_results)
-        qualify.mark_exclusions(leads)
+        chain_ids = qualify.mark_exclusions(leads, known, in_pipeline)
         keep = [l for l in leads if not l.excluded]
         progress("checking", 0, len(keep))
         asyncio.run(_audit_all(keep, progress))
@@ -88,7 +93,7 @@ def run(trade: str, town: str, places_key: str, companies_house_key: str = "", m
     qualify.score(keep, scan)
     for lead in keep:  # decision maker's email first; what's left for Claude (research.py)
         research.finalise(lead)
-    return Result(sorted(leads, key=sort_key), scan)
+    return Result(sorted(leads, key=sort_key), scan, chain_ids)
 
 
 def sort_key(lead: Lead) -> tuple:

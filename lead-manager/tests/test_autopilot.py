@@ -1,25 +1,8 @@
 import json
-import sqlite3
 from datetime import datetime, timezone
 
-from aetos_leads import autopilot, store
-
-
-class FakeD1:
-    """The D1 HTTP client's query() over an in-memory SQLite with the real schema."""
-
-    def __init__(self):
-        self.db = sqlite3.connect(":memory:")
-        self.db.row_factory = sqlite3.Row
-        self.db.executescript(store.SCHEMA)
-
-    def query(self, sql, params=None):
-        cur = self.db.execute(sql, params or [])
-        self.db.commit()
-        return {"success": True, "result": [{"results": [dict(r) for r in cur.fetchall()]}]}
-
-    def ensure_schema(self):
-        pass
+from conftest import FakeD1
+from aetos_leads import autopilot
 
 
 def test_next_town_skips_recent_searches_and_advances():

@@ -180,9 +180,14 @@ def scrape(args, d1, places_key: str, fail) -> int:
     target = max(1, min(args.max, 300))
     progress = progress_reporter(d1, args.job_id)
     progress("scouting", 0, target)
+    # earlier searches' leads (and branches already set aside): duplicates and branches across runs are caught; leads
+    # already in outreach are never set aside as either (this run's save would overwrite their row)
+    known = [*d1.known_leads(), *d1.known_branches()] if d1 else []
+    in_pipeline = d1.in_pipeline() if d1 else set()
     try:
         result = pipeline.run(
-            args.trade, args.town, places_key, os.environ.get("COMPANIES_HOUSE_API_KEY", ""), target, progress=progress
+            args.trade, args.town, places_key, os.environ.get("COMPANIES_HOUSE_API_KEY", ""), target, progress=progress,
+            known=known, in_pipeline=in_pipeline,
         )
     except PlacesError as e:
         return fail(f"Google refused the search. Check the key and that Places API (New) is enabled. ({e})")
@@ -195,6 +200,7 @@ def scrape(args, d1, places_key: str, fail) -> int:
     if d1:
         progress("saving", 0, len(leads))
         d1.save(leads, args.job_id)
+        d1.exclude_chains(result.chain_ids)  # earlier leads this search showed are branches (not if in outreach)
         if result.scan:  # the free 5x5 Map Rank heatmap made during the run, viewable on the Map Rank page
             scan = result.scan
             scan_id = str(uuid.uuid4())
@@ -206,11 +212,6 @@ def scrape(args, d1, places_key: str, fail) -> int:
         print("Saved to the Control Room database (D1)")
 
     print(pipeline.summary(leads))
-    for_claude = sum(1 for l in leads if l.audit.get("ai_needs"))
-    print(f"{for_claude} leads need Claude (the rest were fully handled for free or aren't worth it)")
-    if out := os.environ.get("GITHUB_OUTPUT"):  # tells the workflow whether to wake Claude
-        with open(out, "a") as f:
-            f.write(f"for_claude={for_claude}\n")
     print("\nFiles:", *[str(v) for v in paths.values()], sep="\n  ")
     return 0
 

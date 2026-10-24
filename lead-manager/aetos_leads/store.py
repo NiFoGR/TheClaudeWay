@@ -11,7 +11,8 @@ from pathlib import Path
 
 import httpx
 
-from aetos_leads import research
+from aetos_leads import research, scoring
+from aetos_leads.audit import town_key
 from aetos_leads.maprank import Scan
 from aetos_leads.models import Lead
 
@@ -90,16 +91,51 @@ def insert_sql(table: str, columns: list[str], n_rows: int) -> str:
 
 
 def prior_sql(n: int) -> str:
-    """Leads Claude already researched, to carry its work over when a town is scraped again."""
+    """The saved rows of leads found again, to carry over their home-town Maps part and Claude's earlier research."""
     return ("SELECT place_id, email, emails, socials, director_first_name, director_name, audit FROM leads "
-            f"WHERE json_extract(audit, '$.ai_research') IS NOT NULL AND place_id IN ({', '.join('?' for _ in range(n))})")
+            f"WHERE place_id IN ({', '.join('?' for _ in range(n))})")
+
+
+def keep_home_maps(lead: Lead, prev_audit: dict) -> None:
+    """A lead found from a neighbouring town's search (map_rank home False: no Maps part from that scan) keeps the
+    Maps part of the last scan of its own town, if it had one: that map_rank, its Maps line written again (the reviews
+    line too, with today's review count), and the score worked out again. So does a lead whose run had no Map Rank
+    scan (it failed: map_rank {}). Only a scan of its own town today replaces it. Excluded leads aren't scored."""
+    prev = (prev_audit or {}).get("map_rank") or {}
+    if lead.excluded or lead.map_rank.get("home") is True or prev.get("home") is False or not prev.get("scan_town"):
+        return
+    if any(prev.get(k) is None for k in ("avg_rank", "top3_pct", "found_pct")):
+        return
+    if town_key(prev["scan_town"]) != town_key(lead.town or lead.search_town):
+        return
+    lead.map_rank = {**prev, "home": True}
+    extra = scoring.maps_findings(prev["avg_rank"], prev["top3_pct"], prev["found_pct"], prev["scan_town"])
+    extra += scoring.reviews_finding(lead.review_count, prev.get("leader_reviews") or [])
+    for key, text in extra:
+        if key not in lead.findings:
+            lead.findings.append(key)
+            lead.issues.append(text)
+    result = scoring.score(lead.findings)
+    lead.quality_score, lead.score_parts = result.total, result.as_dict()
+    if "ai_needs" in lead.audit:  # the score moved, so may what's worth Claude's look (research.finalise)
+        lead.audit["ai_needs"] = research.needs(lead)
+
+
+def _json(text, empty):
+    """A saved JSON column, or empty when it's missing, not JSON or the wrong shape: one bad row never stops a save."""
+    try:
+        value = json.loads(text or "null")
+    except (TypeError, ValueError):
+        return empty
+    return value if isinstance(value, type(empty)) else empty
 
 
 def carry_over(leads: list[Lead], rows: list[dict]) -> None:
     by_id = {l.place_id: l for l in leads}
     for r in rows:
         if r["place_id"] in by_id:
-            prev = {**r, **{k: json.loads(r[k] or "null") or ({} if k != "emails" else []) for k in ("emails", "socials", "audit")}}
+            prev = {**r, "emails": _json(r["emails"], []), "socials": _json(r["socials"], {}), "audit": _json(r["audit"], {})}
+            keep_home_maps(by_id[r["place_id"]], prev["audit"])
             research.carry_over(by_id[r["place_id"]], prev)
 
 
@@ -147,6 +183,33 @@ class D1:
         for lead in leads:
             self.query(UPSERT, row(lead, now, job_id))
 
+    def known_leads(self) -> list[dict]:
+        """Saved leads still pitchable, for the next search to compare with (qualify.mark_exclusions)."""
+        data = self.query("SELECT place_id, name, website, phone, town FROM leads WHERE excluded = 0")
+        return (data.get("result") or [{}])[0].get("results", [])
+
+    def known_branches(self) -> list[dict]:
+        """Saved leads already set aside as a chain's branches (excluded = 1 on every row), compared with too: once a
+        franchise's branches in two towns are set aside, its branch in the next town is still a branch."""
+        data = self.query("SELECT place_id, name, website, phone, town, excluded FROM leads "
+                          "WHERE excluded = 1 AND exclude_reason = 'Multiple branches (chain)'")
+        return (data.get("result") or [{}])[0].get("results", [])
+
+    def in_pipeline(self) -> set[str]:
+        """Leads already in outreach (a prospects row): never set aside as a duplicate or a branch when a search finds
+        them again (qualify.mark_exclusions), since this run's save would overwrite their row with excluded = 1."""
+        data = self.query("SELECT place_id FROM prospects")
+        return {r["place_id"] for r in (data.get("result") or [{}])[0].get("results", [])}
+
+    def exclude_chains(self, place_ids: list[str]) -> None:
+        """Earlier leads a new search showed are branches of one business. A lead already in outreach (a prospects
+        row) keeps going: its conversation is never cut off."""
+        for i in range(0, len(place_ids), D1_MAX_PARAMS):
+            chunk = place_ids[i:i + D1_MAX_PARAMS]
+            self.query("UPDATE leads SET excluded = 1, exclude_reason = 'Multiple branches (chain)' "
+                       f"WHERE place_id IN ({', '.join('?' for _ in chunk)}) "
+                       "AND place_id NOT IN (SELECT place_id FROM prospects)", chunk)
+
     def set_job(self, job_id: str, status: str, found: int | None = None, pitchable: int | None = None, error: str = "") -> None:
         self.query(
             "UPDATE jobs SET status = ?, found = COALESCE(?, found), pitchable = COALESCE(?, pitchable), "
@@ -171,9 +234,27 @@ class D1:
     def set_scan(self, scan_id: str, status: str, error: str = "") -> None:
         self.query("UPDATE scans SET status = ?, error = ?, updated_at = ? WHERE id = ?", [status, error[:500], _now(), scan_id])
 
+    def away_leads(self, place_ids: list[str], town: str) -> set[str]:
+        """The saved leads among place_ids whose own postal town isn't town (audit.town_key; no postal town = the town
+        they were searched in)."""
+        away: set[str] = set()
+        for i in range(0, len(place_ids), D1_MAX_PARAMS):
+            chunk = place_ids[i:i + D1_MAX_PARAMS]
+            data = self.query("SELECT place_id, town, search_town FROM leads "
+                              f"WHERE place_id IN ({', '.join('?' for _ in chunk)})", chunk)
+            away |= {r["place_id"] for r in (data.get("result") or [{}])[0].get("results", [])
+                     if town_key(r.get("town") or r.get("search_town") or "") != town_key(town)}
+        return away
+
     def save_scan(self, scan_id: str, scan: Scan) -> None:
+        """The scan's heatmap rows, and lead_map_rank (each business's Maps row: the drawer's heatmap link, the research
+        queue's map_rank, the competitor in emails) for everyone it saw except saved leads from another town: their row
+        stays the last scan of their own town, as their Maps part does (qualify.score, keep_home_maps)."""
         now = _now()
+        away = self.away_leads([b.place_id for b in scan.businesses], scan.town)
         for table, (columns, rows) in scan_rows(scan_id, scan, now).items():
+            if table == "lead_map_rank":
+                rows = [r for r in rows if r[0] not in away]
             self.insert_many(table, columns, rows)
         self.query(
             "UPDATE scans SET status = 'done', error = '', center_lat = ?, center_lng = ?, updated_at = ? WHERE id = ?",
