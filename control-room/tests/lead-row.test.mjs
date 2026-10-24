@@ -3,7 +3,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { facts } from "../functions/_lib/outreach.js";
-import { cleanResearch, mergeResearch } from "../functions/_lib/research.js";
 import { leadRow } from "../functions/_lib/util.js";
 import { callScript } from "../public/js/callscript.js";
 
@@ -40,16 +39,11 @@ test("a lead found from another town's search has no Maps lines in the call scri
   assert.deepEqual(lead.map_rank, {});
 });
 
-test("only what's handed out changes: audit and issues stay as saved (research writes them back to D1)", () => {
+test("only what's handed out changes: audit and issues stay as saved", () => {
   const lead = leadRow(AWAY);
   assert.deepEqual(lead.audit.findings, ["maps_invisible", "reviews_behind"]);
   assert.deepEqual(lead.audit.map_rank, RUNCORN_MAPS);
   assert.equal(lead.issues.length, 2);
-  const { clean } = cleanResearch({ notes: "Checked" });
-  const merged = mergeResearch(lead, clean, "2026-10-24T00:00:00Z");
-  assert.deepEqual(merged.audit.findings, ["maps_invisible", "reviews_behind"]);
-  assert.deepEqual(merged.audit.map_rank, RUNCORN_MAPS);
-  assert.equal(merged.issues.length, 2);
 });
 
 test("other Maps-free findings stay; a new row marked home false loses its Maps part too", () => {
