@@ -5,6 +5,7 @@ Every issue string here can be quoted (politely) in outreach, so keep them factu
 
 import re
 import time
+import unicodedata
 from datetime import date
 from urllib.parse import urlparse
 
@@ -20,9 +21,33 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-GB,en;q=0.9",
 }
-# these mean "a firewall stopped our checker", not "the site is broken": never pitch on them
-BLOCKED_STATUSES = {401, 403, 406, 429, 503}
+# only these errors mean "the site is broken". Every other 4xx/5xx (firewalls answer 401/403/406/429/503; 409, 415,
+# 451…), a 202, a bot-check page and an answer with no page in it (204, a redirect with nowhere to go, a blank body)
+# mean "something stopped our checker": "not checked", never pitched on.
+BROKEN_STATUSES = {404, 410, 500, 502, 504, 520, 521, 522, 523, 524, 525, 526, 530}
+CHALLENGE_RE = re.compile(r"/\.well-known/sgcaptcha|<title>\s*(Just a moment|Attention Required|Access denied|"
+                          r"Checking your browser|One moment, please)", re.I)
 NOT_CHECKED = "Couldn't check the website automatically (it blocks checkers). Look at it yourself"
+NOT_READABLE = "Couldn't check the website automatically (it only loads in a browser). Look at it yourself"
+APP_ROOT_ID = re.compile(r"^(root|app|__next|__nuxt)$", re.I)
+SHELL_TEXT_CHARS = 200  # a page showing fewer characters than this has nothing of its own to judge
+# checked on every page read (the contact page usually has them), not just the homepage; their facts, same order
+SITE_WIDE = ("no_form", "no_map", "phone_not_on_site", "address_not_on_site")
+SITE_WIDE_FACTS = ("contact_form", "google_map", "phone_on_site", "address_on_site")
+TEL_HREF = re.compile(r"^\s*tel:", re.I)  # browsers trim spaces round a link, so " tel:…" still dials
+# a form a visitor sees that isn't a <form> in the page's HTML: a form builder's iframe or script (Jotform, Google Forms,
+# Microsoft Forms, Typeform, HubSpot, Cognito, Wufoo, Zoho, Formstack, Paperform, 123FormBuilder, Tally, Fillout) or
+# Ninja Forms' placeholder (its form is drawn from a script template). Errs toward not claiming "no form"
+FORM_EMBED = re.compile(
+    r"docs\.google\.com/forms|forms\.gle/|forms\.office\.com|jotform\.com|jotfor\.ms|typeform\.com|"
+    r"data-tf-(?:widget|live|popup|slider|sidetab)|hsforms\.(?:net|com)|hbspt\.forms|cognitoforms\.com|wufoo\.com|"
+    r"zohopublic\.|zfrmz\.|formstack\.com|paperform\.co|123formbuilder\.com|tally\.so/|fillout\.com|nf-form-cont",
+    re.I,
+)
+# a Google map: an embed's address (google.com/maps/embed…, maps.google.co.uk/maps?…&output=embed), or Google's Maps
+# JavaScript drawing one
+GOOGLE_MAP_URL = re.compile(r"google\.(?:com|co\.uk)/maps|maps\.google(?:apis)?\.", re.I)
+GOOGLE_MAPS_JS = re.compile(r"maps\.googleapis\.com/maps/api/js", re.I)
 SLOW_SECONDS = 3.0
 OUTDATED_YEARS = 4  # copyright this many years old or more = looks abandoned (2023 in 2026 isn't enough)
 
@@ -64,7 +89,7 @@ def is_real_website(url: str) -> bool:
 
 def extract_emails(html: str, site_host: str = "") -> list[str]:
     """Every real email in a page (hidden ones too), own-domain and generic inboxes first."""
-    return contacts.rank_emails(contacts.emails_in(html), site_host)
+    return contacts.rank_emails(contacts.emails_in(html, site_host), site_host)
 
 
 def extract_socials(soup: BeautifulSoup) -> dict[str, str]:
@@ -85,7 +110,8 @@ TRADE_SYNONYMS = {
     "car dealer": ["cars", "car sales", "used car", "motors"],
     "removals": ["removal", "moving", "movers"],
     "cleaner": ["clean"],
-    "landscaper": ["landscap", "garden"],
+    "landscaper": ["landscap", "garden", "lawn", "patio", "paving", "driveway", "fenc", "deck", "turf",
+                   "artificial grass", "tree", "hedge", "groundwork", "outdoor"],
     "painter and decorator": ["paint", "decorat"],
     "builder": ["build", "extension", "construction"],
     "driving school": ["driving", "lesson", "instructor"],
@@ -105,12 +131,25 @@ OLD_BUILD = re.compile(r"<font[\s>]|<center>|<marquee|\.swf[\"']|<frameset|jquer
 def trade_terms(trade: str) -> list[str]:
     words = [w for w in re.findall(r"[a-z]+", trade.lower()) if w not in STOPWORDS]
     stems = [w[:4] if len(w) > 4 else w for w in words]
-    return stems + TRADE_SYNONYMS.get(trade.lower().strip(), [])
+    key = " ".join(trade.lower().split())  # "Landscapers" gets the same synonyms as "landscaper"
+    return stems + TRADE_SYNONYMS.get(key, TRADE_SYNONYMS.get(key.removesuffix("s"), []))
 
 
 def mentions(text: str, terms: list[str]) -> bool:
     text = text.lower()
-    return any(t in text for t in terms)
+    spaced = re.sub(r"[\W_]+", " ", text)  # "Artificial-Grass", "Air-Con" count as "artificial grass", "air con"
+    return any(t in text or t in spaced for t in terms)
+
+
+def town_key(name: str) -> str:
+    """A town written any common way, as one comparable string: 'St. Helens', 'Saint Helens' and 'st helens' are all
+    'st helens'; 'Newton-le-Willows' is 'newton le willows'; "King's Lynn" is 'kings lynn'; 'Ynys Môn' is 'ynys mon';
+    'Brighton & Hove' is 'brighton and hove'."""
+    name = unicodedata.normalize("NFKD", (name or "").lower())
+    name = "".join(c for c in name if not unicodedata.combining(c))  # Môn = Mon
+    name = re.sub(r"['‘’`]", "", name).replace("&", " and ")  # King's = Kings; & = and
+    name = re.sub(r"[\W_]+", " ", name).strip()  # dots, commas, hyphens, '|'… are spaces; spaces collapsed
+    return re.sub(r"\bsaint\b", "st", name)
 
 
 def phone_pattern(phone: str) -> re.Pattern | None:
@@ -123,9 +162,49 @@ def phone_pattern(phone: str) -> re.Pattern | None:
     return re.compile(r"(?:\+?44" + sep + r"(?:\(0\))?|0)" + sep + sep.join(national))
 
 
+def _visible_text(soup: BeautifulSoup) -> str:
+    """The page's words once script, style and noscript are removed (removes them from the soup)."""
+    for tag in soup.find_all(["script", "style", "noscript"]):
+        tag.decompose()
+    return soup.get_text(" ", strip=True)
+
+
+def browser_only(html: str) -> bool:
+    """A page that only shows anything once a browser runs its scripts (an empty app shell): auditing its HTML would
+    report a missing heading, form, phone… that the visitor actually sees."""
+    soup = BeautifulSoup(html, "html.parser")
+    has_script = bool(soup.find("script", src=True))
+    has_noscript = bool(soup.find("noscript"))
+    if len(_visible_text(soup)) >= SHELL_TEXT_CHARS or not has_script:
+        return False
+    empty_root = any(not el.get_text(strip=True) for el in soup.find_all(id=APP_ROOT_ID))
+    return has_noscript or empty_root
+
+
+def redirect_stub(html: str) -> bool:
+    """A page that only sends the browser on (<meta http-equiv="refresh" content="0;url=…">) with next to nothing on
+    it: the checker doesn't follow it, so auditing the stub would make claims about a page no visitor sees."""
+    soup = BeautifulSoup(html, "html.parser")
+    refresh = soup.find("meta", attrs={"http-equiv": re.compile(r"^\s*refresh\s*$", re.I)})
+    if not refresh or not re.search(r"url\s*=", refresh.get("content") or "", re.I):
+        return False
+    return len(_visible_text(soup)) < SHELL_TEXT_CHARS
+
+
+def _is_map_iframe(iframe) -> bool:
+    """A Google map embed, also when a lazy-load or cookie plugin moved its address out of src
+    (data-lazy-src, data-litespeed-src, data-src, data-src-cmplz, data-cookieblock-src...)."""
+    return any(isinstance(v, str) and GOOGLE_MAP_URL.search(v) for v in iframe.attrs.values())
+
+
 def analyse_html(html: str, final_url: str, town: str, load_seconds: float, today: date | None = None,
-                 trade: str = "", phone: str = "", postcode: str = "") -> tuple[list[tuple[str, str]], dict]:
-    """Return (findings, facts) for a fetched homepage. A finding is (key, plain-English line)."""
+                 trade: str = "", phone: str = "", postcode: str = "",
+                 extra_pages: list[str] = ()) -> tuple[list[tuple[str, str]], dict]:
+    """Return (findings, facts) for a fetched homepage. A finding is (key, plain-English line).
+
+    extra_pages are the site's other pages already read (contact page first, from contacts.find): the form, Google
+    map, phone and address usually live on the Contact page, so those four pass if any page has them. Everything
+    else (title, heading, schema, mobile layout, description, tap-to-call…) is about the homepage only."""
     today = today or date.today()
     soup = BeautifulSoup(html, "html.parser")
     lower = html.lower()
@@ -150,12 +229,16 @@ def analyse_html(html: str, final_url: str, town: str, load_seconds: float, toda
         found.append(("very_slow", f"Very slow to load ({load_seconds:.1f}s)"))
     elif load_seconds > SLOW_SECONDS:
         found.append(("slow", f"Slow to load ({load_seconds:.1f}s)"))
-    has_form = any(f.find(["textarea", "input"]) for f in soup.find_all("form"))
+    site = [soup, *(BeautifulSoup(page, "html.parser") for page in extra_pages)]  # homepage first
+    site_texts = [text, *(s.get_text(" ", strip=True) for s in site[1:])]
+    has_form = any(f.find(["textarea", "input"]) for s in site for f in s.find_all("form")) \
+        or any(FORM_EMBED.search(p) for p in (html, *extra_pages))
     facts["contact_form"] = has_form
     if not has_form:
         found.append(("no_form", "No contact or quote form"))
-    if not soup.find("a", href=re.compile(r"^tel:", re.I)):
-        found.append(("no_tap_to_call", "Phone number isn't tap-to-call on mobile"))
+    if not soup.find("a", href=TEL_HREF):
+        # iPhones turn a typed number into a link themselves, so the claim is only about the link in the page
+        found.append(("no_tap_to_call", "No tap-to-call phone link on the home page"))
     builder = next((name for key, name in DIY_BUILDERS.items() if key in lower), None)
     if builder:
         facts["builder"] = builder
@@ -173,14 +256,14 @@ def analyse_html(html: str, final_url: str, town: str, load_seconds: float, toda
     else:
         if terms and not mentions(title, terms):
             found.append(("title_no_trade", f"Page title doesn't say what they do ({trade})"))
-        if town and town.lower() not in title.lower():
+        if town and town_key(town) not in town_key(title):
             found.append(("title_no_town", f"Town ({town}) not in the page title, so it's harder to find locally"))
     h1 = soup.find("h1")
     h1_text = h1.get_text(" ", strip=True) if h1 else ""
     facts["h1"] = h1_text[:200]
     if not h1:
         found.append(("no_h1", "No main heading"))
-    elif (terms and not mentions(h1_text, terms)) or (town and town.lower() not in h1_text.lower()):
+    elif (terms and not mentions(h1_text, terms)) or (town and town_key(town) not in town_key(h1_text)):
         found.append(("h1_weak", "Main heading doesn't say what they do and where"))
     ld = " ".join(s.get_text() for s in soup.find_all("script", type=re.compile("ld\\+json", re.I)))
     has_schema = bool(SCHEMA_TYPES.search(ld)) or "schema.org/localbusiness" in lower
@@ -189,19 +272,19 @@ def analyse_html(html: str, final_url: str, town: str, load_seconds: float, toda
         found.append(("no_schema", "No business details for Google in the site's code (schema)"))
     pattern = phone_pattern(phone) if phone else None
     if pattern:
-        tel_links = " ".join(a["href"] for a in soup.find_all("a", href=re.compile(r"^tel:", re.I)))
-        on_site = bool(pattern.search(text) or pattern.search(tel_links))
+        tel_links = " ".join(a["href"] for s in site for a in s.find_all("a", href=TEL_HREF))
+        on_site = any(pattern.search(t) for t in site_texts) or bool(pattern.search(tel_links))
         facts["phone_on_site"] = on_site
         if not on_site:
             found.append(("phone_not_on_site", "The phone number on Google isn't on the website"))
     if postcode:
         squash = lambda v: re.sub(r"\s", "", v).upper()  # noqa: E731
-        on_site = squash(postcode) in squash(text)
+        on_site = any(squash(postcode) in squash(t) for t in site_texts)
         facts["address_on_site"] = on_site
         if not on_site:
             found.append(("address_not_on_site", "Address isn't on the website (Google checks it matches)"))
-    has_map = any("google.com/maps" in (f.get("src") or "") or "maps.google" in (f.get("src") or "")
-                  for f in soup.find_all("iframe"))
+    has_map = any(_is_map_iframe(f) for s in site for f in s.find_all("iframe")) \
+        or any(GOOGLE_MAPS_JS.search(str(t)) for s in site for t in s.find_all("script", src=True))
     facts["google_map"] = has_map
     if not has_map:
         found.append(("no_map", "No Google map on the website"))
@@ -263,15 +346,26 @@ async def audit_lead(client: httpx.AsyncClient, lead: Lead) -> None:
                         {"status": "bad_certificate"})
         return _set(lead, [("site_down", "Website is down or won't load")],
                     {"status": "unreachable", "error": type(error).__name__})
-    if resp.status_code in BLOCKED_STATUSES:
-        return _set(lead, [("not_checked", NOT_CHECKED)], {"status": "blocked", "http_status": resp.status_code})
-    if resp.status_code >= 400:
-        return _set(lead, [("site_broken", f"Website is broken (error {resp.status_code})")],
-                    {"status": "broken", "http_status": resp.status_code})
-
+    code = resp.status_code
+    no_page = not 200 <= code < 300 or not resp.text.strip()
+    if code == 202 or CHALLENGE_RE.search(resp.text) or (no_page and code not in BROKEN_STATUSES):
+        return _set(lead, [("not_checked", NOT_CHECKED)], {"status": "blocked", "http_status": code})
+    if code in BROKEN_STATUSES:
+        return _set(lead, [("site_broken", f"Website is broken (error {code})")],
+                    {"status": "broken", "http_status": code})
     final_url = str(resp.url)
+    if browser_only(resp.text) or redirect_stub(resp.text):
+        return _set(lead, [("not_checked", NOT_READABLE)],
+                    {"status": "browser_only", "http_status": code, "final_url": final_url})
+
+    # read the contact page (and the other pages worth reading) first: form, map, phone and address count there too
+    found = await contacts.find(client, resp.text, final_url)
     findings, facts = analyse_html(resp.text, final_url, lead.town or lead.search_town, elapsed,
-                                   trade=lead.trade, phone=lead.phone, postcode=lead.postcode)
+                                   trade=lead.trade, phone=lead.phone, postcode=lead.postcode,
+                                   extra_pages=found["htmls"][1:])
+    if found["contact_unread"]:  # their contact page wouldn't load for us: what's on it is unknown, so claim none of it
+        findings = [f for f in findings if f[0] not in SITE_WIDE]
+        facts.update({k: None for k in SITE_WIDE_FACTS if facts.get(k) is False}, contact_unread=True)
     pages = await count_pages(client, final_url)
     facts["pages"] = pages
     if pages is not None and pages < 10:
@@ -279,8 +373,6 @@ async def audit_lead(client: httpx.AsyncClient, lead: Lead) -> None:
     elif pages is not None and pages < 30:
         findings.append(("some_pages", f"Only {pages} pages on the site (top-ranking sites usually have 30+)"))
     _set(lead, findings, {"status": "ok", **facts})
-
-    found = await contacts.find(client, resp.text, final_url)
     lead.socials = found["socials"]
     lead.emails = found["emails"]
     lead.email = lead.emails[0] if lead.emails else ""
