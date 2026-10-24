@@ -22,6 +22,7 @@
 // tick:last (1); then, after the steps, one write for all the timed steps that ran (only if any did), the release (1)
 // and the tick beat (1). The finishing queries never undo the tick: if one fails it's logged and the results stand.
 import { countingDB } from "./d1count.js";
+import { dailyFindStep, staleJobsStep } from "./find.js";
 import { healthStep } from "./health.js";
 import { inboundStep } from "./mail/inbound-db.js";
 import { sendStep } from "./mail/outbox.js";
@@ -53,7 +54,9 @@ export const STEPS = [
   // slot: hot (every 5 min; stages 4 and 6)
   // slot: pick (every 30 min; stage 3)
   // slot: daily_find (every 5 min; stage 1)
+  dailyFindStep,
   // slot: stale_jobs (every 15 min; stage 1)
+  staleJobsStep,
   // slot: calls (every 5 min; stage 8)
   // slot: sites (every 5 min; stage 10)
   // slot: care (every 10 min; stage 11)

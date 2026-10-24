@@ -701,6 +701,12 @@ function freshProcess(body) {
   return JSON.parse(out.trim().split("\n").pop());
 }
 
+// Stage 0's steps ran clean, and so did every step later stages have added (e.g. daily_find): none is an {error}.
+function assertStage0Steps(steps) {
+  assert.deepEqual({ inbound: steps.inbound, send: steps.send }, { inbound: "0 processed", send: "sent 0, failed 0, held 0" });
+  for (const [name, value] of Object.entries(steps)) assert.equal(typeof value, "string", `${name}: ${JSON.stringify(value)}`);
+}
+
 test("the first tick after a schema change only migrates (within 50 queries), holds no lease, and the next tick runs", () => {
   // The live database right after the deploy: the old system's 29 statements, no schema:version.
   const live = freshProcess(`
@@ -725,7 +731,7 @@ test("the first tick after a schema change only migrates (within 50 queries), ho
   for (const t of empty) assert.ok(t.used <= TICK_BUDGET.total, String(t.used));
   assert.deepEqual(empty.map((t) => t.version), [false, true, true]);
   assert.equal(empty[1].lock, null);
-  assert.deepEqual(empty[2].r.steps, { inbound: "0 processed", send: "sent 0, failed 0, held 0" });
+  assertStage0Steps(empty[2].r.steps);
 
   // Every table there but no version (e.g. the schema applied by hand): only the version is written (2 queries),
   // and that tick runs its steps within the budget.
@@ -733,7 +739,7 @@ test("the first tick after a schema change only migrates (within 50 queries), ho
     const DB = fakeD1();
     console.log(JSON.stringify([await tick(DB, 0)]));`);
   assert.equal(versionOnly[0].r.ran, true, JSON.stringify(versionOnly[0].r));
-  assert.deepEqual(versionOnly[0].r.steps, { inbound: "0 processed", send: "sent 0, failed 0, held 0" });
+  assertStage0Steps(versionOnly[0].r.steps);
   assert.ok(versionOnly[0].used <= TICK_BUDGET.total, String(versionOnly[0].used));
   assert.equal(versionOnly[0].version, true);
   assert.equal(versionOnly[0].lock, null, "released");
