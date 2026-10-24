@@ -87,8 +87,9 @@ export const bad = (message, status = 400) => json({ error: message }, status);
 
 const JSON_COLUMNS = ["emails", "socials", "issues", "audit"];
 
-// A finding from the Map Rank scan (scoring.maps_findings and scoring.reviews_finding in Python).
-const MAPS_FINDING = /^(maps_|reviews_behind$)/;
+// A finding from the Map Rank scan (scoring.maps_findings and scoring.reviews_finding in Python). Exported for the
+// readers that skip leadRow and apply the same guard themselves (stage 3's leadDetail).
+export const MAPS_FINDING = /^(maps_|reviews_behind$)/;
 
 /**
  * True when a lead's saved Map Rank part (audit.map_rank) is from a scan of another town: marked so (`home` false,
