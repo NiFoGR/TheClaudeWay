@@ -441,7 +441,8 @@ The privacy notice (stage 0) promises: "If we contacted you and you didn't becom
   scraped `leads` row (public business listing, owned by the scraper), and the blanked `research` row (no personal
   data; it only stops the lead being researched, demoed and emailed again). Stage 3's card shows it as "Skipped:
   details deleted 12 months after last contact."; stage 4 keeps it out of Ready and `goodWaiting` doesn't count it.
-  "Research is wrong" is the only way to bring the lead back, by Nik's choice.
+  "Research is wrong" is the only way to bring the lead back, by Nik's choice (stage 2's route refuses it while the
+  lead is on the do-not-contact list or excluded by the scraper).
 - **Limits:** at most 90 leads per round, and only as many rounds as the tick's query budget allows (stage 0's
   `ctx.budget.left()`); the rest waits for the next tick.
 - **Result line:** "purged <n> leads" / "purged <n> leads, more next tick" / "nothing to purge" / "done this month" /

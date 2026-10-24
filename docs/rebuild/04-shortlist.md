@@ -142,6 +142,9 @@ most once per 30 minutes. Stage 2's route returns the message the drawer toasts:
 - recent fire: "Queued. Claude will pick it up on its current or next run."
 - fire failed: "Queued, but Claude couldn't be started ({error}). It will be researched at 06:47 tomorrow."
 
+A lead Claude may not research now (still excluded by the scraper, deleted, or on the do-not-contact list) is refused
+with nothing changed: stage 2's 409/404 text shows under the note box, with no toast.
+
 ### Call script
 
 `public/js/callscript.js` stays (pure, tested). Changes: prices and the weekend deal come from stage 0's

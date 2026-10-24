@@ -11,7 +11,7 @@ export async function onRequestGet({ env }) {
   const { results } = await DB.prepare(
     `SELECT * FROM leads WHERE excluded = 0 AND status = 'new' AND email IS NOT NULL AND email != ''
        AND COALESCE(json_extract(audit, '$.email_source'), '') != 'guessed' AND quality_score >= 35
-     ORDER BY (json_extract(audit, '$.ai_research') IS NOT NULL) DESC, quality_score DESC, review_count DESC LIMIT ?`
+     ORDER BY quality_score DESC, review_count DESC LIMIT ?`
   ).bind(n).all();
   const waiting = await DB.prepare(
     `SELECT COUNT(*) AS n FROM leads WHERE excluded = 0 AND status = 'new' AND email IS NOT NULL AND email != ''

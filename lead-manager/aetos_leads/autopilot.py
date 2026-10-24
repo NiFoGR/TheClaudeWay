@@ -105,9 +105,10 @@ def sitrep(d1, now: datetime | None = None) -> str:
     stats = {
         "leads": n("SELECT COUNT(*) AS n FROM leads WHERE excluded = 0"),
         "new_leads": n("SELECT COUNT(*) AS n FROM leads WHERE first_seen_at > ? AND excluded = 0", [day]),
-        "researched": n("SELECT COUNT(*) AS n FROM leads WHERE json_extract(audit, '$.ai_research.done_at') > ?", [day]),
-        "waiting_claude": n("SELECT COUNT(*) AS n FROM leads WHERE excluded = 0 AND json_extract(audit, '$.ai_research') IS NULL "
-                            "AND json_array_length(COALESCE(json_extract(audit, '$.ai_needs'), '[]')) > 0"),
+        # Claude's research lives in its own table (stage 2), read as api/today.js does: leads.audit.ai_research is
+        # no longer written, so reading it would say "researched: 0" and "Claude isn't researching" for ever.
+        "researched": n("SELECT COUNT(*) AS n FROM research WHERE status = 'done' AND researched_at > ?", [day]),
+        "waiting_claude": n("SELECT COUNT(*) AS n FROM research WHERE status = 'queued'"),
         "picks": n(PICK_SQL),
         "in_outreach": n("SELECT COUNT(*) AS n FROM leads WHERE status = 'in outreach'"),
         "sent": n("SELECT COUNT(*) AS n FROM outreach_sends WHERE status = 'sent' AND sent_at > ?", [day]),
@@ -133,8 +134,8 @@ def sitrep(d1, now: datetime | None = None) -> str:
                   else f"{r.get('found') or 0} found, {r.get('pitchable') or 0} worth pitching")
               for r in runs) or "no search ran"),
           f"- **New leads:** {stats['new_leads']} (total worth pitching: {stats['leads']})",
-          f"- **Claude researched:** {stats['researched']} leads (the best ones first, ~15 a day)"
-          + (f"; {stats['waiting_claude']} lower-priority still waiting" if stats["waiting_claude"] else ""),
+          f"- **Claude researched:** {stats['researched']} leads (the best ones first, 8 a run)"
+          + (f"; {stats['waiting_claude']} still waiting" if stats["waiting_claude"] else ""),
           f"- **Emails sent:** {stats['sent']} · **replies:** {stats['replies']}",
           f"- **Demo views:** {stats['views']} · **order page opened:** {stats['order_pages']} · **orders this week:** {stats['orders']}",
           f"- **Clients paying:** {stats['clients']}", ""]
@@ -155,7 +156,7 @@ def sitrep(d1, now: datetime | None = None) -> str:
     if not done.get("mailboxes"):
         needs.append("**#1 priority: buy the mailboxes** (Namecheap Private Email on aetoswebsites.com). Nothing can be "
                      "emailed until they exist, so no money comes in. Tick it on Home when done; Claude then connects them.")
-    last_ai = _one(d1, "SELECT MAX(json_extract(audit, '$.ai_research.done_at')) AS at FROM leads", key="at")
+    last_ai = _one(d1, "SELECT MAX(researched_at) AS at FROM research", key="at")
     if stats["waiting_claude"] and (not last_ai or last_ai < _iso(now - timedelta(days=2))):
         needs.append("**Claude isn't researching leads** (last run: " + (str(last_ai)[:10] if last_ai else "never")
                      + "). See 'What to do' on the Control Room's Home page.")

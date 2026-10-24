@@ -83,7 +83,9 @@ Four points, each a whole number 0–5, each with a one-line reason from Claude.
 
 `limit` 1–8, default 8. Before picking, rows still `queued` whose lead is excluded, missing or suppressed become
 `skipped` (note line `Skipped: the scraper excluded this lead (<reason>).`, `Skipped: the lead no longer exists.` or
-`Skipped: this business is on the do-not-contact list (opted out, bounced or blocked).`). Suppressed means stage 1's
+`Skipped: this business is on the do-not-contact list (opted out, bounced or blocked).`). The line goes below the
+notes unless their last line (trailing blank lines aside) is already exactly that line, so a lead Nik brought back and
+skipped again for the same reason doesn't get it twice. Suppressed means stage 1's
 `leadSuppressed({email, website, company_number}, suppressionRows)` (`_lib/find.js`) is true against the
 `suppression` table.
 Leads claimed in the last 3 hours (settings key `research:claim:<place_id>` = claim time) are not handed out again.
@@ -190,7 +192,13 @@ the lead becomes `done` and is never researched again unless Nik re-queues it.
   - fire failed: `Queued, but Claude couldn't be started ({error}). It will be researched at 06:47 tomorrow.`
 
   Errors: `Say what's wrong in a few words (5 to 500 characters).` (400); `This lead hasn't been researched yet, so
-  there's nothing to re-check.` (404 when no row).
+  there's nothing to re-check.` (404 when no row). A lead Claude may not research now (checked first, as the queue
+  checks it: the lead's state now, never the row's status or an old `Skipped:` line) is refused and nothing changes,
+  nothing fires: `The scraper excluded this lead (<exclude_reason>), so Claude won't research it. Nothing was
+  changed.` (409; no brackets when no reason was saved); `This business is on the do-not-contact list (opted out,
+  bounced or blocked), so Claude won't research it. Nothing was changed.` (409); `This lead no longer exists, so
+  there's nothing to re-check.` (404, the lead was deleted by a re-scrape). A lead skipped earlier whose lead the
+  scraper keeps again is re-queued like any other.
 
 ## The Routine prompt (`routines/research.md`)
 
@@ -373,7 +381,7 @@ own):
 | No row | "Not queued for research. Leads are queued when the daily search keeps them." |
 | `queued`, never researched | "Waiting for Claude. It researches 8 leads a run, every morning at 06:47 and after each search. <n> leads waiting." |
 | `queued` after "Research is wrong" | "Being re-checked after your note: “<note>”." and the old research below, faded. |
-| `skipped` | "Skipped: <reason>." where the reason is the newest `Skipped: …` line from notes, or Nik's newest `[Nik …] Not a fit: …` line ("Skipped: you marked it not a fit (<reason>)."). |
+| `skipped` | "Skipped: <reason>." where the reason is the newest `Skipped: …` line from notes, or Nik's newest `[Nik …] Not a fit: …` line ("Skipped: you marked it not a fit (<reason>)."), and the "Research is wrong" button (item 11): the only way back after Not a fit, the 12-month purge, or a lead the scraper excluded or lost but keeps again. The route refuses a lead still excluded, deleted or on the do-not-contact list (its 409/404 text shows under the box). |
 | `done` | The full card below. |
 
 Full card, top to bottom:
@@ -405,13 +413,18 @@ edited). This light replaces stage 0's old `research_queue` light, which stage 0
 
 | Level | When | Detail (exact) | Fix (exact) |
 | --- | --- | --- | --- |
-| red | queued > 0 and no post for 26 h (since the last `researched_at`, or since the oldest `queued_at` if never posted) | `No research posted for <h> hours; <n> leads waiting.` | `Open claude.ai/code/routines, check "aetos-research" is on and its last run finished, then press Run now.` |
+| red | queued > 0 and no post for 26 h, counted from the later of the last `researched_at` and the oldest waiting `queued_at` (the oldest `queued_at` alone if never posted), so a lead queued after quiet days has to wait the 26 h too and a Routine that ran with nothing to do isn't called stopped | `No research posted for <h> hours; <n> leads waiting.` | `Open claude.ai/code/routines, check "aetos-research" is on and its last run finished, then press Run now.` |
 | amber | ≥ 10 of the last 20 `done` rows (excluding `too_big`) exist and email hit rate (`best_email` set) < 40% | `Emails found for <hits> of the last <n> researched (<pct>%); target 40%+.` | `Open a few on the Leads page and press "Research is wrong" where Claude missed an email.` |
 | green | otherwise | `<n> waiting · last research <h> h ago · emails found <pct>%` (parts omitted when unknown) | — |
 
 A red light becomes a `health` todo (stage 0 rule; dedupe exactly `health:research`, closed by exact match), e.g.
 "Claude's research hasn't run for 2 days". No light name starts with `research` other than this one. No other todo
 kinds are added by this stage.
+
+Home's "What to do" (`_lib/today.js`, `api/today.js`, until stage 11 removes them) uses the same rule, from the same
+`researchFacts(DB)`: its "Claude hasn't researched leads lately" step shows only while this light's red rule holds, and
+its "Claude researching leads daily" setup step is ticked once Claude has posted any research, unticked only while that
+step shows (an empty queue for days is normal: the daily search stops at 30 good leads waiting).
 
 ## Edge cases
 
@@ -420,6 +433,9 @@ kinds are added by this stage.
 - Lead excluded or deleted by a re-scrape while queued → `skipped` on the next queue call; a post for a deleted lead
   → 404.
 - Lead suppressed (opt-out, bounce, blocked company) while queued → `skipped` on the next queue call; never handed out.
+- "Research is wrong" on a lead that is excluded, deleted or on the do-not-contact list now (whatever its row says) →
+  409/404 with the route's text, the row byte-identical, no fire and the 30-minute fire guard untouched; the queue
+  never adds a `Skipped:` line the notes already end with.
 - Lead found from a neighbouring town's search (`audit.map_rank.home` false or another `scan_town`) → handed out with
   `map_rank: null` and no Maps findings.
 - "Research is wrong" pressed on two leads within 30 minutes → one Routine fire; the second toast says Claude will
@@ -689,8 +705,11 @@ route `POST /api/agent/research/:place_id` → `{ok, place_id, grade, total, cap
 **Interfaces:** Consumes `parseResearch` (Task 3), `ukDate` (overview §8), `iso` (util.js), `fireRoutine(DB, name,
 text) → Promise<{ok, status, error?}>` (stage 0, `_lib/routines.js`). Produces
 `getResearch(DB, placeId) → Promise<{research: object|null, waiting: number}>`,
-`requeueResearch(DB, placeId, note, now, {fire = fireRoutine} = {}) → Promise<{fired: boolean, message: string}|null>`
-(`null` = no research row; the 30-minute guarded fire that stage 3's old "Research again" button had lives here),
+`requeueResearch(DB, placeId, note, now, {fire = fireRoutine} = {}) → Promise<{fired: boolean, message: string}|{refused:
+"missing"|"excluded"|"suppressed", error: string}|null>` (`null` = no research row; `refused` = the lead may not be
+researched now, nothing written or fired, the route answers 404 for `missing` and 409 otherwise with `error`; the
+30-minute guarded fire that stage 3's old "Research again" button had lives here), `RECHECK_ERRORS` (the route's
+texts),
 `RECHECK_FIRE_MINUTES = 30`,
 routes `GET /api/research/:place_id`, `POST /api/research/:place_id/wrong` → `{ok: true, fired, message}`.
 
@@ -712,11 +731,17 @@ routes `GET /api/research/:place_id`, `POST /api/research/:place_id/wrong` → `
     `{ok: true, fired: <boolean>, message: <string>}`.
   - `"note length"`: `"bad"` and 501 chars → 400 `"Say what's wrong in a few words (5 to 500 characters)."`.
   - `"nothing to re-check"`: no row → 404 `"This lead hasn't been researched yet, so there's nothing to re-check."`.
+  - A lead excluded now (skipped, done or queued row), on the do-not-contact list now, or deleted → 409/404 with Part
+    A's exact text, the row byte-identical, no fire, no `research:recheck_fire_at` key; a stale `Skipped:` row whose
+    lead the scraper keeps again → re-queued and handed out first; the queue doesn't append a `Skipped:` line equal to
+    the notes' last line.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/research-owner.test.mjs` → import error.
 - [ ] **Step 3: Implement `getResearch`, `requeueResearch` and both routes** — the note date is `ukDate(now)`; the new
-  line is prepended via `mergeNotes`-compatible formatting (`[Nik <date>] <note>` as the first line). After the
-  re-queue (one `DB.batch`: update the row, delete the claim), check `routine_fires` for `routine = 'research' AND at
-  > iso(now − 30 min)`; if none, call `fire(DB, "research", "research queued: 1 lead (Nik asked)")` and pick the
+  line is prepended via `mergeNotes`-compatible formatting (`[Nik <date>] <note>` as the first line). First read the
+  row's lead (the queue's `LEFT JOIN leads`) and, for a lead neither deleted nor excluded, the `suppression` rows; the
+  queue's own rule (deleted / excluded / `leadSuppressed`) refusing it returns `{refused, error}` before anything is
+  written. After the re-queue (one `DB.batch`: update the row, delete the claim), check `routine_fires` for
+  `routine = 'research' AND at > iso(now − 30 min)`; if none, call `fire(DB, "research", "research queued: 1 lead (Nik asked)")` and pick the
   message from Part A. The route passes `new Date()` and the default `fireRoutine`.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/research-owner.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/research-db.js control-room/functions/api/research control-room/tests/research-owner.test.mjs` +

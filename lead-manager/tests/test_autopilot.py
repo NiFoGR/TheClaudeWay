@@ -82,3 +82,38 @@ def test_sitrep_puts_the_mailboxes_first_until_ticked():
     assert "#1 priority: buy the mailboxes" in md
     d1.query("INSERT INTO settings (key, value) VALUES ('setup_done', ?)", [json.dumps({"mailboxes": True})])
     assert "buy the mailboxes" not in autopilot.sitrep(d1, datetime(2026, 10, 19, 7, 0, tzinfo=timezone.utc))
+
+
+def _research(d1, place_id, status, researched_at):
+    d1.query("INSERT INTO research (place_id, status, queued_at, researched_at) VALUES (?, ?, '2026-10-22T06:00:00Z', ?)",
+             [place_id, status, researched_at])
+
+
+def test_sitrep_reads_claudes_research_from_the_research_table():
+    # Stage 2: Claude's research lives in the research table; nothing writes leads.audit.ai_research any more, so
+    # reading it said "Claude researched: 0 leads" and "Claude isn't researching" for ever (the old Routine's last run).
+    d1 = FakeD1()
+    now = datetime(2026, 10, 24, 7, 0, tzinfo=timezone.utc)
+    d1.query("INSERT INTO leads (place_id, name, trade, search_town, email, status, quality_score, audit, first_seen_at, updated_at) "
+             "VALUES ('old', 'Old Biz', 'landscaper', 'X', '', 'new', 60, ?, 'x', 'x')",
+             [json.dumps({"ai_research": {"done_at": "2026-10-10T13:47:00Z"}, "ai_needs": ["email"]})])
+    _research(d1, "a", "done", "2026-10-23T06:50:00Z")
+    _research(d1, "b", "done", "2026-10-24T06:55:00Z")
+    _research(d1, "c", "queued", None)
+    md = autopilot.sitrep(d1, now)
+    assert "Claude researched:** 2 leads" in md
+    assert "1 still waiting" in md
+    assert "- **Claude researched:** 2 leads (the best ones first, 8 a run); 1 still waiting" in md
+    assert "lower-priority" not in md and "~15 a day" not in md
+    assert "Claude isn't researching" not in md
+
+    # Nothing researched for more than 2 days while a lead waits: the warning, with the research table's last date.
+    d1 = FakeD1()
+    d1.query("INSERT INTO leads (place_id, name, trade, search_town, email, status, quality_score, audit, first_seen_at, updated_at) "
+             "VALUES ('old', 'Old Biz', 'landscaper', 'X', '', 'new', 60, ?, 'x', 'x')",
+             [json.dumps({"ai_research": {"done_at": "2026-10-23T13:47:00Z"}})])
+    _research(d1, "a", "done", "2026-10-21T06:50:00Z")
+    _research(d1, "c", "queued", None)
+    md = autopilot.sitrep(d1, now)
+    assert "**Claude isn't researching leads** (last run: 2026-10-21)" in md
+    assert "Claude researched:** 0 leads" in md and "1 still waiting" in md

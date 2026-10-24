@@ -115,8 +115,9 @@ export function leadRow(row) {
   out.score_parts = out.audit.score || {};
   out.map_rank = out.audit.map_rank || {};
   // Another town's scan says nothing about this lead (false claim #7): the call script and the emails read these two,
-  // so its Maps findings and numbers aren't handed out. `audit` and `issues` stay as saved (mergeResearch writes them
-  // back), and map_rank is {} rather than null, which `lead.map_rank || lead.audit.map_rank` would read past.
+  // so its Maps findings and numbers aren't handed out. `audit` and `issues` stay as saved (this only shapes what's
+  // read; the stored row is never rewritten), and map_rank is {} rather than null, which `lead.map_rank ||
+  // lead.audit.map_rank` would read past.
   if (mapsFromAnotherTown(out.map_rank, out)) {
     if (Array.isArray(out.findings)) out.findings = out.findings.filter((f) => !MAPS_FINDING.test(f));
     out.map_rank = {};

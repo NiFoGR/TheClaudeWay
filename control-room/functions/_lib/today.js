@@ -1,18 +1,24 @@
 // "What to do": the owner's checklist on Home. Daily steps come from the live numbers (so a step is ticked when
 // there's nothing to do); one-time setup steps are ticked automatically where the system can tell, or by hand.
 // Pure, tested in control-room/tests/today.test.mjs.
+import { researchLight } from "./research.js";
 
 const SITREP_URL = "https://github.com/NiFoGR/TheClaudeWay/blob/claude/confident-hawking-vi0lgk/SITREP.md";
-const DAY = 86400000;
 
 /**
- * n: { hot, waitingClaude, lastResearchAt, stripeLive, autopilotOn } · manual: { key: true } ticked by hand · now: ms
+ * n: { hot, waitingClaude, lastResearchAt, oldestQueuedAt, stripeLive, autopilotOn } · manual: { key: true } ticked by
+ * hand · now: ms. waitingClaude, lastResearchAt and oldestQueuedAt are researchFacts' queued, lastPostAt and
+ * oldestQueuedAt (research-db.js).
  * Every "#/…" link must be a route in app.js (an unknown route just reloads Home): outreach steps come back with
  * the outreach page in a later stage.
  */
 export function steps(n, manual = {}, now = Date.now()) {
   const plural = (k, one, many = `${one}s`) => `${k} ${k === 1 ? one : many}`;
-  const claudeStale = n.waitingClaude > 0 && (!n.lastResearchAt || now - Date.parse(n.lastResearchAt) > 2 * DAY);
+  // One rule with Setup's research light (research.js): leads waiting and no post for 26 h, counted from the later of
+  // the last post and the oldest lead waiting, so a Routine that had nothing to do for days isn't called stopped the
+  // moment a search queues leads.
+  const claudeStale = researchLight({ queued: n.waitingClaude, lastPostAt: n.lastResearchAt, oldestQueuedAt: n.oldestQueuedAt }, now)
+    .level === "red";
   const daily = [
     { key: "sitrep", title: "Read today's SITREP", why: "What happened overnight and what needs you, in one page (1 minute).",
       href: SITREP_URL, external: true, cta: "Open SITREP", status: "todo" },
@@ -22,13 +28,15 @@ export function steps(n, manual = {}, now = Date.now()) {
   ];
   if (claudeStale) {
     daily.splice(1, 0, { key: "claude", title: "Claude hasn't researched leads lately",
-      why: `${plural(n.waitingClaude, "lead")} waiting. Check the Routine "Aetos lead research (daily)" still exists at claude.ai/code/routines; if not, tell Claude to recreate it.`,
+      why: `${plural(n.waitingClaude, "lead")} waiting. Open claude.ai/code/routines, check "aetos-research" is on and its last run finished, then press Run now. If it's gone, make it again from routines/README.md and paste its URL and token on Setup → Claude.`,
       href: "https://claude.ai/code/routines", external: true, cta: "Check", status: "warn" });
   }
   const setup = [
     { key: "routine", title: "Claude researching leads daily",
-      how: "Runs by itself every afternoon (Routine \"Aetos lead research (daily)\" at claude.ai/code/routines). If this stays unticked, tell Claude: it recreates it.",
-      done: !!n.lastResearchAt && now - Date.parse(n.lastResearchAt) < 2 * DAY, auto: true },
+      how: "Routine \"aetos-research\" at claude.ai/code/routines: runs every morning at 06:47 and after each search. Set it up once from routines/README.md, then paste its URL and token on Setup → Claude. Ticks itself once Claude has posted research.",
+      // An empty queue is normal (the daily search stops at 30 good leads waiting), so it stays ticked once Claude has
+      // posted, and unticks only while the stalled step above is showing.
+      done: !!n.lastResearchAt && !claudeStale, auto: true },
     { key: "autopilot", title: "Automatic search on", how: "Lead Scraper page → Automatic search → Edit.", done: !!n.autopilotOn, auto: true, href: "#/scraper" },
     { key: "domain", title: "Move aetoswebsites.com to Cloudflare", how: "Steps in docs/setup-domain-email-stripe.md (Namecheap → Cloudflare nameservers, then control.aetoswebsites.com).",
       done: !!manual.domain },
