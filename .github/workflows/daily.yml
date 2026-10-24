@@ -1,9 +1,11 @@
+# Replaced by the Control Room's daily_find tick step (docs/rebuild/02-find.md). Keep the schedule commented out.
 name: Daily autopilot
 
-# Every morning (no AI, free): search the next town on the territory list (Lead Scraper page → Autopilot), which then
-# hands the hard cases to Claude as usual, and write SITREP.md: what happened, what needs Nik, what's next.
+# Started by hand only (Actions → Daily autopilot → Run workflow): search the next town on the territory list and write
+# SITREP.md: what happened, what needs Nik, what's next. It used to run every morning.
 on:
-  # Paused 19 Oct while the system is rebuilt (docs/rebuild/decisions.md). To resume, restore:
+  # Paused 19 Oct (docs/rebuild/decisions.md). Don't restore it: the daily_find tick step already searches each
+  # morning, so both together would search twice a day. It was:
   # schedule:
   #   - cron: "17 5 * * *"   # 06:17 UK summer time / 05:17 winter (off the hour: GitHub delays :00 jobs)
   workflow_dispatch:
