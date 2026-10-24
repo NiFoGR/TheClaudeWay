@@ -26,6 +26,7 @@ import { dailyFindStep, staleJobsStep } from "./find.js";
 import { healthStep } from "./health.js";
 import { inboundStep } from "./mail/inbound-db.js";
 import { sendStep } from "./mail/outbox.js";
+import "./research-db.js"; // no tick step: imported so its research health light is registered
 import { beat } from "./routines.js";
 import { setSetting } from "./settings.js";
 import { db } from "./util.js";
