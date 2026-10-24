@@ -75,21 +75,8 @@ test("Claude can ask the owner up to 3 questions at a time; answers reach the re
   assert.deepEqual(d.questions.find((q) => q.id !== id).options, ["Yes", "No"]);
 });
 
-import { onRequestGet as getAutopilot, onRequestPut as putAutopilot } from "../functions/api/autopilot.js";
+// The territory settings test (it was the old autopilot route's) moved to territory-api.test.mjs with /api/territory.
 import { onRequestGet as getPicks } from "../functions/api/outreach/picks.js";
-
-test("autopilot settings: defaults to landscapers, keeps its place, rejects nonsense", async () => {
-  const DB = fakeD1();
-  const env = { DB };
-  const a = await (await getAutopilot({ env })).json();
-  assert.equal(a.territory.trade, "landscaper");
-  assert.equal(a.upcoming, "Warrington");
-  const put = (body) => putAutopilot({ request: new Request("https://x", { method: "PUT", body: JSON.stringify(body) }), env });
-  assert.equal((await put({ on: true, trade: "landscaper", towns: "", max: 60 })).status, 400);
-  const saved = await (await put({ on: false, trade: "landscaper", towns: "Leeds\nYork\nLeeds", max: 40 })).json();
-  assert.deepEqual(saved.territory.towns, ["Leeds", "York"]);
-  assert.equal(saved.territory.on, false);
-});
 
 test("today's picks: real emails only, never contacted, best first", async () => {
   const DB = fakeD1();
