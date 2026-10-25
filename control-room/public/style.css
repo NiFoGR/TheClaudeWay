@@ -543,6 +543,32 @@ h3 + .review { border-top: 0; padding-top: 0; }
 .msg-head b { color: var(--text); }
 .msg-subject { font-weight: 600; margin-top: 4px; overflow-wrap: anywhere; }
 .msg-body { white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.55 var(--font); margin: 6px 0 0; color: var(--text); }
+/* stage 6's thread in #d-email (compose.js): who wrote it, Show all on a long body, Cancel / Try again */
+.msg-head .badge { vertical-align: 1px; }
+.msg .error { margin: 6px 0 0; overflow-wrap: anywhere; }
+.msg .actions { margin-top: 8px; }
+.msg-body + [data-more] { margin-top: 4px; }
+.badge.you { background: var(--gold-soft); color: var(--gold); }
+.badge.claude { background: var(--surface-3); color: var(--text); }
+.badge.system { background: transparent; color: var(--text-2); box-shadow: inset 0 0 0 1px var(--line-2); }
+.badge.them { background: var(--good-soft); color: var(--good); }
+/* stage 6's composer in #d-email (compose.js): To, Subject, the helpers, the body, "What they'll see", the checks, Send */
+.compose { display: grid; gap: 12px; min-width: 0; }
+.compose .banner { margin: 0; }
+.compose .hint { margin-top: 6px; overflow-wrap: anywhere; }
+.compose textarea[data-body] { min-height: 200px; resize: vertical; font: 14px/1.55 var(--font); }
+.compose-help { display: grid; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface-2); font-size: 13px; overflow-wrap: anywhere; }
+.compose-help h4, .preview-mail h4 { margin: 0 0 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-3); }
+.compose-help ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.compose-help .msg-body { margin: 0 0 8px; }
+.preview-mail { padding: 12px 14px; border: 1px solid var(--line-2); border-radius: var(--r); background: var(--bg); font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+.preview-mail .msg-subject { margin-top: 6px; }
+ul.checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13px; } /* ul: Setup's div.checks keeps its own */
+.checks li { display: flex; gap: 8px; color: var(--text-2); overflow-wrap: anywhere; min-width: 0; }
+.checks li::before { flex: none; width: 14px; font-weight: 700; }
+.checks li.ok::before { content: "✓"; color: var(--good); }
+.checks li.bad { color: var(--bad); }
+.checks li.bad::before { content: "✕"; }
 @media (max-width: 860px) {
   .toolbar.filters label.filter { flex: 1 1 140px; min-width: 0; }
   .toolbar.filters .search-box { flex-basis: 100%; }
@@ -574,6 +600,24 @@ h3 + .review { border-top: 0; padding-top: 0; }
   .table-card:has(.demos-table) .table-wrap { overflow-x: auto; }
   .demo-frame { height: 600px; }
 }
+
+/* ---------------------------------------------------------------- Voice page (stage 5–6: voice.js) */
+/* one card per follow-up (its words, word count, checks, what they'll see, Save / Approve); "How much is it?" in gold;
+   the add form, Nik's examples and rules, and the first emails he sent (collapsed). Reuses .checks, .preview-mail,
+   .thread, .msg and .chip from the composer and the search forms. */
+.voice-card { display: grid; gap: 12px; min-width: 0; }
+.voice-card .card-head { margin-bottom: 0; flex-wrap: wrap; }
+.voice-card textarea[data-body] { min-height: 190px; font: 14px/1.55 var(--font); }
+.voice-card .hint { margin: 6px 0 0; overflow-wrap: anywhere; }
+.voice-card .grid-2 > * { min-width: 0; }
+.voice-card .checks { margin-top: 10px; }
+.voice-card.changed .checks, .voice-card.changed .preview-mail { opacity: 0.5; } /* the saved wording's, until Save */
+.voice-card form { display: grid; gap: 12px; }
+.voice-card .msg-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; overflow-wrap: anywhere; }
+.voice-card .msg-head [data-delete] { margin-left: auto; }
+.voice-card.highlight { border-color: var(--gold-line); background: linear-gradient(180deg, var(--gold-soft), transparent 80%), var(--surface); }
+.voice-card.highlight p { margin: 0; }
+.voice-card > summary { cursor: pointer; font-weight: 600; }
 
 /* roadmap */
 .road-row { display: grid; grid-template-columns: 92px 1fr; gap: 12px; align-items: start; padding: 10px 0; border-top: 1px solid var(--line); }

@@ -1,8 +1,9 @@
 // The Leads page and the lead panel (stage 3, docs/rebuild/04-shortlist.md): the wiring only. The HTML is leadview.js
 // (pure, tested in tests/leadview.test.mjs); this file fetches GET /api/leads and GET /api/leads/:id, puts that HTML on
 // the page and binds its data-* hooks: filters, paging, the panel's buttons (Write first email, Not a fit, Preview,
-// notes), stage 2's research card (Copy, Research is wrong) and stage 4's Demo site card (demo.js demoCardHtml, from
-// GET /api/demo/lead/:id, in the panel's #d-demo slot; Copy link).
+// notes), stage 2's research card (Copy, Research is wrong), stage 4's Demo site card (demo.js demoCardHtml, from
+// GET /api/demo/lead/:id, in the panel's #d-demo slot; Copy link) and stage 6's email slot (compose.js mountEmail in
+// #d-email: the composer, or the thread once a first email exists).
 // The URL is the page's state: #/leads?<leadsQueryString> (kept in step as filters change, without a reload) and
 // #/lead/<place_id> (app.js opens the page, then the panel). Loading this file only adds a keydown listener.
 import { bindCopyLinks, demoCardErrorHtml, demoCardHtml } from "./demo.js";
@@ -13,7 +14,7 @@ import {
 import { RECHECK_OFFLINE, recheckAnswer, recheckedResearch, researchCard } from "./researchcard.js";
 
 const SEARCH_WAIT_MS = 300; // the search box waits this long after the last key
-const NO_COMPOSER = "Writing emails arrives with the next stage.";
+const NO_COMPOSER = "Writing emails arrives with the next stage."; // a compose.js with no mountEmail
 
 let listAsk = 0; // the newest list request: an older answer is never drawn over a newer one
 let drawerAsk = 0; // the same for the panel (also bumped when it closes)
@@ -211,6 +212,7 @@ function showDrawer(r, id, detail, capacity, ask) {
   r.innerHTML = drawerHtml(detail, { capacity: capacity ?? null, sender: "Nik", origin: location.origin, now: new Date() });
   r.querySelectorAll("[data-x]").forEach((el) => el.onclick = dismissDrawer);
   bindWriteEmail(r, id, ask);
+  if (hasFirstEmail(detail.messages)) showEmail(r, id, ask);
   const fit = r.querySelector("[data-not-a-fit]");
   if (fit) fit.onclick = () => notAFit(id, detail.lead?.name);
   bindPreview(r);
@@ -237,32 +239,49 @@ async function loadDemoCard(r, id, ask) {
   bindCopyLinks(slot, toast);
 }
 
-// Write first email: stage 6's composer (public/js/compose.js, mountEmail) in the #d-email slot. Until stage 6 ships
-// the file isn't there, and the toast says so.
+// Stage 6's email slot: public/js/compose.js's mountEmail draws the composer or the thread in #d-email (loaded on
+// first use). Write first email opens it and scrolls to it; a lead whose first email is queued, sending, sent or failed
+// gets it as the panel opens, so the thread shows without a click (stage 3's read-only Conversation, right after the
+// slot, steps aside once the slot has content: style.css). If it can't load, the slot stays empty, the Conversation
+// shows, and a toast says why.
+const FIRST_SHOWN = new Set(["queued", "sending", "sent", "failed"]);
+const hasFirstEmail = (messages) => Array.isArray(messages)
+  && messages.some((m) => m !== null && typeof m === "object" && m.kind === "first" && FIRST_SHOWN.has(m.status));
+const reasonOf = (err) => String(err?.message || err).replace(/[.\s]+$/, "");
+
+/** compose.js mounted in this panel's #d-email → the slot, or null when the panel has moved on meanwhile. Throws when it can't load. */
+async function mountEmailSlot(r, id, ask) {
+  const compose = await import("./compose.js");
+  const slot = r.querySelector("#d-email");
+  if (ask !== drawerAsk || !slot?.isConnected) return null;
+  if (typeof compose.mountEmail !== "function") {
+    toast(NO_COMPOSER);
+    return null;
+  }
+  await compose.mountEmail(slot, id);
+  return ask === drawerAsk && slot.isConnected ? slot : null;
+}
+
 function bindWriteEmail(r, id, ask) {
   const btn = r.querySelector("[data-write-email]");
   if (!btn) return;
   btn.onclick = async () => {
     btn.disabled = true;
-    let compose = null;
     try {
-      compose = await import("./compose.js");
-    } catch { /* not built yet */ }
-    if (ask !== drawerAsk) return;
-    btn.disabled = false;
-    if (typeof compose?.mountEmail !== "function") {
-      toast(NO_COMPOSER);
-      return;
-    }
-    const slot = r.querySelector("#d-email");
-    if (!slot) return;
-    try {
-      await compose.mountEmail(slot, id);
-      if (ask === drawerAsk && slot.isConnected) slot.scrollIntoView({ behavior: "smooth", block: "start" });
+      const slot = await mountEmailSlot(r, id, ask);
+      if (slot) slot.scrollIntoView({ behavior: "smooth", block: "start" });
     } catch (err) {
-      toast(`Couldn't open the email writer (${String(err?.message || err).replace(/[.\s]+$/, "")}). Close this lead and open it again.`);
+      if (ask === drawerAsk) toast(`Couldn't open the email writer (${reasonOf(err)}). Close this lead and open it again.`);
+    } finally {
+      btn.disabled = false;
     }
   };
+}
+
+function showEmail(r, id, ask) {
+  mountEmailSlot(r, id, ask).catch((err) => {
+    if (ask === drawerAsk) toast(`Couldn't load the email thread (${reasonOf(err)}). Close this lead and open it again.`);
+  });
 }
 
 // Preview: the frame waits in an inert <template> until pressed (leadview.js), then shows and hides.
