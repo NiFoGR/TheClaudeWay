@@ -98,16 +98,23 @@ def extract(htmls: list[str], base: str) -> dict:
     return found
 
 
+def _rated(r) -> bool:
+    """Only a review with its own numeric Google rating of 4 or 5 counts: a missing rating is never assumed to be
+    5 stars, and anything outside Google's 1–5 (or NaN/infinity, which would also break the saved JSON) isn't real."""
+    rating = r.get("rating") if isinstance(r, dict) else None
+    return isinstance(rating, (int, float)) and not isinstance(rating, bool) and 4 <= rating <= 5
+
+
 def top_reviews(reviews: list[dict], n: int = 3) -> list[dict]:
-    """The best real Google reviews to show on their demo: 4–5 stars, with enough words to mean something.
-    Names shortened to first name + initial ("Sarah K.")."""
-    good = [r for r in reviews if (r.get("rating") or 5) >= 4 and len(str(r.get("text", "")).split()) >= 8]
+    """The best real Google reviews to show on their demo: rated 4–5 stars, with enough words to mean something.
+    Names shortened to first name + initial ("Sarah K."); the rating is the review's own number."""
+    good = [r for r in reviews or [] if _rated(r) and len(str(r.get("text") or "").split()) >= 8]
     out = []
-    for r in sorted(good, key=lambda r: -len(str(r.get("text", "")))):
-        parts = str(r.get("author", "")).split()
+    for r in sorted(good, key=lambda r: -len(str(r.get("text") or ""))):
+        parts = str(r.get("author") or "").split()
         name = f"{parts[0]} {parts[-1][0]}." if len(parts) > 1 else (parts[0] if parts else "Google reviewer")
         text = " ".join(str(r["text"]).split())
-        out.append({"author": name, "text": text if len(text) <= 320 else text[:317].rsplit(" ", 1)[0] + "…", "rating": r.get("rating") or 5})
+        out.append({"author": name, "text": text if len(text) <= 320 else text[:317].rsplit(" ", 1)[0] + "…", "rating": r["rating"]})
         if len(out) >= n:
             break
     return out

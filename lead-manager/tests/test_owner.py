@@ -109,3 +109,32 @@ def test_brand_and_reviews_for_the_demo():
                {"author": "Al", "rating": 5, "text": "Great"}]
     top = brand.top_reviews(reviews)
     assert [r["author"] for r in top] == ["Sarah K."]
+
+
+def test_top_reviews_need_a_real_rating():
+    from aetos_leads import brand
+    rs = [{"author": "Sarah Kent", "rating": None, "text": "one two three four five six seven eight nine"},
+          {"author": "Tom Hill", "rating": 3, "text": "one two three four five six seven eight nine"},
+          {"author": "Amy Lee", "rating": 5, "text": "Great patio, tidy team, finished early and on budget too"}]
+    top = brand.top_reviews(rs)
+    assert [r["author"] for r in top] == ["Amy L."]
+    assert top[0]["rating"] == 5
+
+
+def test_top_reviews_keep_their_own_rating_and_drop_fake_ones():
+    from aetos_leads import brand
+    words = "one two three four five six seven eight nine"
+    rs = [{"author": "Ann Bell", "rating": 4.0, "text": words},
+          {"author": "Cat Dunn", "rating": 4, "text": words + " ten eleven"},
+          {"author": None, "rating": 5, "text": words + " ten"},
+          {"author": "Ed Fox", "rating": "5", "text": words},           # not a number
+          {"author": "Gil Ho", "rating": True, "text": words},          # a bool isn't a rating
+          {"author": "Ivy Jo", "rating": 6, "text": words},             # Google only rates 1-5
+          {"author": "Kim Lo", "rating": float("inf"), "text": words},  # would save as invalid JSON
+          {"author": "Max No", "rating": float("nan"), "text": words},
+          {"author": "Pat Qu", "text": words},                          # no rating at all
+          None]
+    top = brand.top_reviews(rs)
+    assert [(r["author"], r["rating"]) for r in top] == [("Cat D.", 4), ("Google reviewer", 5), ("Ann B.", 4.0)]
+    assert [r["author"] for r in brand.top_reviews(rs, n=1)] == ["Cat D."]
+    assert brand.top_reviews(None) == [] and brand.top_reviews([]) == []
