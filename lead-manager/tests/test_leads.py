@@ -646,40 +646,80 @@ def test_a_lead_already_in_outreach_is_never_set_aside_as_a_branch_or_a_duplicat
     assert leads[0].exclude_reason == "Chain / national brand"
 
 
-def test_a_lead_in_outreach_found_again_stays_pitchable_in_the_database():
-    # end to end through the saved rows: known leads → mark_exclusions → save (the UPSERT writes excluded) → exclude_chains
-    def found_again(saved, run):
-        d1 = FakeD1()
-        store.D1.save(d1, saved, "old-job")
-        d1.query("INSERT INTO prospects (place_id, stage, stage_at, email, first_sent_at, created_at, updated_at) "
-                 "VALUES ('A', 'emailed', 'x', 'a@x.co.uk', '2026-10-20T08:00:00Z', 'x', 'x')")
-        assert store.D1.in_pipeline(d1) == {"A"}
-        chain_ids = qualify.mark_exclusions(run, [*store.D1.known_leads(d1), *store.D1.known_branches(d1)],
-                                            in_pipeline=store.D1.in_pipeline(d1))
-        store.D1.save(d1, run, "new-job")
-        store.D1.exclude_chains(d1, chain_ids)
-        rows = d1.query("SELECT place_id, excluded, exclude_reason FROM leads ORDER BY place_id")["result"][0]["results"]
-        return {r["place_id"]: (r["excluded"], r["exclude_reason"]) for r in rows}
+def _found_again(saved, run, stage="emailed", first_sent_at="2026-10-20T08:00:00Z"):
+    """End to end through the saved rows, with lead A's prospects row at `stage`: known leads → mark_exclusions → save
+    (the UPSERT writes excluded) → exclude_chains. Returns ({place_id: (excluded, exclude_reason)}, in_pipeline)."""
+    d1 = FakeD1()
+    store.D1.save(d1, saved, "old-job")
+    d1.query("INSERT INTO prospects (place_id, stage, stage_at, email, first_sent_at, created_at, updated_at) "
+             "VALUES ('A', ?, 'x', 'a@x.co.uk', ?, 'x', 'x')", [stage, first_sent_at])
+    protected = store.D1.in_pipeline(d1)
+    chain_ids = qualify.mark_exclusions(run, [*store.D1.known_leads(d1), *store.D1.known_branches(d1)],
+                                        in_pipeline=protected)
+    store.D1.save(d1, run, "new-job")
+    store.D1.exclude_chains(d1, chain_ids)
+    rows = d1.query("SELECT place_id, excluded, exclude_reason FROM leads ORDER BY place_id")["result"][0]["results"]
+    return {r["place_id"]: (r["excluded"], r["exclude_reason"]) for r in rows}, protected
 
-    lawn = dict(name="Lawn Pro", phone="01925 000001", website="https://lawnpro.co.uk", town="Warrington",
+
+LAWN_PRO = dict(name="Lawn Pro", phone="01925 000001", website="https://lawnpro.co.uk", town="Warrington",
                 search_town="Warrington")
-    assert found_again([lead(place_id="A", **lawn)], [
-        lead(place_id="A", **lawn),
-        lead(place_id="C", name="Lawn Pro Wigan", phone="01942 000003", website="https://lawnpro.co.uk/wigan", town="Wigan")
-    ]) == {"A": (0, ""), "C": (1, "Multiple branches (chain)")}
+
+
+def lawn_pro_wigan():
+    return lead(place_id="C", name="Lawn Pro Wigan", phone="01942 000003", website="https://lawnpro.co.uk/wigan",
+                town="Wigan")
+
+
+def test_a_lead_in_outreach_found_again_stays_pitchable_in_the_database():
+    rows, protected = _found_again([lead(place_id="A", **LAWN_PRO)], [lead(place_id="A", **LAWN_PRO), lawn_pro_wigan()])
+    assert protected == {"A"}
+    assert rows == {"A": (0, ""), "C": (1, "Multiple branches (chain)")}
     magic = dict(phone="07907 928806", town="Wigan")
-    assert found_again([lead(place_id="A", name="Magic Roofing Wigan", **magic),
-                        lead(place_id="B", name="Magic Roofing", search_town="Leigh", **magic)],
-                       [lead(place_id="A", name="Magic Roofing Wigan", **magic)])["A"] == (0, "")
+    rows, _ = _found_again([lead(place_id="A", name="Magic Roofing Wigan", **magic),
+                            lead(place_id="B", name="Magic Roofing", search_town="Leigh", **magic)],
+                           [lead(place_id="A", name="Magic Roofing Wigan", **magic)])
+    assert rows["A"] == (0, "")
 
 
-def test_in_pipeline_is_every_lead_with_a_prospects_row():
+def test_a_ready_lead_found_again_as_a_branch_is_set_aside():
+    # stage 4 gives every A+/A/B lead with an email a `ready` prospect (its demo is ready) before any email goes: that
+    # isn't outreach yet, so a later search showing its website in another town still sets it aside as a chain's
+    # branch (never chains), whether this search found it again (its own save writes excluded) or not (exclude_chains)
+    for run in ([lawn_pro_wigan()], [lead(place_id="A", **LAWN_PRO), lawn_pro_wigan()]):
+        rows, protected = _found_again([lead(place_id="A", **LAWN_PRO)], run, stage="ready", first_sent_at=None)
+        assert protected == set()
+        assert rows == {"A": (1, "Multiple branches (chain)"), "C": (1, "Multiple branches (chain)")}
+    # a client won from the demo's order page with no email sent (`paid` moves `ready` straight to `won`) keeps going
+    rows, protected = _found_again([lead(place_id="A", **LAWN_PRO)], [lawn_pro_wigan()], stage="won", first_sent_at=None)
+    assert protected == {"A"}
+    assert rows == {"A": (0, ""), "C": (1, "Multiple branches (chain)")}
+
+
+def _prospect(d1, pid, stage, first_sent_at=None, first=None):
+    """A prospects row at `stage`, plus a first email to it with status `first` when given."""
+    d1.query("INSERT INTO prospects (place_id, stage, stage_at, email, first_sent_at, created_at, updated_at) "
+             "VALUES (?, ?, 'x', 'p@x.co.uk', ?, 'x', 'x')", [pid, stage, first_sent_at])
+    if first:
+        d1.query("INSERT INTO messages (id, place_id, direction, kind, author, body, status, created_at) "
+                 "VALUES (?, ?, 'out', 'first', 'nik', 'Hello', ?, 'x')", [f"m-{pid}", pid, first])
+
+
+def test_in_pipeline_is_every_lead_past_ready_or_with_a_first_email_out():
+    # in outreach = emailed or later (a demo order makes `won` straight from `ready`, no email sent), or a first email
+    # sending or sent; a `ready` prospect (stage 4 makes one for every A+/A/B lead with an email) is not, and neither is
+    # a first email still queued, failed or cancelled (stage 3's Not a fit rule, NOT_FIT_OK)
     d1 = FakeD1()
     assert store.D1.in_pipeline(d1) == set()
     for pid in ("a", "b"):
-        d1.query("INSERT INTO prospects (place_id, stage, stage_at, email, created_at, updated_at) "
-                 "VALUES (?, 'emailed', 'x', 'p@x.co.uk', 'x', 'x')", [pid])
-    assert store.D1.in_pipeline(d1) == {"a", "b"}
+        _prospect(d1, pid, "emailed")
+    _prospect(d1, "won", "won")
+    _prospect(d1, "lost", "lost", first_sent_at="2026-10-20T08:00:00Z")
+    _prospect(d1, "ready", "ready")
+    _prospect(d1, "sent-at", "ready", first_sent_at="2026-10-20T08:00:00Z")
+    for status in ("sending", "sent", "queued", "failed", "cancelled"):
+        _prospect(d1, f"first-{status}", "ready", first=status)
+    assert store.D1.in_pipeline(d1) == {"a", "b", "won", "lost", "sent-at", "first-sending", "first-sent"}
 
 
 def test_score_parts_and_caps():
@@ -988,6 +1028,23 @@ def test_exclude_chains_spares_leads_already_in_the_pipeline():
     store.D1.exclude_chains(d1, ["a", "b"])
     rows = d1.query("SELECT place_id, excluded FROM leads ORDER BY place_id")["result"][0]["results"]
     assert [(r["place_id"], r["excluded"]) for r in rows] == [("a", 1), ("b", 0)]
+
+
+def test_exclude_chains_sets_aside_a_lead_whose_prospect_is_only_ready():
+    # a `ready` prospect (its demo is ready, nothing sent) isn't in outreach: a chain's branch is set aside all the same;
+    # one with a first email sending, or a client won from the demo, keeps going
+    d1 = FakeD1()
+    for pid in ("ready", "queued", "sending", "won"):
+        d1.query("INSERT INTO leads (place_id, name, trade, search_town, first_seen_at, updated_at) VALUES (?, 'X', 't', 'T', 'x', 'x')", [pid])
+    _prospect(d1, "ready", "ready")
+    _prospect(d1, "queued", "ready", first="queued")
+    _prospect(d1, "sending", "ready", first="sending")
+    _prospect(d1, "won", "won")
+    store.D1.exclude_chains(d1, ["ready", "queued", "sending", "won"])
+    rows = d1.query("SELECT place_id, excluded, exclude_reason FROM leads ORDER BY place_id")["result"][0]["results"]
+    assert [(r["place_id"], r["excluded"], r["exclude_reason"]) for r in rows] == [
+        ("queued", 1, "Multiple branches (chain)"), ("ready", 1, "Multiple branches (chain)"), ("sending", 0, None),
+        ("won", 0, None)]
 
 
 def test_exclude_chains_chunks_under_the_parameter_limit():

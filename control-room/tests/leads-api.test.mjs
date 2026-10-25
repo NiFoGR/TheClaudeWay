@@ -106,6 +106,35 @@ test("GET /api/leads?view=all&grade=ap returns only A+ rows", async () => {
   assert.deepEqual([page2.rows, page2.total, page2.page, page2.grade_counts], [[], 6, 2, null]);
 });
 
+test("GET /api/leads?q=<a long search>: D1 caps LIKE patterns at 50 bytes, so the search is a plain substring match", async () => {
+  // a pasted long business name or URL used to be a 500 on live D1 ("LIKE or GLOB pattern too complex")
+  const DB = fakeD1();
+  const name = "Green Leaf Landscapes & Garden Design Services of North Warrington Ltd"; // 69 characters
+  await seedLead(DB, { place_id: "long", name });
+  await seedLead(DB, { place_id: "other", name: "Green Leaf" });
+  await seedLead(DB, { place_id: "pct", name: "100%_a\\b Roofing", email: "o'neill@roofs.co.uk" });
+  const search = async (q) => {
+    const res = await listRoute(ctx(DB, `/api/leads?view=all&q=${encodeURIComponent(q)}`, { now: NOW }));
+    assert.equal(res.status, 200, q);
+    return res.json();
+  };
+  const full = await search(name);
+  assert.equal(full.total, 1);
+  assert.deepEqual(ids(full), ["long"]);
+  assert.deepEqual(ids(await search(name.toUpperCase())), ["long"], "ASCII case doesn't matter, as with LIKE");
+  assert.deepEqual(ids(await search(`https://www.greenleaflandscapesandgardendesign.co.uk/contact-us/${"x".repeat(40)}`)), []);
+  // 500 × "é": cut to 100 characters (200 bytes), still a 200
+  const accents = await search("é".repeat(500));
+  assert.equal(accents.total, 0);
+  // still literal: %, _, \ and quotes match only themselves
+  assert.deepEqual(ids(await search("100%_a\\b")), ["pct"]);
+  assert.deepEqual(ids(await search("100%")), ["pct"]);
+  assert.deepEqual(ids(await search("1000")), []);
+  assert.deepEqual(ids(await search("o'neill")), ["pct"]);
+  assert.deepEqual(ids(await search("%")), ["pct"]);
+  assert.deepEqual(ids(await search("_")), ["pct"]);
+});
+
 test("GET /api/leads/:id gives the panel's detail, or 404 with the exact message", async () => {
   const DB = fakeD1();
   await readyLead(DB, "ChIJgreen", {

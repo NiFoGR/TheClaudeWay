@@ -296,7 +296,9 @@ plain browser JS.
 
 - Overview §9 applies: truth, escaping (`esc`/`safeUrl`), copy rules, guarantee wording, prices only from `offer.js`,
   UTC storage with UK-time rules via `ukTime.js`, plain-English errors, tests before push.
-- Page size 50; search `q` capped at 100 characters; LIKE patterns escape `\ % _` with `ESCAPE '\'`.
+- Page size 50; search `q` capped at 100 characters; the search is an `instr(lower(col), lower(q)) > 0` substring
+  match, never LIKE (D1 refuses LIKE/GLOB patterns over 50 bytes, "LIKE or GLOB pattern too complex"), so `\ % _` and
+  quotes are plain text.
 - Grade URL tokens `ap a b c d none`; stage tokens `ready emailed viewed replied needs_nik call_booked won lost none`.
 - `GET /api/leads` ≤ 12 D1 statements; `GET /api/leads/:id` ≤ 4 statements in one `DB.batch` after the lead lookup
   (`leadDetail`), plus `capacityNow`'s 4 only when the lead's stage is `ready`.
@@ -316,7 +318,8 @@ plain browser JS.
 1. **`A+` in URLs:** a raw `+` decodes to a space, so `grade=A+` silently becomes `A`. Test in Task 1
    (`parseLeadFilters` maps `ap`→`A+`, drops `A ` and unknown tokens).
 2. **Search input with SQL wildcards/quotes** (`100%`, `o'neill`, `a_b`, 500 chars): Task 1 tests `likePattern`;
-   Task 3 tests that `q=100%` matches only names containing "100%".
+   Task 3 tests that `q=100%` matches only names containing "100%"; `tests/leads-api.test.mjs` tests a 69-character
+   name and 500 × "é" (D1's 50-byte LIKE limit, which `tests/helpers/fakeD1.mjs` enforces).
 3. **Duplicate rows from joins** (two demos, many messages, two calls per lead): Task 3 test "a lead with two demos
    and three messages appears once"; total stays correct.
 4. **Scraped/inbound text as HTML** (names, review text, message bodies, `javascript:` URLs, quotes in attributes):
@@ -342,7 +345,8 @@ Prices, `GUARANTEE` and `offerFor` are stage 0's `_lib/offer.js` (01 Task 6). Th
   - `STAGE_LABELS = {ready:"Ready to email", emailed:"Emailed", viewed:"Opened demo", replied:"Replied", needs_nik:"Needs you", call_booked:"Call booked", won:"Won", lost:"Lost", none:"Not contacted"}`
   - `PAGE_SIZE = 50`
   - `parseLeadFilters(searchParams) → {view: "ready"|"all", grades: string[]|null, trade: string|null, town: string|null, email: boolean|null, stages: string[]|null, researched: boolean|null, q: string, excluded: boolean, job: string|null, page: number}` (grades hold grade values, `"none"` for not graded)
-  - `likePattern(q) → string` (`%…%` with `\ % _` escaped)
+  - `likePattern(q) → string` (`%…%` with `\ % _` escaped; kept for a short LIKE, but the Leads search uses `instr`, see
+    Global Constraints)
   - `firstEmailRoom({cap, sent, followupsDue, firstQueued}) → number`
   - `warmupFrom(mailboxes, ukToday) → "YYYY-MM-DD"|null`
   - `readyGrades(room, top) → ["A+","A"] | ["A+","A","B"]`

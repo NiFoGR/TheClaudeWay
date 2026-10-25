@@ -65,6 +65,13 @@ def _now() -> str:
 
 D1_MAX_PARAMS = 100  # D1 rejects statements with more bound parameters than this
 
+# Leads already in outreach: a prospect past `ready` (emailed or later; a demo order moves `ready` straight to `won`
+# with no email sent), or a first email sending or sent. A `ready` prospect alone isn't: stage 4 makes one for every
+# A+/A/B lead with an email before anything is sent. The same rule as stage 3's Not a fit (shortlist-db.js NOT_FIT_OK).
+IN_OUTREACH = ("SELECT place_id FROM prospects p WHERE p.stage <> 'ready' OR p.first_sent_at IS NOT NULL "
+               "OR EXISTS (SELECT 1 FROM messages m WHERE m.place_id = p.place_id AND m.kind = 'first' "
+               "AND m.status IN ('sending', 'sent'))")
+
 
 def scan_rows(scan_id: str, scan: Scan, now: str) -> dict[str, tuple[list[str], list[list]]]:
     """Rows for the scan tables, as {table: (columns, rows)}."""
@@ -196,19 +203,22 @@ class D1:
         return (data.get("result") or [{}])[0].get("results", [])
 
     def in_pipeline(self) -> set[str]:
-        """Leads already in outreach (a prospects row): never set aside as a duplicate or a branch when a search finds
-        them again (qualify.mark_exclusions), since this run's save would overwrite their row with excluded = 1."""
-        data = self.query("SELECT place_id FROM prospects")
+        """Leads already in outreach (IN_OUTREACH: a prospect past ready (emailed or later), or a first email sending/
+        sent): never set aside as a duplicate or a branch when a search finds them again (qualify.mark_exclusions),
+        since this run's save would overwrite their row with excluded = 1. A `ready` prospect alone is set aside like
+        any lead not yet emailed (never chains)."""
+        data = self.query(IN_OUTREACH)
         return {r["place_id"] for r in (data.get("result") or [{}])[0].get("results", [])}
 
     def exclude_chains(self, place_ids: list[str]) -> None:
-        """Earlier leads a new search showed are branches of one business. A lead already in outreach (a prospects
-        row) keeps going: its conversation is never cut off."""
+        """Earlier leads a new search showed are branches of one business. A lead already in outreach (IN_OUTREACH: a
+        prospect past ready (emailed or later), or a first email sending/sent) keeps going: its conversation is never
+        cut off."""
         for i in range(0, len(place_ids), D1_MAX_PARAMS):
             chunk = place_ids[i:i + D1_MAX_PARAMS]
             self.query("UPDATE leads SET excluded = 1, exclude_reason = 'Multiple branches (chain)' "
                        f"WHERE place_id IN ({', '.join('?' for _ in chunk)}) "
-                       "AND place_id NOT IN (SELECT place_id FROM prospects)", chunk)
+                       f"AND place_id NOT IN ({IN_OUTREACH})", chunk)
 
     def set_job(self, job_id: str, status: str, found: int | None = None, pitchable: int | None = None, error: str = "") -> None:
         self.query(

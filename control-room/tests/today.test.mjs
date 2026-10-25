@@ -134,3 +134,61 @@ test("Home's research step follows the research table's queue times (onRequestGe
   assert.match(claude.why, /^6 leads waiting\. /);
   assert.equal(stalled.setup.find((s) => s.key === "routine").done, false);
 });
+
+// Home's hot step is the board's isHot (stage 3's _lib/shortlist.js, the app's only hot rule) until stage 11 removes
+// Home, so its number always matches the `hot` todos the tick raises (docs/rebuild/05-demo.md Part A §9). A reply, a
+// call booked or a lost lead isn't hot whatever its views; order-page events aren't views; and views ≥ 2 stay hot
+// after a week.
+test("Home's hot step counts the same leads the hot tick step raises todos for (isHot)", async () => {
+  const { fakeD1 } = await import("./helpers/fakeD1.mjs");
+  const { seedLead, seedProspect } = await import("./helpers/shortlistSeed.mjs");
+  const { onRequestGet } = await import("../functions/api/today.js");
+  const { hotStep } = await import("../functions/_lib/hot.js");
+  const { isHot } = await import("../functions/_lib/shortlist.js");
+  const DB = fakeD1();
+  const now = Date.now();
+  const ago = (h) => new Date(now - h * 3600000).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const event = (place_id, kind, at) => DB.prepare("INSERT INTO demo_events (slug, place_id, kind, at) VALUES (?, ?, ?, ?)")
+    .bind(`demo-${place_id}`, place_id, kind, at).run();
+  const lead = async (place_id, prospect) => {
+    await seedLead(DB, { place_id, name: `Lead ${place_id} Roofing`, phone: "0113 496 0000" });
+    await seedProspect(DB, { place_id, last_inbound_at: null, ...prospect });
+  };
+  // Replied (2 views today): not hot, though the legacy leads.status still says "new".
+  await lead("replied1", { stage: "replied", views: 2, last_view_at: ago(1), last_inbound_at: ago(0.5) });
+  await event("replied1", "view", ago(3));
+  await event("replied1", "view", ago(1));
+  // Lost (2 views today): not hot.
+  await lead("lost1", { stage: "lost", views: 2, last_view_at: ago(2) });
+  await event("lost1", "view", ago(4));
+  await event("lost1", "view", ago(2));
+  // Emailed, 0 views, one "Order this site" click (the demo's order_page, then the order page's own beacon): not hot.
+  await lead("order1", { stage: "emailed", views: 0, last_view_at: null });
+  await event("order1", "order_page", ago(2));
+  await event("order1", "order_page", ago(2));
+  // Viewed once 24.5 hours ago: inside the query's 25-hour window, but isHot says no.
+  await lead("once1", { stage: "viewed", views: 1, last_view_at: ago(24.5) });
+  await event("once1", "view", ago(24.5));
+  // Viewed twice, the last time ten days ago: hot (views ≥ 2), though outside a 7-day window.
+  await lead("viewed1", { stage: "viewed", views: 2, last_view_at: ago(240) });
+  await event("viewed1", "view", ago(250));
+  await event("viewed1", "view", ago(240));
+
+  const sql = [];
+  const watched = { prepare: (q) => (sql.push(q), DB.prepare(q)), batch: (s) => DB.batch(s) };
+  const home = await (await onRequestGet({ env: { DB: watched } })).json();
+  const hot = home.daily.find((s) => s.key === "hot");
+  assert.equal(hot.title, "Optional: call 1 hot lead");
+  assert.equal(hot.status, "optional");
+  assert.equal(sql.filter((q) => /\bprospects\b/.test(q)).length, 1, "the hot count is one D1 statement on prospects");
+  assert.ok(!sql.some((q) => /\bdemo_events\b/.test(q)), "Home's hot count doesn't read demo_events");
+
+  // The tick's hot step raises todos for exactly the same leads, and they are the ones isHot calls hot.
+  await hotStep({ DB, env: {}, now: new Date(now), budget: { left: () => 50 } });
+  const todos = DB.raw.prepare("SELECT DISTINCT place_id FROM todos WHERE kind = 'hot' AND status = 'open' ORDER BY place_id")
+    .all().map((r) => r.place_id);
+  assert.deepEqual(todos, ["viewed1"]);
+  const prospects = DB.raw.prepare("SELECT * FROM prospects ORDER BY place_id").all();
+  assert.deepEqual(prospects.filter((p) => isHot(p, new Date(now))).map((p) => p.place_id), todos);
+  assert.match(hot.title, new RegExp(`call ${todos.length} hot lead`));
+});

@@ -235,6 +235,7 @@ the registered ones (e.g. 02 `lead_search`, 03 `research`, 06 `followups`, 07 `r
 | `scrape` | | a `jobs` or `scans` row `queued` or `running` with `updated_at` more than 45 min ago (`scans` with `source='care'` are left to stage 11's care light) | – / "A lead search has been running for N min" / "No stuck searches" | "It's probably stuck. Start a new one on Lead Scraper; the old one is marked failed automatically." |
 | `setup` | | any setup gap | – / "N things still to set up" / "Setup complete" | "Open Setup: each item says what to do." |
 
+- **A step that threw:** a fresh `tick` beat with `ok=0` makes the `tick` light amber, "Heartbeat ran N min ago, but a step failed: <step>: error: …", so a step failing on every run never hides behind green (amber adds no todo).
 - **Routine cadence** (hours): research 26, reply 26, weekly-kpis 192, monthly-care 768. `build` has no cadence:
   it's only red on a failed fire.
 - **Research backlog** is not a stage 0 light: stage 2 registers the `research` light (with its hit-rate amber).

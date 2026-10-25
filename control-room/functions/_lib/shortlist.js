@@ -86,7 +86,10 @@ export function parseLeadFilters(searchParams) {
   };
 }
 
-/** A LIKE pattern matching `q` literally anywhere: `%…%` with \ % _ escaped (use with ESCAPE '\'). */
+/**
+ * A LIKE pattern matching `q` literally anywhere: `%…%` with \ % _ escaped (use with ESCAPE '\'). Only for short text:
+ * D1 refuses LIKE patterns over 50 bytes, so the Leads search (shortlist-db.js searchSql) uses instr instead.
+ */
 export function likePattern(q) {
   return `%${String(q ?? "").replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 }

@@ -137,6 +137,35 @@ test("SQLite's errors read like D1's", async () => {
   assert.equal(await count(DB), 1);
 });
 
+test("LIKE and GLOB patterns over 50 bytes are refused, as on D1 (SQLITE_LIMIT_LIKE_PATTERN_LENGTH)", async () => {
+  const DB = fakeD1({ schema: false });
+  await DB.exec("CREATE TABLE t (s); INSERT INTO t VALUES ('Green Leaf Landscapes');");
+  const TOO_COMPLEX = /^Error: D1_ERROR: LIKE or GLOB pattern too complex: SQLITE_ERROR$/;
+  const match = (sql, ...v) => DB.prepare(`SELECT ${sql} AS m FROM t`).bind(...v).first("m");
+  // 50 bytes is allowed, 51 isn't: counted in UTF-8 bytes, not characters ("é" is 2)
+  assert.equal(await match("s LIKE ?", `%${"x".repeat(48)}`), 0);
+  assert.equal(await match("s GLOB ?", `*${"x".repeat(49)}`), 0);
+  await assert.rejects(match("s LIKE ?", `%${"x".repeat(49)}%`), TOO_COMPLEX);
+  await assert.rejects(match("s GLOB ?", `*${"x".repeat(49)}*`), TOO_COMPLEX);
+  await assert.rejects(match("s NOT GLOB ?", `*[${"　".repeat(16)}]*`), TOO_COMPLEX, "16 three-byte characters + 4 = 52 bytes");
+  await assert.rejects(match("s LIKE ? ESCAPE '\\'", `%${"é".repeat(25)}%`), TOO_COMPLEX);
+  await assert.rejects(match("like(?, s)", "x".repeat(51)), TOO_COMPLEX, "the function form too");
+  // ... only when a row reaches it, as on D1: no rows, no error
+  assert.equal(await DB.prepare("SELECT 1 AS m FROM t WHERE 0 AND s LIKE ?").bind("x".repeat(51)).first("m"), null);
+  // within the limit, the answers are SQLite's own: LIKE ignores ASCII case, GLOB doesn't, ESCAPE, NULL
+  assert.equal(await match("s LIKE ?", "%leaf%"), 1);
+  assert.equal(await match("s LIKE ?", "green_leaf%"), 1);
+  assert.equal(await match("s LIKE ? ESCAPE '\\'", "green\\_leaf%"), 0);
+  assert.equal(await match("s GLOB ?", "*leaf*"), 0);
+  assert.equal(await match("s GLOB ?", "*Leaf*"), 1);
+  assert.equal(await match("s NOT GLOB ?", "*[\t-\r ]*"), 0, "a GLOB range");
+  assert.equal(await match("s LIKE ?", null), null);
+  assert.equal(await match("NULL LIKE ?", "%"), null);
+  assert.equal(await DB.prepare("SELECT typeof(s LIKE '%') AS m FROM t").first("m"), "integer");
+  // a bad ESCAPE is still SQLite's error
+  await assert.rejects(match("s LIKE ? ESCAPE 'ab'", "%"), /ESCAPE expression must be a single character/);
+});
+
 test("foreign keys are enforced, as on D1", async () => {
   const DB = fakeD1({ schema: false });
   await DB.exec("CREATE TABLE p (id TEXT PRIMARY KEY); CREATE TABLE c (pid TEXT REFERENCES p(id));");

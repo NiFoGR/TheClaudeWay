@@ -4,8 +4,9 @@
 // It also refuses what live D1 refuses, so a test can't pass on code that would fail on Cloudflare:
 // unsupported bind types (undefined, Date, BigInt, plain objects), the wrong number of bound values,
 // more than 100 bound values in one statement, BEGIN/COMMIT/SAVEPOINT (use batch), statements over
-// 100,000 bytes and values over 2,000,000 bytes. Foreign keys are enforced, as on D1. SQLite's errors read
-// like D1's ("D1_ERROR: <message>: SQLITE_<CODE>").
+// 100,000 bytes, values over 2,000,000 bytes and LIKE/GLOB patterns over 50 bytes (D1's
+// SQLITE_LIMIT_LIKE_PATTERN_LENGTH: "LIKE or GLOB pattern too complex", raised when a row reaches the LIKE, as on
+// D1). Foreign keys are enforced, as on D1. SQLite's errors read like D1's ("D1_ERROR: <message>: SQLITE_<CODE>").
 // One stricter rule: one SQL statement per prepare(). D1 would run the others too, outside any transaction, and
 // return only the first one's results, so code must use batch() for several (exec() is for test seeding).
 import { DatabaseSync } from "node:sqlite";
@@ -15,6 +16,7 @@ import { SCHEMA } from "../../functions/_lib/schema.js";
 const MAX_PARAMS = 100;
 const MAX_SQL_BYTES = 100_000;
 const MAX_VALUE_BYTES = 2_000_000;
+const MAX_PATTERN_BYTES = 50; // LIKE and GLOB patterns
 const SQLITE_RANGE = 25;
 const LEADING = String.raw`(?:\s|--[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*`; // whitespace and comments
 const TRANSACTION_RE = new RegExp(String.raw`^${LEADING}(?:BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE)\b`, "i");
@@ -73,8 +75,34 @@ function asD1Error(err) {
   return new Error(`D1_ERROR: ${err?.message ?? String(err)}${code ? `: SQLITE_${code}` : ""}`, { cause: err });
 }
 
+// D1 refuses LIKE and GLOB patterns over 50 bytes; node:sqlite (Node 22) can't lower SQLite's limit (no setLimit), so
+// the operators are replaced on `db`: like(pattern, text[, escape]) and glob(pattern, text) are what SQLite calls for
+// "text LIKE pattern [ESCAPE e]" and "text GLOB pattern". Over the limit they throw D1's error; otherwise a second,
+// plain database gives SQLite's own answer.
+function limitPatterns(db) {
+  const plain = new DatabaseSync(":memory:");
+  const ask = (sql) => {
+    const stmt = plain.prepare(sql);
+    stmt.setReadBigInts(true); // the answer stays an INTEGER
+    return (...args) => stmt.get(...args).r;
+  };
+  const glob = ask("SELECT ?2 GLOB ?1 AS r");
+  const like = ask("SELECT ?2 LIKE ?1 AS r");
+  const likeEscape = ask("SELECT ?2 LIKE ?1 ESCAPE ?3 AS r");
+  const size = (v) => (typeof v === "string" ? bytes(v) : v instanceof Uint8Array ? v.length : v === null ? 0 : bytes(String(v)));
+  const limit = (pattern) => {
+    if (size(pattern) > MAX_PATTERN_BYTES) throw new Error("D1_ERROR: LIKE or GLOB pattern too complex: SQLITE_ERROR");
+  };
+  // node:sqlite registers each function for exactly fn.length arguments, so every one names its own.
+  const options = { deterministic: true, useBigIntArguments: true };
+  db.function("glob", options, (p, s) => (limit(p), glob(p, s)));
+  db.function("like", options, (p, s) => (limit(p), like(p, s)));
+  db.function("like", options, (p, s, e) => (limit(p), likeEscape(p, s, e)));
+}
+
 export function fakeD1({ schema = true } = {}) {
   const db = new DatabaseSync(":memory:", { enableForeignKeyConstraints: true });
+  limitPatterns(db);
   if (schema) SCHEMA.forEach((sql) => db.exec(sql));
 
   const countersStmt = db.prepare("SELECT total_changes() AS t, changes() AS c, last_insert_rowid() AS id");

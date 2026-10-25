@@ -29,6 +29,7 @@ const ROWS_PER_INSERT = 15; // 2 shared + 5 bound values a row: 77, under D1's 1
 const ERROR_MAX = 300;
 
 const TICK_FIX = "Check the relay light below. If it's green, open GitHub → Actions → Deploy mail relay and run it again.";
+const TICK_STEP_FIX = "If this stays amber for more than a few heartbeats, tell Claude: the step name and error above say what broke. Everything else keeps running.";
 const RELAY_FIX = "GitHub → Actions → Deploy mail relay → open the latest run. If it's red, its last step says what to fix.";
 const RELAY_1042_FIX =
   "Set the GitHub repo variable CONTROL_ROOM_URL to the project's *.pages.dev address (GitHub → Settings → Secrets and variables → Actions → Variables), then run Deploy mail relay again.";
@@ -101,6 +102,13 @@ function tickLight(heartbeats, now) {
   }
   if (now - health > BEAT_STALE_MS) {
     return light("tick", "red", `Health checks have stopped: lights and todos not updated for ${span(now - health)}`, TICK_FIX);
+  }
+  // runTick beats ok=0 when a step threw; its detail lists the errors first. Amber, not red: one bad tick shouldn't
+  // open and close a todo every 5 minutes, but a step that fails on every run must not hide behind a green light.
+  if (!beatOk(heartbeats.tick)) {
+    const errors = String(heartbeats.tick.detail ?? "").split(" | ").filter((part) => /^[a-z_]+: error: /.test(part));
+    const said = errors.join(" | ") || String(heartbeats.tick.detail ?? "").trim() || "no details";
+    return light("tick", "amber", `Heartbeat ran ${span(now - tick)} ago, but a step failed: ${said}`, TICK_STEP_FIX);
   }
   return light("tick", "green", `Heartbeat ran ${span(now - tick)} ago`);
 }

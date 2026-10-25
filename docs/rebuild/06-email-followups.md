@@ -71,7 +71,7 @@ Shown in the lead drawer under **Email**, only while the prospect is `ready` and
 | `seo` | "SEO" as a word in subject or body (any case) | Don't say "SEO". Say "front page of Google" instead. |
 | `too_long` | body ≥ 150 words (`{demo_link}` counts as 1, greeting and footer not counted) | Too long: `<n>` words. Keep it under 150. |
 | `placeholder` | any `{word}` other than `{demo_link}` | `{<word>}` isn't filled in for you. Only {demo_link} is. |
-| `demo_not_ready` | stage 4 `demoReady(DB, place_id).ok` is false | Their demo isn't ready: `<stage 4's reason>`. Fix it on the Demo card first. |
+| `demo_not_ready` | stage 4 `demoReady(DB, place_id).ok` is false (for a `ready` prospect this includes a grade below B, too big or excluded: Part A §1's reasons) | Their demo isn't ready: `<stage 4's reason>`. Fix it on the Demo card first. |
 | `no_mailbox` | no cold mailbox is active | No mailbox is set up for cold email yet. Add one on Setup → Mailboxes. |
 | `warming_up` | every active cold mailbox has cap 0 that day | Your mailbox is still warming up: cold emails can start on `<Tue 3 Nov>`. |
 | `no_room` | no mailbox has room on the send day and on all 9 follow-up days | Your mailboxes are full on `<Mon 9 Nov>` (follow-ups already booked that day). Send this one tomorrow. |
@@ -86,9 +86,17 @@ Shown in the lead drawer under **Email**, only while the prospect is `ready` and
 to_addr, from_addr, subject, body: <full text as previewed>, message_id: makeMessageId(<mailbox domain>), status:
 "queued", due_at})`, where `due_at` = now if `inUkWindow(now, COLD_WINDOW)`, else `nextUkWindowStart(now, COLD_WINDOW)`.
 The mailbox is `pickMailbox(<mailboxes with room>, <today's load by mailbox>, ukDate(due_at))`. The prospect row gets
-`email`, `greet_name`, `mailbox_id`, `subject` at once; its **stage stays `ready`** until the send succeeds. Toast:
+`email`, `greet_name`, `mailbox_id`, `subject` at once; its **stage stays `ready`** until the send succeeds. From then
+on stage 4's `ensureDemo` (re-research, the `hot` safety net) leaves that `email` and `greet_name` alone while the
+first email is `queued`, `sending`, `sent` or `failed`; a `cancelled` one frees them again. Toast:
 "Queued. It goes out within 5 minutes." or "Queued for Mon 07:00." The route nudges the tick (`waitUntil(runTick(env,
 "compose"))`) so it usually goes within seconds.
+
+**Set aside after Send:** until the first email has gone the lead is still `ready`, and stage 1 protects only a lead
+past `ready` or with a first email sending or sent (`store.IN_OUTREACH`), so a later search can set a lead whose first
+email is `queued` aside (a chain's branch, a duplicate listing). That email must never go: the claim of a `first` row
+(stage 0's `dispatchDue`) also needs the lead to pass stage 3's `READY_SQL`, which includes `l.excluded = 0`. The
+composer then shows `demoReady`'s `No demo yet: Excluded: <reason>`, and Nik can cancel it.
 
 **When it has actually gone** (message `sent`), the next `followups` step: calls `applyStageEvent(DB, place_id,
 "first_sent", now)` (stage 0's `_lib/prospects.js`) → `emailed`, sets `first_sent_at` = the message's `sent_at`, `root_message_id` = its `message_id`, `followup_step` 0,
@@ -1203,6 +1211,8 @@ test("cap respected; follow-ups before first emails; none skipped", async () => 
   a paused mailbox holds `first`/`followup` rows `queued`; a row stuck in `sending` becomes `failed` with "The send
   was interrupted…", as does every send that may have gone (a line that dropped or went silent after login, a send
   that threw), and is never retried (Task 8 honours this through `INTERRUPTED_PREFIX`, imported from `outbox.js`).
+  Its claim of a `first` row must also need the lead to pass stage 3's `READY_SQL` (`l.excluded = 0` among it), so a
+  lead a later search set aside after Send is never emailed (Part A, "Set aside after Send").
   `pickMailbox` returns `null` when no mailbox in the
   list has room.
 - Stage 0 `registerLight(fn)` and `healthFromDb(DB, env, now) → {lights, gaps}` in `_lib/health.js`.

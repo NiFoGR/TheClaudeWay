@@ -39,6 +39,7 @@ its template look is approved.
 | --- | --- |
 | Lead exists in `leads` | `Lead not found` |
 | `leads.excluded = 0` | `Excluded: <exclude_reason>` |
+| `research.status` isn't `'skipped'` (Nik's Not a fit, the do-not-contact list, an excluded lead, the purge) | `Taken off the list (the research card says why)` |
 | `research.status = 'done'` | `Not researched yet` |
 | `research.too_big = 0` | `Too big for us` |
 | `research.grade` in A+, A, B | `Grade <C or D>: only A+, A and B get a demo` |
@@ -46,15 +47,19 @@ its template look is approved.
 | Email and its domain not in `suppression` | `On the do-not-contact list` |
 
 On success it:
-1. Reuses the lead's latest demo if it hasn't expired; otherwise inserts a new `demos` row with `slugFor(name)`
-   (e.g. `green-leaf-landscapes-7k2p9q`), `created_at = now`, `expires_at = now + 180 days`.
+1. Reuses the lead's latest demo (newest `created_at`, then `slug`) if it hasn't expired; otherwise inserts a new
+   `demos` row with `slugFor(name)` (e.g. `green-leaf-landscapes-7k2p9q`), `created_at = now`,
+   `expires_at = now + 180 days`.
 2. Inserts the `prospects` row if none exists, through stage 0's
    `applyStageEvent(DB, place_id, "demo_ready", now, {email, greet_name})` (stage `ready`): `email` =
    `research.best_email` lower-cased, `greet_name` = `research.owner.first` only when `research.owner.confident` is
    true (else NULL).
-3. If a `prospects` row already exists in stage `ready`, updates `email` and `greet_name` from the newest research
-   (re-research found a better address; one UPDATE `WHERE stage = 'ready'`, no stage change). Any later stage is
-   never touched.
+3. If a `prospects` row already exists in stage `ready` and the lead has no first email (`messages` out, kind
+   `first`) that is `queued`, `sending`, `sent` or `failed`, updates `email` and `greet_name` from the newest research
+   (re-research found a better address; one UPDATE `WHERE stage = 'ready' AND NOT EXISTS (<that first email>)`, no
+   stage change). Once stage 6 has queued the first email, the address Nik picked and its greeting stay (follow-ups
+   go to `prospects.email` and replies are matched by it); a `cancelled` first email frees them again. Any later stage
+   is never touched.
 4. If the lead's template look isn't approved, adds the `setup` todo "Approve the <Label> look on the Demo page"
    (dedupe `setup:demo-template:<id>:v<version>`).
 
@@ -68,7 +73,9 @@ On success it:
 - Expired → HTTP 410 page: heading "This preview has ended", text "The website we made for <name> is no longer on
   show. Reply to our email and we'll switch it back on.", plus "or email <mailbox address>" when their thread has a
   mailbox, and "Aetos Websites" at the bottom. Unknown slug → HTTP 404 "This page doesn't exist." (never says whose).
-- When a lead's demo expires before any email was sent, the safety net makes a new one (new slug).
+- When a lead's demo expires before any email was sent, the safety net makes a new one (new slug). The old row stays,
+  so a lead can have several `demos` rows; its current demo is always the newest (`latestDemo`, Cross-stage
+  interfaces).
 
 ### 3. What's on the page (demo mode)
 
@@ -159,6 +166,10 @@ generic follows the list above.
 - `demoReady(DB, place_id)` is what stage 5/6 calls before sending a first email; it returns `{ok: false, reason}`
   with one of: `No demo yet: <ensureDemo reason>`, `Their demo has expired: a new one is being made`,
   `Waiting for you to approve the <Label> look on the Demo page`. When `ok`, it also gives `url` and `slug`.
+  A prospect still `ready` (nothing sent) is always checked against §1 first, so a lead re-graded to C, found too
+  big or excluded before its first email reads `No demo yet: <reason>` (stage 5/6's `demo_not_ready` relies on it).
+  Only a prospect past `ready` (the link may be out) whose latest demo is live is judged on the demo and the look
+  alone, so its follow-ups keep going while the demo stays up. Neither ever changes the demo row.
 
 ### 8. Counting views
 
@@ -202,7 +213,10 @@ the home page.
 | Brand colour too pale (e.g. `#a0ffff`) | Darkening can't reach 4.5:1 → Charcoal. |
 | Hostile text (`</style><script>…`, `"><img onerror=…>`, bidi override characters) in name/reviews/copy | Escaped by `h()`; control and bidi characters removed. Tested. |
 | Logo or photo host blocks hot-linking / 404 | The image removes itself; wordmark shows instead of the logo. |
-| Research re-posted with a different best email while stage is `ready` | `prospects.email`/`greet_name` updated; demo kept. |
+| Research re-posted with a different best email while stage is `ready` and no first email is queued, sending, sent or failed | `prospects.email`/`greet_name` updated; demo kept. |
+| Research re-posted while the first email is queued (or sending, sent, failed) | `prospects.email`/`greet_name` stay as Nik queued them; a cancelled first email frees them. |
+| Re-graded to C, too big or excluded while stage is still `ready` | Demo stays; `demoReady` says `No demo yet: <reason>`, so no first email goes. |
+| A later search shows a `ready` lead is a chain's branch or a duplicate listing | Set aside like any lead not yet emailed (stage 1's `store.IN_OUTREACH` protects only a prospect past `ready`, or with a first email sending or sent; a `ready` row made here never keeps a chain pitchable). Demo and `ready` row stay; it leaves Ready to email and `demoReady` says `No demo yet: Excluded: <reason>`. |
 | Re-graded to C after the demo exists | Demo stays (link may already be out); stage 3 hides it from picks. |
 | Two calls make a demo at once | Slug primary key prevents duplicates of the same slug; the latest live demo is the one used. Slug clash → one retry with a new slug. |
 | Prospect opts out or is lost | Page keeps working until expiry; no hot todos (stage not emailed/viewed). |
@@ -632,11 +646,13 @@ DEMO_BASE = "https://aetoswebsites.com"
 demoLink(slug) → "https://aetoswebsites.com/d/<slug>"
 ensureDemo(DB, place_id, now = new Date()) → Promise<{ ok: boolean, reason: string, demo: {slug, place_id, created_at, expires_at} | null, created: boolean }>
 demoBySlug(DB, slug, now = new Date()) → Promise<{ demo, lead, research, prospect, expired: boolean, contact_email: string } | null>
+latestDemo(DB, place_id) → Promise<{slug, place_id, created_at, expires_at} | null>   // added in review: the lead's newest demos row, read-only
 ```
 `ensureDemo` reads lead + research + latest demo + prospect + suppression in **one** SELECT, then inserts the demo
 when needed (one statement; on a slug primary-key clash it retries once with a new slug), and then either creates the
 prospect with `applyStageEvent(DB, place_id, "demo_ready", now, {email, greet_name})` when none exists, or updates
-`email`/`greet_name` of a `ready` prospect with one UPDATE (`WHERE stage = 'ready'`, no stage change). `demoBySlug` returns null for slugs not matching `^[a-z0-9-]{3,60}$`; `expired` is
+`email`/`greet_name` of a `ready` prospect with one UPDATE (`WHERE stage = 'ready'` and no first email queued,
+sending, sent or failed, Part A §1.3; no stage change). `demoBySlug` returns null for slugs not matching `^[a-z0-9-]{3,60}$`; `expired` is
 `demo.expires_at <= now` unless `prospect.stage = 'won'`; `contact_email` is the address of `prospect.mailbox_id`'s
 mailbox, else "".
 
@@ -793,7 +809,9 @@ Produces:
 ```js
 // demo-db.js
 syncDemoExpiry(DB) → Promise<number>          // one UPDATE: latest demo per lead → max(expires_at, last sent out message + 180 days)
+                                              // (its messages subquery reads through messages_place: `+m.status`, never messages_due)
 missingDemos(DB, now, limit = 3) → Promise<string[]>   // eligible place_ids (Part A §1 checks in SQL) with no live demo or no prospect, prospect stage NULL or 'ready'
+                                              // (any LIKE/GLOB pattern ≤ 50 bytes: D1 refuses longer ones, and tests/helpers/fakeD1.mjs does too)
 // hot.js
 hotTitle(name, views) → string                 // pure: "Call now: <name> opened their site <N> times" / "… once"
 hotStep({ DB, env, now, budget }) → Promise<string>    // budget = {left: () => number}; "expiry +<n> · demos made <n> · hot <n> · closed <n>" (+ " · demos skipped: low budget")
@@ -921,6 +939,14 @@ Then run the Part A "Perfect when" live checks 6–12 on the deployed site.
   email when `ok` is false and show `reason`; the first email's only link is `url`. **Stage 3** can show `reason` on
   the shortlist.
 - `demoLink(slug)`, `DEMO_BASE = "https://aetoswebsites.com"`, `DEMO_DAYS = 180`.
+- A lead can have several `demos` rows: old-system demos, and new ones made when a demo expired before any email was
+  sent. The lead's current demo is its newest row by `created_at DESC, slug DESC`. That is the one ensureDemo reuses,
+  demoReady judges and syncDemoExpiry extends. Never join `demos` on `place_id`, and never read it without that ORDER
+  BY.
+- `latestDemo(DB, place_id) → Promise<{slug, place_id, created_at, expires_at} | null>` — `_lib/demo-db.js`: that
+  current demo (`SELECT * FROM demos WHERE place_id = ? ORDER BY created_at DESC, slug DESC LIMIT 1`), 1 statement,
+  no expiry filter and no writes. **Stage 7's** inbox and call routes take a lead's demo link from it (or the same
+  correlated subquery), never from `demoReady`, which can write and gives no link for an ended demo.
 - `buildDemoData({lead, research, demo, offer, now, live})`, the `DemoData` contract, `renderSite(data, {mode, page})`,
   `TEMPLATES`, `templateIdFor(trade)` — **stage 10** renders the client's site with `mode: "live"` and fills
   `data.live = {form_action, canonical_url}`; it adds pages beyond `home` inside the same templates.
@@ -957,6 +983,9 @@ Then run the Part A "Perfect when" live checks 6–12 on the deployed site.
 - **Stage 3 / file 11:** the lead drawer keeps the `#d-demo` mount point for `demoCardHtml`; stage 3's `parseRoute`
   returns the first hash segment as `page` for any route (so `#/demo` reaches `PAGES.find` instead of Home); file
   11's `routeFor` keeps the `demo` route (there is no nav item for it).
+- **Stage 1:** `store.D1.in_pipeline()` and `exclude_chains` spare only a lead already in outreach (`store.IN_OUTREACH`:
+  a prospect past `ready`, or a first email sending/sent), not the `ready` rows this stage makes, so a later search
+  still sets a chain's branch aside.
 - **Stage 9:** its payment-page todos use dedupe `checkout:<place_id>` (never `hot:…`), so the `hot` step can't close
   them.
 - **Stage 0 sending:** outbound rows in `messages` have `direction = 'out'`, `status = 'sent'`, `sent_at` and

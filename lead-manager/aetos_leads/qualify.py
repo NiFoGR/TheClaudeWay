@@ -67,7 +67,8 @@ def _earlier(leads: list[Lead], known: list[dict]) -> list[Lead]:
 
 
 def _ranks(earlier: list[Lead], known: list[dict], in_pipeline=frozenset()) -> dict[str, int]:
-    """Who a group keeps first: a lead already in outreach (4: a prospects row; its conversation is never cut off),
+    """Who a group keeps first: a lead already in outreach (4: a prospect past ready (emailed or later), or a first
+    email sending/sent; its conversation is never cut off),
     then a saved lead this run didn't find again (3; only this run's listings are updated, so keeping it leaves exactly
     one pitchable listing), then a branch already set aside (2), then a saved lead this run found again (1: it may
     already be researched), then a new listing (0)."""
@@ -139,10 +140,11 @@ def mark_exclusions(leads: list[Lead], known: list[dict] = (), in_pipeline=froze
     known = {place_id, name, website, phone, town} of saved, not-excluded leads (store.D1.known_leads()), so a business
     found again from another search is a duplicate of the saved lead and a franchise's branches are caught across
     searches; plus the branches already set aside (store.D1.known_branches(), `excluded` set), so a franchise's next
-    town is a branch too. in_pipeline = place_ids with a prospects row (store.D1.in_pipeline()): already in outreach,
-    so never a duplicate or a branch (a group holding one keeps it; its other listings are still set aside), or this
-    run's save would set it aside mid-conversation. Returns the not-excluded known place_ids, none in outreach, that
-    are now branches (store.D1.exclude_chains() sets them aside)."""
+    town is a branch too. in_pipeline = place_ids already in outreach (store.D1.in_pipeline(): a prospect past ready
+    (emailed or later), or a first email sending/sent), so never a duplicate or a branch (a group holding one keeps it;
+    its other listings are still set aside), or this run's save would set it aside mid-conversation. A `ready`
+    prospect alone (its demo is ready, nothing sent) isn't in it: set aside like any other lead. Returns the
+    not-excluded known place_ids, none in outreach, that are now branches (store.D1.exclude_chains() sets them aside)."""
     earlier = _earlier(leads, known)
     ranks = _ranks(earlier, known, in_pipeline)
     dupes = _duplicates(leads, earlier, ranks)

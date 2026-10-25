@@ -72,7 +72,8 @@ One request returns everything; Claude never reads the database another way. Fie
   - `lead` {business, trade, town, phone, greet_name};
   - `research` {grade, grade_reason, angle, owner, site_summary};
   - `links` {demo: `demoLink(slug)`, order: `${DEMO_BASE}/d/<slug>/order`, landing: "https://aetoswebsites.com"}
-    (stage 4's `demo-db.js`; always on `https://aetoswebsites.com`, never the Control Room host);
+    (stage 4's `demo-db.js`; always on `https://aetoswebsites.com`, never the Control Room host; `slug` is the lead's
+    latest demo, `latestDemo`, kept even when it has ended);
   - `thread` (every message oldest → newest: id, who, kind, at, subject, text with quoted history removed, 4,000
     characters max each);
   - `calls` {current (their live offered/confirmed call or null), free_slots (next 3: {slot_at, label}),
@@ -437,7 +438,7 @@ the Routine prompt. Every stage change goes through stage 0's `applyStageEvent` 
 - Slots `{days: [2,3,5,6,0], time: "11:00", minLeadHours: 3, count: 3}`; one call per UK day; horizon 56 days; hold 48 h or until the slot; confirm needs ≥ 30 min ahead.
 - `call_time` due 18:00 UK today before 17:00 UK, else 18:00 UK tomorrow; promise "by the end of the day" / "by tomorrow evening".
 - Guard: ≤ 180 words; hosts `aetoswebsites.com` and `www.aetoswebsites.com` only (`REPLY_HOSTS`); `/d/<slug>` only this lead's; £ amounts ∈ `offer.amounts` (249, 1,750, 1,950); no SEO; promise words only inside `offer.guarantees`; "90 days free" only when `offer.weekend`.
-- Links in replies: `demoLink(slug)` and `${DEMO_BASE}/d/<slug>/order` from stage 4's `demo-db.js`; no `app_url` setting.
+- Links in replies: `demoLink(slug)` and `${DEMO_BASE}/d/<slug>/order` from stage 4's `demo-db.js`, `slug` = the lead's latest demo (`latestDemo(DB, place_id)`: a lead can have several `demos` rows, so never a join on `place_id`); no `app_url` setting.
 - Replies: `kind 'reply'`, same mailbox and thread, signature `<business:sender_name>\nAetos Websites`, never counted in the cold cap.
 - Stage changes only through `applyStageEvent(DB, placeId, event, now, {lost_reason})` from `_lib/prospects.js` (stage 0); follow-ups stop through stage 5–6's `stopFollowups`.
 - Health light shape `{name, level, detail, fix}`, registered with `registerLight`; `healthFromDb(DB, env, now) → {lights, gaps}`.
@@ -908,14 +909,19 @@ and stores `note`. Every stage change is stage 0's `applyStageEvent` (`_lib/pros
 
 **Interfaces:** Consumes `requireAgent(request, env, DB)`, `offerFacts`, `sendTime`, `stripQuoted`, `nextFreeSlots`,
 `takenFrom`, `slotLabel`, `callTimeDue`, `getSetting` (`offer:chatbot_live`, `offer:review_booster_live`),
-`demoLink(slug)` and `DEMO_BASE` (stage 4's `_lib/demo-db.js`), `demos` (slug by `place_id`). Produces
+`demoLink(slug)` and `DEMO_BASE` (stage 4's `_lib/demo-db.js`), the lead's latest demo (`latestDemo`, or the
+correlated subquery `(SELECT d.slug FROM demos d WHERE d.place_id = p.place_id ORDER BY d.created_at DESC, d.slug DESC
+LIMIT 1)`), never a join on `place_id`. Produces
 `buildInbox(DB, now: Date, {limit = 10} = {}) → Promise<Inbox>` with exactly the Part A fields (`offer =
 offerFacts(send_at, {chatbot, reviews})` with each flag `getSetting(…) === "1"`), and
 `seedVoice(DB, now) → Promise<void>` (the two seeds, once, setting `voice:seeded`).
-Links: `demo = demoLink(slug)`, `order = ${DEMO_BASE}/d/<slug>/order` (no `app_url` setting); `drill:`/`test:` leads
+Links: `demo = demoLink(slug)`, `order = ${DEMO_BASE}/d/<slug>/order` (no `app_url` setting), with `slug` that latest
+demo's. Keep the link even when that demo has expired: the reply we send makes the hot step's `syncDemoExpiry` extend
+it (180 days from the latest sent email). Don't use `demoReady` here: it can write (it calls `ensureDemo`) and gives
+`url: null` for an expired demo, the one the reply is meant to switch back on. `drill:`/`test:` leads
 use fixtures from Task 17 and `https://aetoswebsites.com` when they have no demo.
 
-- [ ] **Step 1: Write the failing test** — seed (now = Wed 21 Oct 2026 09:30 UK = `2026-10-21T08:30:00Z`) prospect `p1` with Nik's first email, a follow-up, two waiting inbound (`m1` at 08:05Z, `m2` at 08:07Z, `m2` text `"How much?\n\nOn Tue, Nik wrote:\n> Hi"`), research grade A, demo slug `green-leaf-ab12`; prospect `p2` stage `won` with a handled message.
+- [ ] **Step 1: Write the failing test** — seed (now = Wed 21 Oct 2026 09:30 UK = `2026-10-21T08:30:00Z`) prospect `p1` with Nik's first email, a follow-up, two waiting inbound (`m1` at 08:05Z, `m2` at 08:07Z, `m2` text `"How much?\n\nOn Tue, Nik wrote:\n> Hi"`), research grade A, demo slug `green-leaf-ab12` (created `2026-10-01T09:00:00Z`, expires `2027-03-30T09:00:00Z`) and a second, older and expired demo `green-leaf-old1` (created `2026-03-01T09:00:00Z`, expires `2026-03-15T09:00:00Z`) for `p1`; prospect `p2` stage `won` with a handled message.
   ```js
   const res = await onRequestGet({ request: req("/api/agent/inbox", TOKEN), env });
   assert.equal(res.status, 200);
@@ -925,15 +931,20 @@ use fixtures from Task 17 and `https://aetoswebsites.com` when they have no demo
   assert.ok(!body.offer.included.includes("A chat assistant on your website."));   // offer:chatbot_live not set
   assert.equal(body.voice.examples.length, 2);
   assert.equal(body.voice.sent[0].body.startsWith("Hi Sam"), true);
-  assert.equal(body.conversations.length, 1);
+  assert.equal(body.conversations.length, 1);                                       // p1 has two demos rows: still one conversation
   const c = body.conversations[0];
   assert.equal(c.reply_to, "m2"); assert.deepEqual(c.waiting, ["m1", "m2"]);
   assert.deepEqual(c.thread.map((m) => m.who), ["nik", "system", "them", "them"]);
   assert.equal(c.thread.at(-1).text, "How much?");
-  assert.deepEqual(c.links, { demo: "https://aetoswebsites.com/d/green-leaf-ab12", order: "https://aetoswebsites.com/d/green-leaf-ab12/order", landing: "https://aetoswebsites.com" });
+  assert.deepEqual(c.links, { demo: "https://aetoswebsites.com/d/green-leaf-ab12", order: "https://aetoswebsites.com/d/green-leaf-ab12/order", landing: "https://aetoswebsites.com" });   // the newer slug
   assert.equal(c.calls.free_slots.length, 3);
   assert.deepEqual(c.calls.free_slots[0], { slot_at: "2026-10-23T10:00:00Z", label: "Friday 23 October at 11am" });
   assert.equal(c.calls.call_time_promise, "by the end of the day");
+  // the latest demo has ended: its link stays (the reply makes syncDemoExpiry extend it), never the older slug
+  DB.raw.prepare("UPDATE demos SET expires_at = '2026-10-01T09:00:00Z' WHERE slug = 'green-leaf-ab12'").run();
+  const ended = await (await onRequestGet({ request: req("/api/agent/inbox", TOKEN), env })).json();
+  assert.equal(ended.conversations.length, 1);
+  assert.equal(ended.conversations[0].links.demo, "https://aetoswebsites.com/d/green-leaf-ab12");
   assert.equal((await onRequestGet({ request: req("/api/agent/inbox", "wrong"), env })).status, 401);
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/agent-inbox.test.mjs` → FAIL: cannot find `api/agent/inbox.js`.
@@ -1084,7 +1095,8 @@ Add one on Setup → Mailboxes, then try again.`
 `control-room/tests/calls-api.test.mjs`.
 
 **Interfaces:** Consumes Task 8, `nextFreeSlots`, `takenFrom`, `slotLabel`, `offerFor`, `GUARANTEE` (stage 0's
-`offer.js`), `demoLink`, `DEMO_BASE`, `sendAsNik`. Produces:
+`offer.js`), `demoLink`, `DEMO_BASE`, `latestDemo` (stage 4's `_lib/demo-db.js`: the slug for `links`), `sendAsNik`.
+Produces:
 - `GET /api/calls?place_id=` → `{calls: [...], free_slots: [{slot_at, label}]}`
 - `POST /api/calls` `{place_id, at, phone?, message?, message_id?}` → `confirmCall(byNik: true)`; with `message` +
   `message_id`, `sendAsNik` and close `call_time:<message_id>`. Past `at` → 422 `Pick a time in the future.`
@@ -1305,7 +1317,7 @@ Then run the Part A "Perfect when" live checks 2–8 with Nik.
 - **Stage 0 `public/js/app.js`:** the `PAGES` registry `{route, label, icon, render, nav?}` (an entry with `nav: false` is routed but not in the nav); `shell.test.mjs` checks the 5 stage-0 routes are present, not an exact list.
 - **Stage 3 `leadview.js`:** `parseRoute(hash)` returns the first hash segment as `page` for any route (`lead/<id>` → `leads`), so `replies` and `call` reach `app.js`'s `PAGES.find`.
 - **Stage 3:** `callScript(lead, {sender, offer, guarantee, today})`; this stage passes `offer = {...offerFor(date), guarantee: GUARANTEE}` and `guarantee: offer.guarantee` and `lead.owner_first`; `drawerHtml` renders `<div id="d-call"></div>`, and `leads.js` binds the drawer (Task 16 mounts the call box there).
-- **Stage 4:** one `demos` row per `place_id` with `slug`; `demoLink(slug)` and `DEMO_BASE` (`https://aetoswebsites.com`) from `_lib/demo-db.js`; order page at `${DEMO_BASE}/d/<slug>/order`.
+- **Stage 4:** a lead can have several `demos` rows; the current one is the newest by `created_at DESC, slug DESC` (`latestDemo(DB, place_id)` from `_lib/demo-db.js`); `demoLink(slug)`, `DEMO_BASE`; order page `${DEMO_BASE}/d/<slug>/order`.
 - **Stage 5–6:** `stopFollowups(DB, placeId, "replied", now)` (called by `onHumanInbound`); `businessName` from `_lib/mail/rules.js`; the Voice page and `GET /api/voice` (`api/voice/index.js`) with `has_price_reply`, `POST /api/voice/examples`, `DELETE /api/voice/examples/:id`.
 - **Stage 9:** settings `offer:chatbot_live` / `offer:review_booster_live` (`'1'` = on) for `offerFacts`'s `included` lines.
 

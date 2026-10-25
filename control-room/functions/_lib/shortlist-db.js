@@ -22,7 +22,7 @@ import { GUARANTEE, offerFor } from "./offer.js";
 import { parseResearch } from "./research.js";
 import { getSetting, setSetting } from "./settings.js";
 import {
-  GRADES, PAGE_SIZE, STAGE_LABELS, capacityBanner, firstEmailRoom, isHot, likePattern, parseLeadFilters, pickTitle,
+  GRADES, PAGE_SIZE, STAGE_LABELS, capacityBanner, firstEmailRoom, isHot, parseLeadFilters, pickTitle,
   readyGrades, warmupFrom,
 } from "./shortlist.js";
 import { addTodo, closeTodos } from "./todo.js";
@@ -284,18 +284,19 @@ function stageSql(stages, P) {
 }
 
 // Search (Part A): name, trade, town, town searched, phone, any email (the prospect's, Claude's best and every one it
-// found, the scraper's and every one it found) or the owner's full name; a case-insensitive substring, matched
-// literally (likePattern escapes \ % _).
+// found, the scraper's and every one it found) or the owner's full name; a case-insensitive (ASCII, as LIKE was)
+// substring, matched literally: instr(lower(col), lower(q)), never LIKE, because D1 refuses LIKE/GLOB patterns over
+// 50 bytes ("LIKE or GLOB pattern too complex") and q may be 100 characters. % _ \ and quotes are plain text to instr.
 function searchSql(q, P) {
-  const k = P.add(likePattern(q));
-  const like = (expr) => `${expr} LIKE ${k} ESCAPE '\\'`;
+  const k = P.add(q);
+  const has = (expr) => `instr(lower(${expr}), lower(${k})) > 0`;
   const researchEmail = "CASE e.type WHEN 'object' THEN json_extract(e.value, '$.email') WHEN 'text' THEN e.value END";
   return `(${[
-    like("l.name"), like("l.trade"), like("l.town"), like("l.search_town"), like("l.phone"),
-    like("p.email"), like("r.best_email"), like("l.email"),
-    `EXISTS (SELECT 1 FROM json_each(${LEAD_EMAILS_JSON}) AS e WHERE ${like("e.value")})`,
-    `EXISTS (SELECT 1 FROM json_each(${RESEARCH_EMAILS_JSON}) AS e WHERE ${like(researchEmail)})`,
-    like(`json_extract(${OWNER_JSON}, '$.full')`),
+    has("l.name"), has("l.trade"), has("l.town"), has("l.search_town"), has("l.phone"),
+    has("p.email"), has("r.best_email"), has("l.email"),
+    `EXISTS (SELECT 1 FROM json_each(${LEAD_EMAILS_JSON}) AS e WHERE ${has("e.value")})`,
+    `EXISTS (SELECT 1 FROM json_each(${RESEARCH_EMAILS_JSON}) AS e WHERE ${has(researchEmail)})`,
+    has(`json_extract(${OWNER_JSON}, '$.full')`),
   ].join("\n      OR ")})`;
 }
 

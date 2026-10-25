@@ -52,13 +52,16 @@ wins (`qualify.mark_exclusions`):
 | `Closed` | Google `businessStatus` is set and isn't `OPERATIONAL`. |
 | `Duplicate listing of {name}` | Same phone (last 10 digits) as another listing in this run or an earlier lead; keep the earlier lead, else the listing with a real website, else the most reviews. Also: same real website and same town as another listing (different phones). |
 | `Chain / national brand` | Name matches the `CHAINS` brand list (unambiguous national brands only). |
-| `Multiple branches (chain)` | Same real website host on listings in **different** towns (this run or earlier leads). The earlier lead is excluded too, unless it already has a `prospects` row. |
+| `Multiple branches (chain)` | Same real website host on listings in **different** towns (this run or earlier leads). The earlier lead is excluded too, unless it is already in outreach (below). |
 | `Front desk / gatekeeper` | Google types include one of `FRONT_DESK_TYPES` (dentist, doctor, hospital, lawyer, bank, school, supermarket, …), or the name contains dental, dentist(s), doctor(s), medical, NHS, veterinary, vets, physio…, solicitor(s), council, optician(s), pharmacy, chemist. "Tree Surgery", "Lawn Clinic", "Driveway Clinic" are trades and stay. |
 
-**A lead already in outreach** (a `prospects` row, `store.D1.in_pipeline()`) is never set aside as a duplicate or a
-branch, whether or not this search found it again: a duplicate or same-site group holding one keeps it, and the
-group's other listings are still set aside (`Duplicate listing of {its name}` / `Multiple branches (chain)`). `Closed`,
-`Chain / national brand` and `Front desk / gatekeeper` still apply to it.
+**A lead already in outreach** (`store.D1.in_pipeline()`: a prospect past `ready` (emailed or later), or a first
+email sending/sent) is never set aside as a duplicate or a branch, whether or not this search found it again: a
+duplicate or same-site group holding one keeps it, and the group's other listings are still set aside (`Duplicate
+listing of {its name}` / `Multiple branches (chain)`). `Closed`, `Chain / national brand` and `Front desk /
+gatekeeper` still apply to it. A `ready` prospect alone is not in outreach (stage 4 makes one for every A+/A/B lead
+with an email, before anything is sent), so it is set aside like any other lead; a `won` one is (a demo order moves
+`ready` straight to `won` with no email sent). The rule is stage 3's Not a fit one (`NOT_FIT_OK`).
 
 **Score (0–100) = Website 45 + Local SEO 30 + Google Maps 25** (`scoring.RULES`, unchanged values):
 
@@ -478,7 +481,7 @@ D1, `node --test` with `tests/helpers/fakeD1.mjs`; plain-JS front end.
 
 **Files:** Modify `lead-manager/aetos_leads/qualify.py`, `pipeline.py`, `store.py`, `__main__.py`; Test `lead-manager/tests/test_leads.py`; move `FakeD1` from `tests/test_autopilot.py` to `tests/conftest.py`.
 
-**Interfaces:** Produces `qualify.mark_exclusions(leads, known: list[dict] = (), in_pipeline=frozenset()) -> list[str]` (known = `{place_id, name, website, phone, town}` of saved, non-excluded leads; in_pipeline = place_ids with a `prospects` row, never set aside as a duplicate or a branch and always the listing a group keeps; returns known place_ids, none in in_pipeline, that are now branches); `pipeline.run(..., known: list[dict] = (), in_pipeline=frozenset())` and `Result.chain_ids: list[str]`; `store.D1.in_pipeline() -> set[str]` (`SELECT place_id FROM prospects`); `store.D1.known_leads() -> list[dict]` (`SELECT place_id, name, website, phone, town FROM leads WHERE excluded = 0`); `store.D1.exclude_chains(place_ids: list[str]) -> None` (`UPDATE leads SET excluded = 1, exclude_reason = 'Multiple branches (chain)' WHERE place_id IN (…) AND place_id NOT IN (SELECT place_id FROM prospects)`).
+**Interfaces:** Produces `qualify.mark_exclusions(leads, known: list[dict] = (), in_pipeline=frozenset()) -> list[str]` (known = `{place_id, name, website, phone, town}` of saved, non-excluded leads; in_pipeline = place_ids already in outreach (`store.D1.in_pipeline()`), never set aside as a duplicate or a branch and always the listing a group keeps; returns known place_ids, none in in_pipeline, that are now branches); `pipeline.run(..., known: list[dict] = (), in_pipeline=frozenset())` and `Result.chain_ids: list[str]`; `store.D1.in_pipeline() -> set[str]` (`store.IN_OUTREACH`: `SELECT place_id FROM prospects p WHERE p.stage <> 'ready' OR p.first_sent_at IS NOT NULL OR EXISTS (SELECT 1 FROM messages m WHERE m.place_id = p.place_id AND m.kind = 'first' AND m.status IN ('sending', 'sent'))`, a prospect past ready (emailed or later), or a first email sending/sent); `store.D1.known_leads() -> list[dict]` (`SELECT place_id, name, website, phone, town FROM leads WHERE excluded = 0`); `store.D1.exclude_chains(place_ids: list[str]) -> None` (`UPDATE leads SET excluded = 1, exclude_reason = 'Multiple branches (chain)' WHERE place_id IN (…) AND place_id NOT IN (<IN_OUTREACH>)`).
 
 - [ ] **Step 1: Write the failing tests:**
   ```python
@@ -958,9 +961,12 @@ PUT  /api/territory {on, trade, towns, max} → {territory} | 400 {error}
 - **Produces for Map Rank:** stale scans are failed with `STALE_SCAN_ERROR`; care scans (`source = 'care'`) are left to
   stage 11.
 - **Settings keys introduced:** `find:day`, `find:today`, `research:enqueued_at` (`territory` kept).
-- **Python:** `qualify.mark_exclusions(leads, known=(), in_pipeline=frozenset())` returns chain place_ids (a lead with
-  a `prospects` row is never set aside as a duplicate or a branch); `store.D1.known_leads()`, `store.D1.in_pipeline()`,
-  `store.D1.exclude_chains(ids)`; `audit.town_key(name)`; `lead.map_rank["home"]`.
+- **Python:** `qualify.mark_exclusions(leads, known=(), in_pipeline=frozenset())` returns chain place_ids (a lead
+  already in outreach is never set aside as a duplicate or a branch); `store.D1.known_leads()`, `store.D1.in_pipeline()`
+  and `store.D1.exclude_chains(ids)`'s `NOT IN`, both `store.IN_OUTREACH` = `SELECT place_id FROM prospects p WHERE
+  p.stage <> 'ready' OR p.first_sent_at IS NOT NULL OR EXISTS (SELECT 1 FROM messages m WHERE m.place_id = p.place_id
+  AND m.kind = 'first' AND m.status IN ('sending', 'sent'))` (a prospect past ready (emailed or later), or a first email
+  sending/sent; a `ready` prospect alone is set aside like any lead); `audit.town_key(name)`; `lead.map_rank["home"]`.
 
 ## Questions for Nik
 

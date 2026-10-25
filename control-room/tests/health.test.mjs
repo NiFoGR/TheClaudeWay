@@ -947,3 +947,16 @@ test("GET /api/health → {lights, gaps}, stage 0's 10 lights first; login requi
   });
   assert.equal(gated.status, 401);
 });
+
+test("tick: a fresh beat with ok=0 (a step threw) is amber and names the failing step, not green", () => {
+  const f = greenFacts();
+  f.heartbeats.tick.at = before(2 * MIN);
+  f.heartbeats.tick.ok = 0;
+  f.heartbeats.tick.detail = "hot: error: D1_ERROR: LIKE or GLOB pattern too complex | inbound: 0 processed | send: sent 0, failed 0, held 0";
+  const l = lightOf(f, "tick");
+  assert.equal(l.level, "amber");
+  assert.equal(l.detail, "Heartbeat ran 2 min ago, but a step failed: hot: error: D1_ERROR: LIKE or GLOB pattern too complex");
+  assert.match(l.fix, /tell Claude/);
+  f.heartbeats.tick.ok = 1;
+  assert.equal(lightOf(f, "tick").level, "green");
+});
