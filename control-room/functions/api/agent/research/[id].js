@@ -4,8 +4,11 @@
 // retry), the grade is worked out here from the four points (_lib/grade.js; Claude never sends one), and the row is
 // stored as done with Nik's note lines kept and the claim deleted (_lib/research-db.js saveResearch). A lead whose row
 // is already 'skipped' keeps it untouched (200, with a warning saying the research wasn't saved). The leads table is
-// never written. An unknown place_id is a 404. Tested in tests/research-post.test.mjs.
+// never written. An unknown place_id is a 404. Then stage 4's ensureDemo makes the lead's demo site and its `ready`
+// prospect when it qualifies (A+, A or B with an email: 05-demo.md Part A §1); that never changes the reply, and a demo
+// that fails here is made by the tick's safety net. Tested in tests/research-post.test.mjs.
 import { requireAgent } from "../../../_lib/agentAuth.js";
+import { ensureDemo } from "../../../_lib/demo-db.js";
 import { gradeFrom } from "../../../_lib/grade.js";
 import { saveResearch } from "../../../_lib/research-db.js";
 import { validateResearch } from "../../../_lib/research.js";
@@ -50,6 +53,13 @@ export async function onRequestPost({ request, env, params, now }) {
   if (lead.research_status === "skipped") warnings.push(STAYS_SKIPPED);
 
   const { grade, total, capped } = gradeFrom(clean.points, clean.too_big);
-  await saveResearch(DB, placeId, clean, { grade, total, capped }, warnings, now ?? new Date());
+  const at = now ?? new Date();
+  await saveResearch(DB, placeId, clean, { grade, total, capped }, warnings, at);
+  // A lead that doesn't qualify simply gets no demo; a failure is logged and left to the hot step's safety net.
+  try {
+    await ensureDemo(DB, placeId, at);
+  } catch (err) {
+    console.error(`The research was saved, but its demo site couldn't be made now (the tick tries again): ${err?.message ?? err}`);
+  }
   return json({ ok: true, place_id: placeId, grade, total, capped, warnings });
 }

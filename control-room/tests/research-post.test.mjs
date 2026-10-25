@@ -10,6 +10,7 @@ import { gradeFrom } from "../functions/_lib/grade.js";
 import { parseResearch, validateResearch } from "../functions/_lib/research.js";
 import { claimKey, saveResearch } from "../functions/_lib/research-db.js";
 import { setSecret } from "../functions/_lib/settings.js";
+import { db } from "../functions/_lib/util.js";
 import { onRequestPost } from "../functions/api/agent/research/[id].js";
 import { fakeD1 } from "./helpers/fakeD1.mjs";
 
@@ -409,8 +410,11 @@ test("a row the 12-month purge blanked stays blank", async () => {
   }
 });
 
-test("the post uses at most 6 D1 statements", async () => {
+test("the post uses at most 10 D1 statements", async () => {
   const DB = await seed({ research: { notes: "[Nik 2026-10-19] owner is Sue" } });
+  // The schema check db() makes once per isolate (1–3 statements) is done first, so the count is the same whichever
+  // test runs first.
+  await db({ DB });
   const counted = countingDB(DB);
   const request = new Request(`${ORIGIN}/api/agent/research/${ID}`, {
     method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${KEY}` },
@@ -418,8 +422,87 @@ test("the post uses at most 6 D1 statements", async () => {
   });
   const res = await onRequestPost({ request, env: { DB: counted.DB }, params: { id: ID }, now: NOW });
   assert.equal(res.status, 200);
-  assert.ok(counted.used() <= 6, `used ${counted.used()}`);
+  // The agent key (1) + the lead (1) + saveResearch (3: read, then upsert + claim delete in one batch) + stage 4's
+  // ensureDemo for this A+ lead with an email (5 the first time a look is used: read, demo insert, applyStageEvent's
+  // read + insert, the "Approve the Landscaper look" todo; 4 once that todo exists).
+  assert.ok(counted.used() <= 10, `used ${counted.used()}`);
   assert.equal((await rowOf(DB)).status, "done");
+});
+
+// ---------------------------------------------------------------- stage 4: the demo (05-demo.md Task 8)
+
+const demosOf = (DB) => DB.prepare("SELECT * FROM demos WHERE place_id = ?").bind(ID).all().then((r) => r.results);
+const prospectOf = (DB) => DB.prepare("SELECT * FROM prospects WHERE place_id = ?").bind(ID).first();
+// The Green Leaf body graded A (not A+): 5 + 4 + 3 + 4 = 16 with reach 3.
+const gradeA = () => ({ ...greenLeaf(), points: { need: 5, means: 4, reach: 3, fit: 4 } });
+// Graded D on its points (8, fit 1), with an email all the same.
+const gradeD = () => ({ ...greenLeaf(), points: { need: 1, means: 1, reach: 5, fit: 1 } });
+
+test("posting research makes the demo and the ready prospect", async () => {
+  const DB = await seed();
+  const { status, body } = await post(DB, gradeA());
+  assert.equal(status, 200, JSON.stringify(body));
+  assert.deepEqual(body, { ok: true, place_id: ID, grade: "A", total: 16, capped: null, warnings: [] }, "the reply is the same as ever");
+  const demos = await demosOf(DB);
+  assert.equal(demos.length, 1);
+  assert.match(demos[0].slug, /^green-leaf-landscapes-[a-hj-km-np-z2-9]{6}$/);
+  assert.equal(demos[0].created_at, "2026-10-24T09:00:00Z", "made at the post's time");
+  assert.equal(demos[0].expires_at, "2027-04-22T09:00:00Z");
+  const p = await prospectOf(DB);
+  assert.equal(p.stage, "ready");
+  assert.equal(p.email, "dave@greenleaf.co.uk");
+  assert.equal(p.greet_name, "Dave");
+  // a second post keeps the demo
+  assert.equal((await post(DB, gradeA(), { now: new Date(NOW.getTime() + 60_000) })).status, 200);
+  assert.deepEqual(await demosOf(DB), demos);
+
+  // a D-grade payload makes neither
+  const d = await seed();
+  const r = await post(d, gradeD());
+  assert.equal(r.status, 200);
+  assert.equal(r.body.grade, "D");
+  assert.deepEqual(await demosOf(d), []);
+  assert.equal(await prospectOf(d), null);
+  // nor does finding no email (graded C), or a lead taken off the list while Claude researched it
+  const none = await seed();
+  assert.equal((await post(none, nothingFound())).status, 200);
+  assert.deepEqual(await demosOf(none), []);
+  const skipped = await seed({ research: { status: "skipped", notes: "[Nik 2026-10-24] Not a fit: Wrong trade" } });
+  assert.equal((await post(skipped, gradeA())).status, 200);
+  assert.deepEqual(await demosOf(skipped), []);
+  assert.equal(await prospectOf(skipped), null);
+});
+
+test("a demo that can't be made never changes the post's reply", async () => {
+  const DB = await seed();
+  // every demo insert fails, as D1 would on an outage mid-request
+  const failing = {
+    prepare: (sql) => {
+      if (/INSERT[^;]*INTO demos/i.test(sql)) throw new Error("D1_ERROR: database is locked: SQLITE_BUSY");
+      return DB.prepare(sql);
+    },
+    batch: (stmts) => DB.batch(stmts),
+  };
+  const logged = [];
+  const error = console.error;
+  console.error = (...args) => logged.push(args.join(" "));
+  let res;
+  try {
+    const request = new Request(`${ORIGIN}/api/agent/research/${ID}`, {
+      method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${KEY}` },
+      body: JSON.stringify(gradeA()),
+    });
+    res = await onRequestPost({ request, env: { DB: failing }, params: { id: ID }, now: NOW });
+  } finally {
+    console.error = error;
+  }
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true, place_id: ID, grade: "A", total: 16, capped: null, warnings: [] });
+  assert.equal((await rowOf(DB)).status, "done", "the research is saved");
+  assert.deepEqual(await demosOf(DB), []);
+  assert.equal(logged.length, 1);
+  assert.match(logged[0], /demo/i);
+  assert.ok(!logged[0].includes(KEY), "no secret in the log");
 });
 
 // ---------------------------------------------------------------- saveResearch

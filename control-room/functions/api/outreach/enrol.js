@@ -31,8 +31,9 @@ export async function onRequestPost({ request, env }) {
     const ts = now();
     await DB.batch(added.map((l) => DB.prepare("UPDATE leads SET status = ?, updated_at = ? WHERE place_id = ?")
       .bind(start ? "in outreach" : "new", ts, l.place_id)));
-    // their demo site is built the moment they join: the first email links to it
-    if (start) for (const l of added) demos[l.place_id] = await ensureDemo(DB, l);
+    // their demo site is made the moment they join when they qualify (A+/A/B with an email; null otherwise): the
+    // first email links to it
+    if (start) for (const l of added) demos[l.place_id] = (await ensureDemo(DB, l.place_id)).demo;
   }
   return json({ added: added.length, skipped, status: start ? "in outreach" : "new", demos });
 }
