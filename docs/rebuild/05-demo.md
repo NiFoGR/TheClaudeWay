@@ -177,11 +177,17 @@ generic follows the list above.
   sends `{kind: "view"}` to `/d/<slug>/e`. Clicks on "Order this site" send `order_page`.
 - The server ignores (204, nothing stored) when: the body isn't one of `view`, `order_page`, `order_click`; the
   user-agent looks like a bot or link scanner (list in Task 11) or is empty; the request carries Nik's valid login
-  cookie; the demo has expired; or the prospect is still in stage `ready` (no email sent yet, so it can only be Nik or
-  a leak).
+  cookie; the demo has expired; or there is no prospect, or it is still in stage `ready` with no first email `sent`
+  (none, or only one queued, sending, failed or cancelled: it can only be Nik or a leak). A `ready` prospect whose first
+  email has gone does count: stage 6's `followups` step records the send (ready → emailed) only on its next run, 5
+  minutes or more later, and they may tap the link as the email arrives (`mayCount` in `demo-db.js`).
 - Views are de-duplicated per demo: one per **30 minutes**.
 - A counted view inserts `demo_events (kind 'view')`, adds 1 to `prospects.views`, sets `last_view_at`, and calls
-  stage 0's `applyStageEvent(DB, place_id, "demo_view", now)` (emailed → viewed).
+  stage 0's `applyStageEvent(DB, place_id, "demo_view", now)` (emailed → viewed). For a prospect still `ready` (its
+  first email sent but not recorded yet) it first calls `applyStageEvent(DB, place_id, "first_sent", now)`, so the
+  stage goes ready → emailed → viewed; stage 6's `syncSent` then records the send as usual (it picks first emails by
+  `first_sent_at IS NULL`, not by stage, and books follow-up 1 for `viewed` too). A view turned away (the 30-minute
+  dedupe, an ended demo) moves nothing.
 
 ### 9. Hot leads (tick step `hot`, position 5)
 
@@ -347,7 +353,9 @@ demos and raises hot todos. The Control Room gets a Demo page and a demo card in
    invented filler — Task 6 test "bare lead renders placeholder and hides empty sections" and the numbers/claims check
    in Task 5.
 3. **Fake views** from link scanners, previews and Nik himself making leads look hot — Task 11 tests for bot UAs,
-   empty UA, owner cookie, stage `ready`, expired demo, 30-minute dedupe.
+   empty UA, owner cookie, stage `ready` with no first email sent, expired demo, 30-minute dedupe. **Real views lost**
+   in the minutes between a first email going and stage 6 recording it — the `ready` prospect with a `sent` first
+   email counts (demo-routes and email-e2e tests).
 4. **A changed template going out unapproved** — Task 7 hash-lock test and Task 9 test "approval of version 1 doesn't
    approve version 2".
 5. **Tick budget blow-up** when many leads need demos or are hot at once — Task 12 test "50 eligible + 20 hot leads
@@ -766,10 +774,12 @@ isBotUA(ua) → boolean                                // also true for empty/mi
 // demo-db.js
 EVENT_KINDS = ["view", "order_page", "order_click", "ordered"]          // kept for stage 9
 recordEvent(DB, demo, kind, now = new Date()) → Promise<boolean>         // kept: 30-minute view dedupe
-countView(DB, demo, now = new Date()) → Promise<boolean>                 // recordEvent + prospects views/last_view_at + applyStageEvent "demo_view"
+mayCount(DB, demo) → Promise<boolean>                                    // a prospect, and a first email sent (stage past ready, or ready with a `sent` first)
+countView(DB, demo, now = new Date()) → Promise<boolean>                 // mayCount + recordEvent + (ready: "first_sent") + prospects views/last_view_at + applyStageEvent "demo_view"
 ```
 `POST /d/:slug/e` always answers 204; it stores nothing when the body (max 200 bytes) isn't `view`/`order_page`/
-`order_click`, `isBotUA`, `isOwnerRequest`, demo missing or expired, or the prospect is in stage `ready`.
+`order_click`, `isBotUA`, `isOwnerRequest`, demo missing or expired, or `mayCount` is false (no prospect, or stage
+`ready` with no first email `sent`).
 
 - [ ] **Step 1: Write the failing test** — prospect `p1` in stage `emailed`, demo live:
   ```js
@@ -783,13 +793,16 @@ countView(DB, demo, now = new Date()) → Promise<boolean>                 // re
   await post(CHROME, '{"kind":"view"}', `cr_session=${await sessionToken("pw")}`);
   await post(CHROME, '{"kind":"hack"}');
   assert.equal(DB.raw.prepare("SELECT views FROM prospects").get().views, 1);
-  // stage 'ready' → not counted; expired → not counted; order_page → demo_events row, views unchanged
+  // stage 'ready' with no first email sent → not counted; expired → not counted; order_page → demo_events row, views unchanged
+  // stage 'ready' with a first email 'sent' (stage 6 not synced yet) → counted, stage viewed
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/demo-routes.test.mjs` → FAIL.
 - [ ] **Step 3: Implement `session.js`, `bots.js`, `countView` and `onRequestPost` in `d/[slug]/e.js`** — `session.js`
   keeps stage 0's cookie name `cr_session` and its token derivation exactly (moved, not changed). `countView` reads the
-  prospect, calls `recordEvent`, then one UPDATE with `views = views + 1`, `last_view_at`, `updated_at`, then
-  `applyStageEvent(DB, place_id, "demo_view", now)` (stage 0's `prospects.js`; a no-op unless the stage is `emailed`).
+  prospect and whether its first email is `sent` (one read, `mayCount`'s), calls `recordEvent`, then for a `ready`
+  prospect `applyStageEvent(DB, place_id, "first_sent", now)`, then one UPDATE with `views = views + 1`,
+  `last_view_at`, `updated_at`, then `applyStageEvent(DB, place_id, "demo_view", now)` (stage 0's `prospects.js`; a
+  no-op unless the stage is `emailed`).
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/*.test.mjs` → PASS (middleware
   login tests from stage 0 still pass).
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/session.js control-room/functions/_lib/demo/bots.js control-room/functions/_middleware.js control-room/functions/d/[slug]/e.js control-room/functions/_lib/demo-db.js control-room/tests/demo-routes.test.mjs && git commit -m "Demo: count only real prospect views" -m "$TRAILER"`

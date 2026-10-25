@@ -28,7 +28,7 @@ from the hot list. So **~1 client per 100–200 emailed**.
 | --- | --- | --- | --- |
 | **Week 1 (now)** | Get able to send | Sending engine + reply handling (free, on Cloudflare), warm-up schedule | Buy 3 mailboxes on aetoswebsites.com (Namecheap Private Email), approve the 5 starting emails |
 | **Weeks 2–3** | Warm-up: 5 → 14 emails a day per inbox | Onboarding (form, reminders, demo → final site, go-live), so the 7-day promise can be kept from the first sale | Approve Today's picks each morning (2 minutes) |
-| **Weeks 4–8** | Full speed: ~12 new businesses a day, ~250 a month | Chasing hot leads by email, monthly care (rank check, updates, client emails), the main website | Picks, approvals, optional calls to hot leads |
+| **Weeks 4–8** | Full speed: each mailbox starts ~0.5 new businesses a day (10 emails each over 60 days, 10 sends a mailbox a day), so 3 inboxes ≈ 1.5 a day, ~40 a month | Chasing hot leads by email, monthly care (rank check, updates, client emails), the main website | Picks, approvals, optional calls to hot leads |
 | **Month 3+** | Scale what works | More trades (roofers, plumbers…) and towns, better demos per trade, more inboxes | Decide on scaling spend (below) |
 
 ## Targets
@@ -39,10 +39,13 @@ from the hot list. So **~1 client per 100–200 emailed**.
 
 ## What actually makes it "serious money" (in order)
 
-1. **Volume.** One domain with 3 inboxes caps us at ~40 emails a day (~250 new businesses a month). That's ~1–2 clients
-   a month from email alone. **The single biggest lever is more sending**: 2 extra cheap domains (~£10/year each) with
-   3 inboxes each triples it. Nik said no to extra domains; Claude's advice is to revisit once the first clients prove
-   the funnel (month 2–3). One domain stays safe meanwhile.
+1. **Volume.** One domain with 3 inboxes sends at most ~30 cold emails a day, follow-ups included. Every business gets
+   10 emails over 60 days, so each inbox starts only ~0.5 new businesses a day (measured: 06 A2, A11 #4): ~1.5 a day,
+   ~40 a month. At ~1 client per 100–200 emailed that's well under 1 client a month from email alone. **The single
+   biggest lever is more sending**: 2 extra cheap domains (~£10/year each) with 3 inboxes each triples it (~4.5 a day,
+   ~120 a month). Different follow-up days could also lift each inbox to ~0.8 a day (06 Q-K, Nik's call). Nik said no
+   to extra domains; Claude's advice is to revisit once the first clients prove the funnel (month 2–3). One domain
+   stays safe meanwhile.
 2. **Conversion.** The email test and the demo get better every week (wins = demo views, replies, orders).
 3. **Nik's calls to hot leads.** Optional, but someone who opened their demo 3 times is worth a 5-minute call.
 4. **Retainers stack.** Every client adds £249/month; churn kept low by monthly results emails.

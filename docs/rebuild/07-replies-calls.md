@@ -65,8 +65,10 @@ One request returns everything; Claude never reads the database another way. Fie
   weekend status, prices in pounds, guarantee sentences, terms, what's included. The chat assistant and review lines
   are in `included` only while the settings `offer:chatbot_live` / `offer:review_booster_live` are `'1'` (stage 9's
   switches).
-- `voice`: `examples` and `rules` (the `style_examples` table, Nik's words), and `sent` (the last 10 emails Nik wrote
-  himself: first emails and his own replies, body only).
+- `voice`: `examples` and `rules` (the `style_examples` rows with source `nik_written`, Nik's words), and `sent` (the
+  last 10 emails Nik wrote himself, newest first, body only: his first emails from the `style_examples` rows with
+  source `nik_sent`, footer already off, so one he deletes on the Voice page is never copied again; and his own
+  replies from `messages`, author `nik`, kind `reply`).
 - `conversations` (oldest waiting first, at most 10):
   - `place_id`, `stage`, `reply_to` (their latest waiting message id), `waiting` (all waiting ids in this thread);
   - `lead` {business, trade, town, phone, greet_name};
@@ -197,7 +199,8 @@ Nik's own replies ("Send as me", "Reply as me") are not checked: they're his wor
   inbox, whichever runs first.
 - Nik adds and deletes examples and rules on the Voice page (built in stage 5–6). Rules are followed as rules;
   examples are copied closely where the situation matches. The Voice page's "How much is it?" banner counts an
-  `example` whose situation or text matches `/price|how much|cost/i`.
+  `example` with source `nik_written` whose situation or text matches `/price|how much|cost/i` (a first email he sent,
+  source `nik_sent`, never counts: "costing you jobs" is no price reply).
 
 ### Pausing Claude
 
@@ -921,7 +924,7 @@ it (180 days from the latest sent email). Don't use `demoReady` here: it can wri
 `url: null` for an expired demo, the one the reply is meant to switch back on. `drill:`/`test:` leads
 use fixtures from Task 17 and `https://aetoswebsites.com` when they have no demo.
 
-- [ ] **Step 1: Write the failing test** — seed (now = Wed 21 Oct 2026 09:30 UK = `2026-10-21T08:30:00Z`) prospect `p1` with Nik's first email, a follow-up, two waiting inbound (`m1` at 08:05Z, `m2` at 08:07Z, `m2` text `"How much?\n\nOn Tue, Nik wrote:\n> Hi"`), research grade A, demo slug `green-leaf-ab12` (created `2026-10-01T09:00:00Z`, expires `2027-03-30T09:00:00Z`) and a second, older and expired demo `green-leaf-old1` (created `2026-03-01T09:00:00Z`, expires `2026-03-15T09:00:00Z`) for `p1`; prospect `p2` stage `won` with a handled message.
+- [ ] **Step 1: Write the failing test** — seed (now = Wed 21 Oct 2026 09:30 UK = `2026-10-21T08:30:00Z`) prospect `p1` with Nik's first email (its `messages` row, and its `style_examples` row `sent:<that message id>`, kind `example`, situation "first email", source `nik_sent`, body starting "Hi Sam", as stage 5–6's `syncSent` saves it), a follow-up, two waiting inbound (`m1` at 08:05Z, `m2` at 08:07Z, `m2` text `"How much?\n\nOn Tue, Nik wrote:\n> Hi"`), research grade A, demo slug `green-leaf-ab12` (created `2026-10-01T09:00:00Z`, expires `2027-03-30T09:00:00Z`) and a second, older and expired demo `green-leaf-old1` (created `2026-03-01T09:00:00Z`, expires `2026-03-15T09:00:00Z`) for `p1`; prospect `p2` stage `won` with a handled message.
   ```js
   const res = await onRequestGet({ request: req("/api/agent/inbox", TOKEN), env });
   assert.equal(res.status, 200);
@@ -929,8 +932,8 @@ use fixtures from Task 17 and `https://aetoswebsites.com` when they have no demo
   assert.equal(body.paused, false); assert.equal(body.inside_hours, true);
   assert.equal(body.offer.full.build, 1950);
   assert.ok(!body.offer.included.includes("A chat assistant on your website."));   // offer:chatbot_live not set
-  assert.equal(body.voice.examples.length, 2);
-  assert.equal(body.voice.sent[0].body.startsWith("Hi Sam"), true);
+  assert.equal(body.voice.examples.length, 2);                                      // the two seeds: nik_written only, never the nik_sent row
+  assert.equal(body.voice.sent[0].body.startsWith("Hi Sam"), true);                 // from the style_examples nik_sent row
   assert.equal(body.conversations.length, 1);                                       // p1 has two demos rows: still one conversation
   const c = body.conversations[0];
   assert.equal(c.reply_to, "m2"); assert.deepEqual(c.waiting, ["m1", "m2"]);
@@ -948,7 +951,7 @@ use fixtures from Task 17 and `https://aetoswebsites.com` when they have no demo
   assert.equal((await onRequestGet({ request: req("/api/agent/inbox", "wrong"), env })).status, 401);
   ```
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/agent-inbox.test.mjs` → FAIL: cannot find `api/agent/inbox.js`.
-- [ ] **Step 3: Implement `buildInbox` and `seedVoice` in `_lib/replies-db.js`, and `onRequestGet` in `api/agent/inbox.js`** — `who` is `them` for inbound, otherwise `author`; conversations exclude prospects in `won` and `lost` with `lost_reason` `opt_out`/`bounce`.
+- [ ] **Step 3: Implement `buildInbox` and `seedVoice` in `_lib/replies-db.js`, and `onRequestGet` in `api/agent/inbox.js`** — `who` is `them` for inbound, otherwise `author`; conversations exclude prospects in `won` and `lost` with `lost_reason` `opt_out`/`bounce`. `voice.examples`/`voice.rules` = `style_examples` rows with source `nik_written` (kind `example` / `rule`); `voice.sent` = the newest 10 of Nik's first emails (`style_examples` rows with source `nik_sent`, so one deleted on the Voice page is gone) and his own replies (`messages` author `nik`, kind `reply`), body only.
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/agent-inbox.test.mjs` → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/replies-db.js control-room/functions/api/agent/inbox.js control-room/tests/agent-inbox.test.mjs && git commit -m "Replies: agent inbox with thread, offer, voice and slots" -m "$TRAILERS"`
 
@@ -1133,15 +1136,18 @@ nav item: the Voice page, `public/js/voice.js` and `POST`/`DELETE /api/voice/exa
 
 **Interfaces:** Consumes `seedVoice(DB, now)` (Task 9) and stage 5–6's `GET /api/voice` → `{templates, examples,
 has_price_reply}` and `POST /api/voice/examples`, `DELETE /api/voice/examples/:id`. Changes: `GET /api/voice` calls
-`seedVoice(DB, now)` before reading; `has_price_reply` is true when any `kind = 'example'` row's `situation` or `body`
-matches `/price|how much|cost/i` (rules don't count).
+`seedVoice(DB, now)` before reading; `has_price_reply` is true when any `kind = 'example'` row with `source =
+'nik_written'` has a `situation` or `body` matching `/price|how much|cost/i` (rules don't count, nor do sent first
+emails, `nik_sent`). Only the match widens: keep `hasPriceReply`'s source and kind filters.
 
 - [ ] **Step 1: Write the failing test**
   ```js
   const get = async () => (await voice.onRequestGet(ctx("/api/voice"))).json();
+  // Nik's first email to Sam, saved as stage 5–6's syncSent saves it (DB = the fakeD1 behind ctx)
+  DB.raw.prepare("INSERT INTO style_examples (id, kind, situation, body, source, created_at) VALUES ('sent:m1', 'example', 'first email', 'Hi Sam,\n\nA slow site is costing you jobs: have a look.', 'nik_sent', '2026-10-20T09:00:00Z')").run();
   const g = await get();
-  assert.deepEqual(g.examples.map((i) => i.situation).sort(), ["They ask for a call", "They ask for more info"]);
-  assert.equal(g.has_price_reply, false);
+  assert.deepEqual(g.examples.filter((i) => i.source === "nik_written").map((i) => i.situation).sort(), ["They ask for a call", "They ask for more info"]);
+  assert.equal(g.has_price_reply, false);                                 // a sent first email saying "costing you" doesn't count
   await examples.onRequestPost(ctx("/api/voice/examples", { kind: "rule", situation: "Always", body: "Never discuss price." }));
   assert.equal((await get()).has_price_reply, false);                     // a rule doesn't count
   await examples.onRequestPost(ctx("/api/voice/examples", { kind: "example", situation: "They ask what it costs", body: "It's £1,950 for the site." }));

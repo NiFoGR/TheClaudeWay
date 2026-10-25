@@ -144,7 +144,7 @@ I read all 14 files and checked the current `lead-manager/schema.sql`, which has
 - **Resolution — 06 wins.**
   - 07 Task 14 shrinks to:
     - put `seedVoice` into 06's `GET /api/voice`;
-    - widen `has_price_reply` to 07's `/price|how much|cost/i` over `situation`/`body` of `example` rows;
+    - widen `has_price_reply` to 07's `/price|how much|cost/i` over `situation`/`body` of `example` rows with source `nik_written` (sent first emails never count);
     - add tests to a new `voice-seed.test.mjs`.
   - Delete 07's Voice copy block in Part A ("What Nik sees") and its nav addition.
 

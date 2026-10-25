@@ -4,13 +4,16 @@
 //
 // Stored only when the request is a real prospect's: nothing for a body over 200 bytes or whose kind isn't view,
 // order_page or order_click ("ordered" only ever comes from Stripe), a bot, link scanner or empty user-agent
-// (demo/bots.js), Nik's login cookie (session.js), an unknown or bad slug, an ended demo, or a lead whose prospect is
-// missing or still `ready` (no email has gone out, so it can only be Nik or a leak). A view goes to countView (one per
-// 30 minutes, prospects.views, emailed → viewed); the order kinds to recordEvent.
+// (demo/bots.js), Nik's login cookie (session.js), an unknown or bad slug, an ended demo, or a lead with no prospect
+// or no first email gone out (demo-db.js's mayCount: then it can only be Nik or a leak). A prospect still `ready` whose
+// first email has gone counts: stage 6 records the send (ready → emailed) only on its next followups run, minutes
+// later, and they may tap the link as it arrives. A view goes to countView (one per 30 minutes, prospects.views, a
+// ready prospect's first_sent, emailed → viewed); the order kinds to mayCount, then recordEvent.
 // D1: none for anything turned away before the database (body, user-agent, Nik); demoBySlug's batch of 4, then
-// countView's 4–5 or recordEvent's 1. Tested in control-room/tests/demo-routes.test.mjs.
+// countView's 1–7 (4–5 for a counted view, 7 when it moves a ready prospect on), or mayCount's 1 and recordEvent's 1.
+// Tested in control-room/tests/demo-routes.test.mjs and tests/email-e2e.test.mjs.
 import { isBotUA } from "../../_lib/demo/bots.js";
-import { countView, demoBySlug, recordEvent } from "../../_lib/demo-db.js";
+import { countView, demoBySlug, mayCount, recordEvent } from "../../_lib/demo-db.js";
 import { isOwnerRequest } from "../../_lib/session.js";
 import { db } from "../../_lib/util.js";
 
@@ -64,11 +67,10 @@ async function store({ request, env, params }) {
   const now = new Date();
   const DB = await db(env);
   const found = await demoBySlug(DB, params?.slug, now);
-  if (!found || found.expired) return;
-  const stage = found.prospect?.stage;
-  if (!stage || stage === "ready") return;
+  if (!found || found.expired || !found.prospect) return;
+  // A prospect with a first email gone (mayCount): countView checks it itself, as it reads the stage it moves.
   if (kind === "view") await countView(DB, found.demo, now);
-  else await recordEvent(DB, found.demo, kind, now);
+  else if (await mayCount(DB, found.demo)) await recordEvent(DB, found.demo, kind, now);
 }
 
 export async function onRequestPost(context) {

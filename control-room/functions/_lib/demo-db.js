@@ -4,7 +4,8 @@
 // ensureDemo (Task 8) makes a lead's demo and its `ready` prospect once the lead qualifies (Part A §1): stage 2's
 // research route calls it right after saving the research, and the tick's `hot` step (Task 12) for leads that missed
 // it. demoBySlug finds a demo with everything its page needs. recordEvent (kept for stage 9) stores what a prospect did,
-// and countView (Task 11, the beacon's) counts a real view: one per 30 minutes, prospects.views, emailed → viewed.
+// mayCount says whether it may count (a prospect with a first email sent), and countView (Task 11, the beacon's)
+// counts a real view: one per 30 minutes, prospects.views, emailed → viewed.
 // templateApproval and approveTemplate (Task 9) are Nik's OK for a look (Part A §7, decision D-5), and demoReady is
 // what stages 5/6 ask before an email links to a demo. syncDemoExpiry and missingDemos (Task 12) are the tick's `hot`
 // step's (_lib/hot.js). latestDemo is the one rule for a lead's current demo (it can have several rows): the newest by
@@ -381,7 +382,13 @@ const VIEW_DEDUPE_MS = 30 * 60_000;
 const INSERT_EVENT_SQL = `INSERT INTO demo_events (slug, place_id, kind, at) SELECT ?1, ?2, ?3, ?4
   WHERE ?3 <> 'view' OR NOT EXISTS (SELECT 1 FROM demo_events
     WHERE place_id = ?2 AND kind = 'view' AND slug = ?1 AND at > ?5)`;
-const PROSPECT_STAGE_SQL = "SELECT stage FROM prospects WHERE place_id = ?";
+// The lead's prospect stage, and whether a first email to it has gone (`sent`: queued, sending, failed and cancelled
+// ones haven't), in one read. The unary + on m.status keeps SQLite on messages_place (place_id first), never
+// messages_due (status, due_at), which would read every sent email of every lead (tests/demo-routes.test.mjs checks
+// the plan).
+const MAY_COUNT_SQL = `SELECT p.stage, EXISTS (SELECT 1 FROM messages m WHERE m.place_id = p.place_id
+    AND m.direction = 'out' AND m.kind = 'first' AND +m.status = 'sent') AS went
+  FROM prospects p WHERE p.place_id = ?`;
 const COUNT_VIEW_SQL = "UPDATE prospects SET views = views + 1, last_view_at = ?, updated_at = ? WHERE place_id = ?";
 
 /**
@@ -399,19 +406,41 @@ export async function recordEvent(DB, demo, kind, now = new Date()) {
   return meta?.changes > 0;
 }
 
+// The lead's prospect stage when what's done on its demo may count (mayCount's rule), else null.
+async function countableStage(DB, placeId) {
+  const row = await DB.prepare(MAY_COUNT_SQL).bind(placeId).first();
+  if (!row?.stage) return null;
+  return row.stage !== "ready" || Number(row.went) > 0 ? row.stage : null;
+}
+
+/**
+ * Whether what a visitor does on `demo` may be counted (Part A §8): its lead has a prospect and a first email to it
+ * has gone out. That is a stage past `ready`, or still `ready` with a first email `sent`: stage 6's followups step
+ * records a sent first email (ready → emailed) only on its next run, 5 minutes or more after it went, and a prospect
+ * who taps the link as the email arrives is a real one. A `ready` prospect with no first email sent (none, or only
+ * one queued, sending, failed or cancelled) can only be Nik or a leak. → boolean. 1 D1 statement.
+ */
+export async function mayCount(DB, demo) {
+  return (await countableStage(DB, demo.place_id)) !== null;
+}
+
 /**
  * A real person's view of `demo` (Part A §8): the beacon calls it once its own checks pass (not a bot, not Nik, demo
- * live). Counted only when the lead's prospect exists and is past stage `ready` (an email went out, so it can't be Nik
- * or a leak) and recordEvent stores the view (the demo is live, no view of it in the last 30 minutes). Then one UPDATE
- * adds 1 to prospects.views and sets last_view_at and updated_at to now, and applyStageEvent "demo_view" moves emailed
- * → viewed (every other stage stays where it is). → true when counted.
- * D1: 1 statement for a missing or ready prospect, 2 for a repeat view, 4 for a counted view (5 when emailed → viewed).
+ * live). Counted only when mayCount's rule holds (a prospect, and a first email that has gone out) and recordEvent
+ * stores the view (the demo is live, no view of it in the last 30 minutes). Then, for a prospect still `ready` (its
+ * sent first email not recorded yet), applyStageEvent "first_sent" (ready → emailed), so the view moves it on like
+ * anyone else's; one UPDATE adds 1 to prospects.views and sets last_view_at and updated_at to now; and applyStageEvent
+ * "demo_view" moves emailed → viewed (every other stage stays where it is). A view turned away moves nothing.
+ * → true when counted.
+ * D1: 1 statement for a missing prospect or a ready one with no first email sent, 2 for a repeat view, 4 for a counted
+ * view (5 when emailed → viewed, 7 when ready → emailed → viewed).
  */
 export async function countView(DB, demo, now = new Date()) {
   const at = iso(msOf(now, "countView"));
-  const stage = await DB.prepare(PROSPECT_STAGE_SQL).bind(demo.place_id).first("stage");
-  if (!stage || stage === "ready") return false;
+  const stage = await countableStage(DB, demo.place_id);
+  if (!stage) return false;
   if (!(await recordEvent(DB, demo, "view", now))) return false;
+  if (stage === "ready") await applyStageEvent(DB, demo.place_id, "first_sent", at);
   await DB.prepare(COUNT_VIEW_SQL).bind(at, at, demo.place_id).run();
   await applyStageEvent(DB, demo.place_id, "demo_view", at);
   return true;

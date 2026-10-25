@@ -24,8 +24,12 @@ fixed schedule until they reply, book, buy, opt out, or the sequence ends.
 
 Each mailbox sends at most **about 10 cold emails a day, follow-ups included** (the warm-up ramp from stage 0:
 3, 5, 8, then 10 a day). One business gets up to **10 emails** (your first + 9 follow-ups) over 60 days. So at full
-speed **one mailbox can start about 1 new business a day (about 6 a week, Mon–Sat)**. One mailbox → ~6 new businesses
-a week; 12 mailboxes (3 domains × 4) → ~12 a day. The Control Room enforces this: it only lets you send a first email
+speed **one mailbox can start about 0.5 new businesses a day (about 3.5 a week)**; 12 mailboxes (3 domains × 4) →
+about 6 a day. Why not 1 a day: a follow-up that lands on a Sunday moves to Monday, and with A4's days (7, 10, 17 and
+24 days after the first email all land on the same two weekdays) they stack there, so Monday fills first and turns new
+first emails away. Measured over 70 simulated days with one mailbox capped at 10 (A11 #4): 0.4–0.5 a day. Even if
+first emails were started on planned weekdays, A4's days allow at most about 0.85 a day. Changing the days is your
+call (Q-K). The Control Room enforces this: it only lets you send a first email
 if your mailboxes have room for it today **and** on every day its 9 follow-ups will go out. The Leads page's "you can
 send N first emails today" banner uses the same number, so the banner and Send never disagree.
 
@@ -96,13 +100,22 @@ first email is `queued`, `sending`, `sent` or `failed`; a `cancelled` one frees 
 past `ready` or with a first email sending or sent (`store.IN_OUTREACH`), so a later search can set a lead whose first
 email is `queued` aside (a chain's branch, a duplicate listing). That email must never go: the claim of a `first` row
 (stage 0's `dispatchDue`) also needs the lead to pass stage 3's `READY_SQL`, which includes `l.excluded = 0`. The
-composer then shows `demoReady`'s `No demo yet: Excluded: <reason>`, and Nik can cancel it.
+composer then shows `demoReady`'s `No demo yet: Excluded: <reason>`, and Nik can cancel it. Nothing cancels it for
+him, so while it's held it takes no place in capacity planning (`roomForFirsts` and the Leads banner's "first emails
+waiting to go" leave out a queued first email whose lead fails `READY_SQL`, using the outbox's own `leadReadySql`),
+and once it has been held for more than an hour the `followups` step adds the `health` todo
+`health:first-held:<place_id>` "Your first email to `<business>` is on hold: `<reason>`. Open the lead to cancel it."
+(A10). If the lead passes the rule again it goes as normal (the claim's cap guard still keeps that day within its cap).
 
 **When it has actually gone** (message `sent`), the next `followups` step: calls `applyStageEvent(DB, place_id,
 "first_sent", now)` (stage 0's `_lib/prospects.js`) → `emailed`, sets `first_sent_at` = the message's `sent_at`, `root_message_id` = its `message_id`, `followup_step` 0,
 `next_followup_at` = `schedule(first_sent_at, 1)`, and saves a `style_examples` row (`id` "sent:" + message id, `kind`
 "example", `situation` "first email", `source` "nik_sent", `body` = the text without the footer). If a human reply,
-opt-out or bounce already arrived for that lead after `sent_at`, the stop rules apply at once instead (A5).
+opt-out or bounce already arrived for that lead after `sent_at`, the stop rules apply at once instead (A5). A demo
+view that comes in between (the prospect taps the link as the email lands, before this step runs) is counted by
+stage 4's beacon all the same: it fires `first_sent` then `demo_view` itself (ready → emailed → viewed, `mayCount` in
+`demo-db.js`), and this step still records `first_sent_at`, `root_message_id` and books follow-up 1 (it picks first
+emails by `first_sent_at IS NULL`, not by stage).
 
 **If it fails** (status `failed`): the prospect stays `ready`; the thread shows the error and a **Try again** button
 (re-runs the room/suppression checks and queues a copy with a new Message-ID).
@@ -116,7 +129,9 @@ Window: **`COLD_WINDOW = {start: "07:00", end: "19:00", days: [1, 2, 3, 4, 5, 6]
 | Days after the first email | 1 | 2 | 4 | 7 | 10 | 17 | 24 | 30 | 60 |
 
 - **Time of day:** the UK clock time the first email was actually sent, kept across clock changes (09:15 BST stays
-  09:15 GMT). Clamped into 07:00–18:59.
+  09:15 GMT). Clamped into 07:00–18:59. The tick runs on the 5-minute marks, so the last `followups` run before 19:00
+  (within 6 minutes of it) also queues what's booked up to 19:00, due at once: a follow-up booked for 18:56–18:59
+  goes a few minutes early that evening, on its A4 day, never the next sending day.
 - **Sunday → Monday**, same time.
 - **Never two on one UK day:** if a step lands on or before the UK day the previous follow-up went out (e.g. a
   Saturday first email: day 1 Sunday → Monday, day 2 Monday), it moves to the next sending day after it.
@@ -310,6 +325,17 @@ All the best.
 - **Template edited mid-sequence:** the next follow-up uses the new wording once it's approved again.
 - **Nik replies from his own mail app:** the system can't see it; their reply to it still stops the sequence.
 - **Re-scrape:** never touches `prospects` or `messages` (overview §4).
+- **Reset leads** (stage 1's workflow deletes `leads` and `research` but keeps `prospects`, `messages` and
+  `demos`): an emailed lead's follow-ups can't name the business, so they wait (never a made-up name) with the hold
+  todo `health:followup-demo:<place_id>` "Follow-ups to `<their email>` are on hold: the lead isn't in the Control Room
+  any more (Reset leads removed it). They start again if the lead is found again." They sort after the leads really
+  due, so they never take their places, and go on by themselves if a later search finds the same place.
+- **A follow-up that can't be written** (no business name left after cleaning, no subject, no address): the sequence
+  stops at once and a `health` todo `health:followup-fail:<place_id>` says "Follow-ups to `<business>` stopped: the
+  next one couldn't be written (`<why>`)." (the step's error names it that run), so it never takes one of the 10 due
+  rows every run.
+- **Set aside after Send** (A3): a queued first email whose lead no longer passes the ready rule is held, books no
+  place, and after an hour gets the todo `health:first-held:<place_id>`.
 
 ## A10. Todos and health lights
 
@@ -318,6 +344,9 @@ All the best.
 | `setup` | Approve your 9 follow-up emails | `setup:followups` | all 9 approved |
 | `health` | Follow-ups to `<business>` keep failing: `<error>` | `health:followup-fail:<place_id>` | a follow-up to them is sent, or the lead closes |
 | `health` | Follow-ups to `<business>` are on hold: their demo isn't available | `health:followup-demo:<place_id>` | the follow-up is queued |
+| `health` | Follow-ups to `<their email>` are on hold: the lead isn't in the Control Room any more (Reset leads removed it). They start again if the lead is found again. | `health:followup-demo:<place_id>` | the follow-up is queued (the lead was found again), or nothing is booked any more |
+| `health` | Follow-ups to `<business>` stopped: the next one couldn't be written (`<why>`). | `health:followup-fail:<place_id>` | a follow-up to them is sent, or the lead closes |
+| `health` | Your first email to `<business>` is on hold: `<reason>`. Open the lead to cancel it. (held more than an hour because the lead no longer passes the ready rule; `<reason>` is "a later search set it aside (`<exclude_reason>`)", "Claude's research says it's too big for us", "its demo site has expired", …) | `health:first-held:<place_id>` | that email is no longer queued (cancelled or sent), or the lead passes the ready rule again |
 
 Health light **Follow-ups** (`followupHealth`, shape `{name: "followups", level, detail, fix}`, registered with stage
 0's `registerLight`): **red** if any follow-up is more than 24 h overdue (queued `due_at`, or `next_followup_at` with
@@ -341,6 +370,10 @@ to do ("Open Setup → Mailboxes and fix the paused mailbox." / "Check the mailb
 4. Capacity test: one mailbox with `cap_override` 10, Nik sends whenever `roomForFirsts` says ≥ 1 for 70 days: no UK
    day ever has more than 10 cold sends, and over days 61–70 the average is between 0.8 and 1.2 new businesses a day.
    With the cap cut to 5 mid-run, follow-ups go before first emails and none is skipped.
+   **The 0.8–1.2 target is unmet until Nik answers Q-K.** With A4's days the test measures 0.4 a day over days 61–70
+   (0.5 over days 31–70; Nik turned away on 25 of 70 mornings, each time for a full Monday). The test checks 0.3–0.6
+   as an honest regression check on today's schedule and goes back to 0.8–1.2 if Nik picks days that reach it. Open
+   item for Nik at the end of the stage.
 5. Every composer check in A3 returns its exact message (`first-email.test.mjs`), and Send is refused with 400 for each.
 6. Follow-ups are not queued while any template is a draft; the `setup:followups` todo exists and closes when the 9th
    is approved.
@@ -389,8 +422,11 @@ messages, applies stops, closes finished sequences and queues due follow-ups. Tw
   counts one and each statement inside a `DB.batch` counts one; writes go in `DB.batch`). 3 per 5-minute tick = 36 an
   hour, far above need. The tick wraps `DB` in a counter and hands each step `ctx.budget` (stage 0's `runTick`), an
   object: `ctx.budget.left()` is the queries this step may still make. `followupsStep` uses at most
-  `Math.min(18, ctx.budget.left())` (18 when `ctx.budget` is absent, as in direct calls) and leaves the remaining
-  sub-steps for the next run when it's spent. Tests pass `budget: {left: () => N}`, never a number.
+  `Math.min(18, ctx.budget.left() − 1)`, keeping one for the tick's closing beat as send, daily_find, pick and hot do
+  (18 when `ctx.budget` is absent, as in direct calls), and leaves the remaining sub-steps for the next run when it's
+  spent. (Review fix: with `Math.min(18, left)` a busy inbound step left it 11–17 queries, it used them all, and the
+  tick's beat became the invocation's 51st D1 query, which D1 refuses.) Tests pass `budget: {left: () => N}`, never a
+  number.
 - Sign-offs and cold footers use the `business:sender_name` setting (`getSetting`), never the mailbox `display_name`.
 - No tracking pixels, no link rewriting, no HTML part.
 - Stored times are UTC ISO strings without milliseconds (`2026-10-23T08:15:00Z`, same as `util.now()`).
@@ -827,8 +863,14 @@ test("a smaller tick budget is respected", async () => {
 (`demoReady` is injected for tests: `followupsStep(ctx, {demoReady})` defaulting to stage 4's import; one `demoReady`
 call per lead queued, at most 3 per run, inside the 18-query budget. `dueLead`/`manyDue` seed the setting
 `business:sender_name` = "Nik" and a mailbox whose `display_name` is "Nik Example", so the footer test proves the
-setting is used. The step's cap is `Math.min(18, ctx.budget.left())`, read once at the start (18 when `ctx.budget`
-is absent); it checks its own `countingDB` count before each sub-step and each lead, and stops once the cap is spent.)
+setting is used. The step's cap is `Math.min(18, ctx.budget.left() − 1)`, keeping one for the tick's beat, read once
+at the start (18 when `ctx.budget` is absent); it checks its own `countingDB` count before each sub-step and each lead,
+and stops once the cap is spent.)
+Review additions to Task 8: `queueDue` holds a lead whose `leads` row is gone (Reset leads) with the hold todo and sorts
+it last; stops a lead whose follow-up can't be written with the `health:followup-fail:<place_id>` todo; reaches up to
+19:00 in the last run before the window ends (A4 "Time of day"). A last sub-step, `flagHeldFirsts(DB, now, {limit = 10,
+maxQueries}) → Promise<number>` (1 read, then 1 per todo), adds the `health:first-held:<place_id>` todo (A3 "Set aside
+after Send"); `closeFinished`'s todo cleanup closes it.
 - [ ] **Step 2: Run it to verify it fails** — → `followupsStep is not a function`.
 - [ ] **Step 3: Implement `retryFailed`, `closeFinished`, `queueDue`, `followupsStep`; add the STEPS entry in `tick.js`.**
 - [ ] **Step 4: Run tests to verify they pass** — `node --test control-room/tests/followups-db.test.mjs control-room/tests/tick.test.mjs` → PASS.
@@ -980,7 +1022,8 @@ test("retry re-queues a failed first email with a new Message-ID", async () => {
 Consumes: `ensureTemplates`, `checkFollowup`, `renderFollowup`, `followupsApproved`, `businessName`; `closeTodos`.
 Produces: `GET /api/voice` → `{templates: [{step, day_offset, body, status, approved_at, issues, preview}], examples:
 [{id, kind, situation, body, source, created_at}], has_price_reply: boolean}` (preview uses the newest prospect with a
-demo, else the A7 sample); `PUT /api/voice/followups/:step {body}` → saves, status `draft`, `approved_at` NULL,
+demo, greeted as Send stores it, `greetingFor`: "Hi Mark," for a stored "MARK", else the A7 sample; `has_price_reply`
+counts only `nik_written` example rows); `PUT /api/voice/followups/:step {body}` → saves, status `draft`, `approved_at` NULL,
 returns `{template}`; `POST …/approve` → 400 `{error}` if `checkFollowup` has issues, else `approved`, and when all 9
 are approved `closeTodos(DB, "setup:followups")`; `POST /api/voice/examples {kind, situation, body}` (kind `example`
 or `rule`, situation and body non-empty, body ≤ 2,000 chars) → `{example}` with `source` "nik_written";
@@ -1189,13 +1232,27 @@ test("cap respected; follow-ups before first emails; none skipped", async () => 
   content, so the thread mounted here is the only copy of the messages.
 - The Voice page: `GET /api/voice` (`api/voice/index.js`), `api/voice/followups/*`, `api/voice/examples/*`,
   `public/js/voice.js` and `voice.test.mjs` are this stage's and the only ones. Stage 7 adds `seedVoice` into this
-  `GET /api/voice`, widens `has_price_reply` to `/price|how much|cost/i` over `situation`/`body` of `example` rows,
-  and puts its tests in a new `voice-seed.test.mjs`.
+  `GET /api/voice`, widens `has_price_reply` to `/price|how much|cost/i` over `situation`/`body` of `example` rows
+  with `source` `nik_written` (sent first emails never count: "costing you jobs" is no price reply), and puts its tests
+  in a new `voice-seed.test.mjs`.
 - Data: `style_examples` rows `source "nik_sent"`, `situation "first email"`, `id "sent:<message id>"`; rows `source
-  "nik_written"` from the Voice page (situation "they ask the price" = decision D-3) — read by stage 7's reply Routine.
+  "nik_written"` from the Voice page (situation "they ask the price" = decision D-3) — read by stage 7's reply Routine:
+  its `voice.examples`/`rules` are the `nik_written` rows only, and its `sent` takes Nik's first emails from the
+  `nik_sent` rows (not from `messages`), so one he deletes on the Voice page is never copied again.
+  **The `sent:<message id>` rows are per-lead data:** each holds that prospect's greeting ("Hi Mark,"), Nik's
+  business-specific opener and their demo link, and has no `place_id`. Stage 11's purge must delete them together
+  with that lead's messages, joined by the message id (`DELETE FROM style_examples WHERE id IN (SELECT 'sent:' || id
+  FROM messages WHERE place_id IN (…) AND kind = 'first')`, run before the messages delete).
+- `prospects.next_followup_at`: while `followup_step < 9` it is when the next follow-up is due. Once `followup_step =
+  9` (follow-up 9 sent, or skipped by Nik) it is the **close time**, when `closeFinished` marks the lead
+  `lost`/`sequence_done`; no email goes then. A reader that says "next email" must also check `followup_step < 9`.
 - Tick step `followups` at position 3 (after `reply_fire`, before `send`, every 5 minutes); todo dedupes
-  `setup:followups`, `health:followup-fail:<place_id>`, `health:followup-demo:<place_id>`. No light is named after a
-  todo prefix: the light is `followups`, the todos start `health:followup-`, so the Todo board shows them in Today.
+  `setup:followups`, `health:followup-fail:<place_id>`, `health:followup-demo:<place_id>`, `health:first-held:<place_id>`
+  (A10). No light is named after a todo prefix: the light is `followups`, the todos start `health:followup-` and
+  `health:first-held:`, so the Todo board shows them in Today.
+- Capacity: a queued first email whose lead no longer passes stage 3's `READY_SQL` books no place: `planningRows` /
+  `roomForFirsts` and stage 3's `capacityNow` (`first_queued`) leave it out, with stage 0's `leadReadySql` (exported
+  from `_lib/mail/outbox.js` for this).
 
 **Needed from other stages (not in the overview):**
 - Stage 4: `demoReady(DB, placeId) → Promise<{ok: boolean, url: string|null, reason: string}>` (reason in plain
@@ -1229,6 +1286,21 @@ test("cap respected; follow-ups before first emails; none skipped", async () => 
 
 | # | Question | Default the build uses |
 | --- | --- | --- |
-| Q-K | Follow-up days 1, 2, 4, 7, 10, 17, 24, 30, 60 | As listed |
+| Q-K | Follow-up days 1, 2, 4, 7, 10, 17, 24, 30, 60 (they set how many new businesses a mailbox can start: see below) | As listed |
 | Q-L | Send first emails before the 9 follow-ups are approved? | Yes, with a warning; those leads get their follow-ups once you approve (one step at a time, nothing skipped) |
 | Q-M | Skip bank holidays? | No: send as normal (Mon–Sat), since most tradespeople work them |
+
+**Q-K trade-off (measured).** Same rule each time: one mailbox, cap 10, Nik sends a first email whenever there's room.
+New businesses a mailbox starts per day:
+
+| Follow-up days | New businesses a day per mailbox |
+| --- | --- |
+| As listed, Sunday moves to Monday (today's build) | 0.51 |
+| As listed, but a Sunday send moves back to Saturday instead (the step after still moves on if they'd clash) | 0.71 |
+| Multiples of 7, or a multiple of 7 plus 1 (e.g. 1, 7, 8, 14, 15, 21, 28, 35, 63) | 0.81 |
+| As listed, plus a planner that picks the weekdays first emails start on | up to 0.85 |
+
+At 0.5 a day one mailbox starts about 3.5 businesses a week (12 mailboxes about 6 a day). If Nik changes the days,
+change `FOLLOWUP_DAYS` or the Sunday rule (`sendingDay` / `dueDay`) in `_lib/followups.js` and the A4 worked-example
+tests, then put A11 #4's 0.8–1.2 back in `email-e2e.test.mjs` if the new schedule reaches it (only the multiple-of-7
+days or a start-day planner get near 0.8).

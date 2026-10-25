@@ -131,8 +131,10 @@ One column per stage from overview §5, in this order. Labels come from stage 3'
 - **when** (UK dates):
   - past: same day "today", 1 day "yesterday", 2–6 days "<n> days ago", else "15 Oct".
   - future: "today", "tomorrow", else "Sat 24 Oct".
-- **Next follow-up:** for stages `emailed` and `viewed` with `next_followup_at` set: "Next email <future when>". Every
-  other card has no next line.
+- **Next follow-up:** for stages `emailed` and `viewed` with `next_followup_at` set: while `followup_step < 9` (a
+  missing step counts as 0) "Next email <future when>"; at `followup_step = 9` (follow-up 9 sent, or skipped by Nik)
+  `next_followup_at` is the close time, not an email (06's cross-stage interfaces), so "No more emails · closes
+  <future when>". Every other card has no next line.
 - **Empty board** (no prospects): "No one in the pipeline yet. Pick today's leads on the Leads page." with a link to
   `/#/leads?view=ready`.
 - **Empty column:** "Nobody here".
@@ -433,7 +435,10 @@ The privacy notice (stage 0) promises: "If we contacted you and you didn't becom
 - **Who is deleted:** a `place_id` that has no `clients` row, whose last contact is more than 12 months ago. Last
   contact = the newest of its `messages.created_at`, `prospects.updated_at` and `research.researched_at`
   (`queued_at` when not researched). A lead with no dated row at all is never touched.
-- **What is deleted:** its `prospects` and `messages` rows, and everything its `research` row holds: that row is
+- **What is deleted:** its `prospects` and `messages` rows, the `style_examples` rows made from its first emails
+  (stage 6 saves each first email Nik sent, as id `sent:<message id>`: it holds their greeting, Nik's opener for them
+  and their demo link, and has no `place_id`, so it's found by the message id, before the messages go), and
+  everything its `research` row holds: that row is
   blanked to a data-free `skipped` row (every data column NULL, `too_big = 0`, both dates NULL, notes `Skipped:
   details deleted 12 months after last contact.`), never deleted. Stage 1's research queue treats any `research` row
   as handled, so a deleted row would put the lead back in the queue the next morning: researched again, a new demo,
@@ -566,9 +571,11 @@ JS, `style.css`.
   - `pastWhen(iso, now) → string` · `futureWhen(iso, now) → string` · `ukShortDate(ukDateStr) → "15 Oct"` ·
     `ukDayDate(ukDateStr) → "Sat 24 Oct"`
   - `lastEvent(row, now) → string`, where `row` is a pipeline row: `{place_id, stage, stage_at, views, last_view_at,
-    last_inbound_at, next_followup_at, lost_reason, name, grade, last_out_at, last_out_kind, last_out_step,
-    last_out_author, call_at}`
-  - `nextLine(row, now) → string|null`
+    last_inbound_at, next_followup_at, followup_step, lost_reason, name, grade, last_out_at, last_out_kind,
+    last_out_step, last_out_author, call_at}`
+  - `nextLine(row, now) → string|null`: branches on `followup_step` (Part A "Next follow-up"), never on
+    `last_out_step`: a skipped step 9 leaves follow-up 8 as the last message sent while `next_followup_at` is already
+    the close time.
   - `pipelineColumns(rows, now) → {columns: [{stage, label, count, cards, more}], lost: {count, cards}}`, where a card
     is `{place_id, business, grade, hot, event, next, lead_link, thread_link}`
   - `leadLink(id) → "/#/lead/<id>"` · `threadLink(id) → "/#/replies/<id>"`
@@ -579,9 +586,9 @@ JS, `style.css`.
   | place | Row fields |
   | --- | --- |
   | pr | `ready`, `stage_at` 2026-10-22T08:00Z |
-  | pe | `emailed`, last_out first/nik 2026-10-20T08:00Z, next 2026-10-23T07:00Z |
-  | pv | `viewed`, views 1, last_view 2026-10-20T09:00Z, last_out first 2026-10-19T08:00Z, next 2026-10-24T07:00Z |
-  | ph | `viewed`, views 3, last_view 2026-10-21T20:00Z, last_out followup step 2 2026-10-21T07:00Z, next 2026-10-25T08:00Z, `stage_at` older than pv's |
+  | pe | `emailed`, last_out first/nik 2026-10-20T08:00Z, followup_step 0, next 2026-10-23T07:00Z |
+  | pv | `viewed`, views 1, last_view 2026-10-20T09:00Z, last_out first 2026-10-19T08:00Z, followup_step 0, next 2026-10-24T07:00Z |
+  | ph | `viewed`, views 3, last_view 2026-10-21T20:00Z, last_out followup step 2 2026-10-21T07:00Z, followup_step 2, next 2026-10-25T08:00Z, `stage_at` older than pv's |
   | prp | `replied`, last_inbound 2026-10-22T09:30Z |
   | pn | `needs_nik`, last_inbound 2026-10-21T16:00Z |
   | pc | `call_booked`, call_at 2026-10-23T10:00Z |
@@ -609,6 +616,11 @@ JS, `style.css`.
     assert.equal(card("pe").next, "Next email tomorrow"); assert.equal(card("pv").next, "Next email Sat 24 Oct");
     assert.equal(card("prp").next, null);
     assert.deepEqual([card("pe").lead_link, card("pe").thread_link], ["/#/lead/pe", "/#/replies/pe"]);
+    // After follow-up 9 (sent, or skipped with follow-up 8 the last one sent) next_followup_at is the close time.
+    const closing = { place_id: "p9", stage: "emailed", stage_at: "2026-08-20T08:00:00Z", followup_step: 9,
+      next_followup_at: "2026-10-29T08:15:00Z", last_out_kind: "followup", last_out_step: 8 };
+    assert.equal(nextLine(closing, NOW), "No more emails · closes Thu 29 Oct");
+    assert.doesNotMatch(nextLine(closing, NOW), /^Next email/);
   });
   test("columns cap at 50 cards and report the rest", () => {
     const many = Array.from({ length: 53 }, (_, i) => ({ place_id: `x${i}`, stage: "emailed", stage_at: "2026-10-20T08:00:00Z", views: 0 }));
@@ -817,7 +829,8 @@ JS, `style.css`.
   - **Lights:** `(await healthFromDb(DB, env, now)).lights`.
   - **Todos:** one query, `todos LEFT JOIN leads`, plus correlated subqueries for the soonest confirmed `calls.phone`.
     Skip `place_id LIKE 'drill:%' OR place_id LIKE 'test:%'`. Then `visibleTodos(rows, lights)`.
-  - **Pipeline:** one query, `prospects LEFT JOIN leads LEFT JOIN research`, with the same drill/test filter.
+  - **Pipeline:** one query, `prospects LEFT JOIN leads LEFT JOIN research`, with the same drill/test filter. It
+    selects `p.followup_step` with `p.next_followup_at`, so `nextLine` can tell a follow-up from the close time.
     Correlated subqueries get the latest sent outbound (`sent_at, kind, step, author`) and the soonest confirmed
     `calls.slot_at`.
   - **Clients:** one query per Task 2's row shape. The care todo is the earliest open `care`/`build` todo with that
@@ -1392,8 +1405,8 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
   - `PURGE_BATCH = 90`
   - `purgeCutoff(now) → ISO string`: UK midnight at the start of the same UK calendar date one year earlier (29 Feb →
     28 Feb).
-  - `purgeOld(DB, now, {maxRounds}) → Promise<{purged, done}>`: each round is 1 select + 1 `DB.batch` of 3
-    statements (2 deletes and the `research` blanking update);
+  - `purgeOld(DB, now, {maxRounds}) → Promise<{purged, done}>`: each round is 1 select + 1 `DB.batch` of 4
+    statements (3 deletes and the `research` blanking update), 5 queries as countingDB counts them;
     `done` is true when the last select returned fewer than `PURGE_BATCH` ids.
   - `purgeStep = {name: "purge", everyMinutes: 60, run}`.
 
@@ -1402,11 +1415,13 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
 
   | place | rows | last contact | expected |
   | --- | --- | --- | --- |
-  | old1 | `leads` row (score 60), prospect `lost`, 2 messages (newest 2025-10-20T09:00Z), research, suppression row for its email | 2025-10-20 | prospect, messages gone; research blanked (`skipped`, no data, no dates); suppression and lead kept |
+  | old1 | `leads` row (score 60), prospect `lost`, 2 messages (its first email `old1-first`, kind `first`; newest 2025-10-20T09:00Z), research, suppression row for its email, `style_examples` row `sent:old1-first` (source `nik_sent`) | 2025-10-20 | prospect, messages, `sent:old1-first` gone; research blanked (`skipped`, no data, no dates); suppression and lead kept |
   | old2 | `leads` row (score 60), research only, `researched_at` 2025-09-01T07:00Z, no prospect | 2025-09-01 | research blanked; lead kept |
   | recent | prospect, message 2025-11-01T09:00Z, research 2025-09-01 | 2025-11-01 | kept |
   | client1 | prospect `won`, messages 2025-01-10, `clients` row with this `place_id` | 2025-01-10 | kept |
   | nodate | research with `researched_at` and `queued_at` NULL | none | kept |
+
+  Also a `style_examples` row `nik-1` (source `nik_written`, situation "they ask the price"), tied to no lead: kept.
 
   ```js
   test("deletes only non-clients last contacted over 12 months ago", async () => {
@@ -1425,6 +1440,9 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
         "emails", "copy", "site_review", "searched"]) assert.equal(r[col], null, col);
     }
     assert.equal((await DB.prepare("SELECT COUNT(*) AS n FROM suppression").first()).n, 1);
+    // Also seeded: a Voice page example `nik-1` (source nik_written, no lead). Old1's first email as a style example
+    // goes with its messages; Nik's own examples stay.
+    assert.deepEqual((await DB.prepare("SELECT id FROM style_examples ORDER BY id").all()).results.map((x) => x.id), ["nik-1"]);
     assert.deepEqual(await purgeOld(DB, NOW, { maxRounds: 5 }), { purged: 0, done: true });   // never selected again
   });
   test("a purged lead isn't queued for research again", async () => {
@@ -1450,7 +1468,7 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
     assert.equal(await purgeStep.run({ ...ctx, now: new Date("2026-10-30T12:00:00Z") }), "done this month");
     assert.equal(await purgeStep.run({ ...ctx, budget: { left: () => 3 } }), "done this month");
     await setSetting(DB, "purge:month", "2026-09");
-    assert.equal(await purgeStep.run({ ...ctx, budget: { left: () => 5 } }), "deferred");   // floor((5 - 2) / 4) = 0 rounds
+    assert.equal(await purgeStep.run({ ...ctx, budget: { left: () => 5 } }), "deferred");   // floor((5 - 2) / 5) = 0 rounds
   });
   ```
 - [ ] **Step 2: Run it to verify it fails.** `node --test control-room/tests/purge.test.mjs` fails with "Cannot find
@@ -1467,12 +1485,15 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
        AND place_id NOT IN (SELECT place_id FROM clients WHERE place_id IS NOT NULL)
     ORDER BY last LIMIT ?2
     ```
-  - One `DB.batch` of 3 statements: `DELETE FROM prospects WHERE place_id IN (…)`, `DELETE FROM messages WHERE
+  - One `DB.batch` of 4 statements, in this order: `DELETE FROM style_examples WHERE id IN (SELECT 'sent:' || id FROM
+    messages WHERE place_id IN (…) AND kind = 'first')` (first: after the messages delete its subquery finds nothing),
+    `DELETE FROM prospects WHERE place_id IN (…)`, `DELETE FROM messages WHERE
     place_id IN (…)` and `UPDATE research SET status = 'skipped', grade = NULL, points = NULL, grade_reason = NULL, angle = NULL, opener = NULL, owner = NULL, best_email = NULL, best_email_why = NULL, emails = NULL, copy = NULL, site_review = NULL, searched = NULL, too_big = 0, notes = 'Skipped: details deleted 12 months after last contact.', queued_at = NULL, researched_at = NULL WHERE place_id IN (…)`. The `research` row is
     never deleted: stage 1's queue treats any row as handled. Never touch `suppression`, `clients`, `client_links` or
     `leads`.
   - `run(ctx)`: `month = ukDate(now).slice(0, 7)`; if `purge:month` equals it, return "done this month" (1 query).
-    Otherwise `maxRounds = Math.min(5, Math.floor((ctx.budget.left() - 2) / 4))`; with 0 rounds return "deferred". Run `purgeOld`;
+    Otherwise `maxRounds = Math.min(5, Math.floor((ctx.budget.left() - 2) / 5))` (a round is 1 select + a batch of
+    4); with 0 rounds return "deferred". Run `purgeOld`;
     when `done`, set `purge:month = month`. Return "nothing to purge", "purged <n> leads" or "purged <n> leads, more
     next tick".
 - [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/purge.test.mjs` passes (4 tests),

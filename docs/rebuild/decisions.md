@@ -50,6 +50,11 @@ plus a check on whether the grades predict sales), Money and Map Rank.
 - **Volume:** about 10 emails a day per domain, follow-ups included. After the first sale Nik buys about 3 domains
   with 4 mailboxes each, so the sending side is built for many mailboxes from day one (each with its own daily cap
   and warm-up).
+  - Measured (stage 6's capacity test, 06 A11 #4): with the follow-up days 1, 2, 4, 7, 10, 17, 24, 30 and 60 and a cap
+    of 10 a day, one mailbox starts about **0.5 new businesses a day** (0.4 over days 61–70, about 3.5 a week), not
+    the ~1 a day first assumed: each business takes 10 emails over 60 days, and Sunday follow-ups move to Monday,
+    which fills first. 12 mailboxes ≈ 6 a day. Even with planned start days these days allow at most ~0.85 a day.
+    Other follow-up days would give more (06 Q-K: up to ~0.8); that's Nik's call.
 - **Who gets emailed:**
   - A+ and A always.
   - B only when the mailboxes have spare room.

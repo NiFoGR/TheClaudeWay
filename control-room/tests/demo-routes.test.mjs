@@ -4,8 +4,10 @@
 // as they were for the order page.
 // Counting real views (Task 11, Part A §8): POST /d/:slug/e always answers 204 and stores nothing for a bot or an empty
 // user-agent, Nik's login cookie, an unknown kind, a body over 200 bytes, a missing or ended demo, or a prospect that is
-// missing or still `ready`; a view goes through countView (one per 30 minutes), order_page/order_click through
-// recordEvent. session.js holds the login cookie the middleware has always set; bots.js the user-agents never counted.
+// missing or still `ready` with no first email sent (a `ready` one whose first email has gone, before stage 6's
+// followups step records it, counts: mayCount); a view goes through countView (one per 30 minutes; ready → emailed →
+// viewed for such a prospect), order_page/order_click through recordEvent. session.js holds the login cookie the
+// middleware has always set; bots.js the user-agents never counted.
 // Run: node --test control-room/tests/demo-routes.test.mjs
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
@@ -16,7 +18,7 @@ import * as oldDemo from "../functions/_lib/demo.js";
 import { BOT_UA, isBotUA } from "../functions/_lib/demo/bots.js";
 import { checkDemoHtml } from "../functions/_lib/demo/check.js";
 import { buildDemoData } from "../functions/_lib/demo/data.js";
-import { countView, EVENT_KINDS } from "../functions/_lib/demo-db.js";
+import { countView, EVENT_KINDS, mayCount } from "../functions/_lib/demo-db.js";
 import { offerFor } from "../functions/_lib/offer.js";
 import { page } from "../functions/_lib/page.js";
 import { isOwnerRequest, SESSION_COOKIE, sessionToken } from "../functions/_lib/session.js";
@@ -26,7 +28,7 @@ import { onRequestPost } from "../functions/d/[slug]/e.js";
 import { onRequestGet, onRequestHead } from "../functions/d/[slug]/index.js";
 import { LEADS } from "./fixtures/demo-fixtures.mjs";
 import { fakeD1 } from "./helpers/fakeD1.mjs";
-import { SEED_AT, seedDemo, seedLead, seedMailbox, seedProspect, seedResearch } from "./helpers/shortlistSeed.mjs";
+import { SEED_AT, seedDemo, seedLead, seedMailbox, seedMessage, seedProspect, seedResearch } from "./helpers/shortlistSeed.mjs";
 
 // Part A §6, word for word.
 const CSP = "default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'";
@@ -351,7 +353,7 @@ test("Task 11 spec: a real view counts once per 30 minutes; bots, an empty UA, N
 
 test("Task 11 spec: a prospect still in stage ready and an expired demo count nothing; order_page is an event, never a view", async (t) => {
   at(t, NOW);
-  // stage ready: no email has gone out, so only Nik or a leak can have the link
+  // stage ready and no first email sent: only Nik or a leak can have the link
   const ready = await seed({ prospect: { stage: "ready" } });
   for (const body of [VIEW, '{"kind":"order_page"}', '{"kind":"order_click"}']) {
     assert.equal((await beaconTo(ready)(CHROME, body)).status, 204, body);
@@ -372,6 +374,84 @@ test("Task 11 spec: a prospect still in stage ready and an expired demo count no
   assert.equal((await beaconTo(DB)(CHROME, '{"kind":"order_page"}')).status, 204);
   assert.deepEqual(events(DB), ["order_page 2026-10-21T10:00:00Z"]);
   assert.deepEqual(prospectRow(DB), UNTOUCHED);
+});
+
+// Stage 6 marks a sent first email (ready → emailed) on its followups step's next run, up to 5 minutes after it went.
+// `ready` alone isn't "no email has gone out": the gate is a prospect with a first email really sent.
+const NOW_ISO = "2026-10-21T10:00:00Z";
+const firstEmail = (DB, status, place_id = PLACE) => seedMessage(DB, { place_id, kind: "first", status });
+
+test("a ready prospect with no first email sent counts nothing: none, or only one queued, sending, failed or cancelled", async (t) => {
+  at(t, NOW);
+  for (const status of [null, "queued", "sending", "failed", "cancelled", "another lead's sent"]) {
+    const DB = await seed({ prospect: { stage: "ready" }, mailbox: true });
+    if (status === "another lead's sent") {
+      await seedLead(DB, { place_id: "other-lead" });
+      await firstEmail(DB, "sent", "other-lead");
+    } else if (status) {
+      await firstEmail(DB, status);
+    }
+    for (const body of [VIEW, '{"kind":"order_page"}', '{"kind":"order_click"}']) {
+      assert.equal((await beaconTo(DB)(CHROME, body)).status, 204, `${status}: ${body}`);
+    }
+    assert.deepEqual(prospectRow(DB), { ...UNTOUCHED, stage: "ready" }, String(status));
+    assert.deepEqual(events(DB), [], String(status));
+    assert.equal(await countView(DB, DB.raw.prepare("SELECT * FROM demos").get(), NOW), false, String(status));
+    assert.equal(prospectRow(DB).stage, "ready", String(status));
+  }
+});
+
+test("a first email that has gone counts at once, before the followups step records it: ready → emailed → viewed", async (t) => {
+  at(t, NOW);
+  // The email went at 07:00 and the prospect taps the link as it arrives: the lead is still `ready` (the followups
+  // step hasn't run since). Their view counts, and moves them on: first_sent, then demo_view.
+  const DB = await seed({ prospect: { stage: "ready" }, mailbox: true });
+  await firstEmail(DB, "sent");
+  assert.equal((await beaconTo(DB)(CHROME, VIEW)).status, 204);
+  assert.deepEqual(prospectRow(DB), { views: 1, stage: "viewed", stage_at: NOW_ISO, last_view_at: NOW_ISO, updated_at: NOW_ISO });
+  assert.deepEqual(events(DB), [`view ${NOW_ISO}`]);
+  // the order page's events count too, and never move the stage
+  await beaconTo(DB)(CHROME, '{"kind":"order_page"}');
+  await beaconTo(DB)(CHROME, '{"kind":"order_click"}');
+  assert.deepEqual(events(DB), [`view ${NOW_ISO}`, `order_page ${NOW_ISO}`, `order_click ${NOW_ISO}`]);
+  assert.equal(prospectRow(DB).views, 1);
+
+  // Order events first, on a lead still `ready`: stored, the stage left for the followups step to move.
+  const order = await seed({ prospect: { stage: "ready" }, mailbox: true });
+  await firstEmail(order, "sent");
+  await beaconTo(order)(CHROME, '{"kind":"order_page"}');
+  assert.deepEqual(events(order), [`order_page ${NOW_ISO}`]);
+  assert.deepEqual(prospectRow(order), { ...UNTOUCHED, stage: "ready" });
+});
+
+test("countView on a ready prospect with a sent first email moves nothing when the view is turned away", async () => {
+  // A view in the last 30 minutes (the dedupe), or an ended demo: no view counted, so no stage event either.
+  const deduped = await seed({ prospect: { stage: "ready" }, mailbox: true });
+  await firstEmail(deduped, "sent");
+  deduped.raw.prepare("INSERT INTO demo_events (slug, place_id, kind, at) VALUES (?, ?, 'view', ?)").run(SLUG, PLACE, "2026-10-21T09:45:00Z");
+  assert.equal(await countView(deduped, deduped.raw.prepare("SELECT * FROM demos").get(), NOW), false);
+  assert.deepEqual(prospectRow(deduped), { ...UNTOUCHED, stage: "ready" });
+
+  const ended = await seed({ demo: { expires_at: NOW_ISO }, prospect: { stage: "ready" }, mailbox: true });
+  await firstEmail(ended, "sent");
+  assert.equal(await countView(ended, ended.raw.prepare("SELECT * FROM demos").get(), NOW), false);
+  assert.deepEqual(prospectRow(ended), { ...UNTOUCHED, stage: "ready" });
+  assert.deepEqual(events(ended), []);
+});
+
+test("the may-count read finds a lead's first email through messages_place, never messages_due or a scan", async () => {
+  const DB = await seed({ prospect: { stage: "ready" }, mailbox: true });
+  await firstEmail(DB, "sent");
+  const seen = [];
+  const spy = {
+    prepare: (sql) => ({ bind: (...args) => { seen.push({ sql, args }); return DB.prepare(sql).bind(...args); } }),
+    batch: (stmts) => DB.batch(stmts),
+  };
+  assert.equal(await mayCount(spy, { ...DB.raw.prepare("SELECT * FROM demos").get() }), true);
+  assert.equal(seen.length, 1, "one statement");
+  const plan = DB.raw.prepare(`EXPLAIN QUERY PLAN ${seen[0].sql}`).all(...seen[0].args).map((r) => r.detail);
+  assert.ok(plan.some((d) => /^SEARCH m USING (COVERING )?INDEX messages_place \(place_id=\?\)/.test(d)), plan.join(" | "));
+  assert.ok(!plan.some((d) => /messages_due|^SCAN (m|messages)\b/.test(d)), plan.join(" | "));
 });
 
 test("every reason to ignore a beacon stores nothing, even with no view in the last 30 minutes", async (t) => {
@@ -533,6 +613,18 @@ test("the beacon's D1 cost: none for a bot, Nik or a bad body; at most 10 statem
   await post(CHROME);
   assert.ok(c.used() <= 10, `a counted view used ${c.used()}`);
   assert.equal(prospectRow(DB).views, 1);
+
+  // A ready prospect whose first email has gone: first_sent's read and write on top (ready → emailed → viewed).
+  const ready = await seed({ prospect: { stage: "ready" }, mailbox: true });
+  await firstEmail(ready, "sent");
+  const r = countingDB(ready);
+  await beaconTo(r.DB)(CHROME);
+  assert.equal(prospectRow(ready).stage, "viewed");
+  assert.ok(r.used() <= 11, `a counted view on a ready prospect used ${r.used()}`);
+  // an order event: demoBySlug's 4, the may-count read and the insert
+  const o = countingDB(ready);
+  await beaconTo(o.DB)(CHROME, '{"kind":"order_page"}');
+  assert.equal(o.used(), 6);
 });
 
 test("the demo page's and the order page's own beacons post kinds the route stores", async (t) => {

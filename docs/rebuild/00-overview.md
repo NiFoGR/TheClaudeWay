@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS prospects (
   root_message_id TEXT,                   -- Message-ID of Nik's first email (threading)
   first_sent_at   TEXT,
   followup_step   INTEGER NOT NULL DEFAULT 0,  -- follow-ups sent so far (0–9)
-  next_followup_at TEXT,                  -- NULL when the sequence is stopped or finished
+  next_followup_at TEXT,                  -- NULL when stopped or closed; after follow-up 9 it holds the close time (see 06 §A4)
   views           INTEGER NOT NULL DEFAULT 0,
   last_view_at    TEXT,
   last_inbound_at TEXT,

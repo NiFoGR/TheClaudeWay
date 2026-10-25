@@ -149,8 +149,9 @@ so two ticks can't both search) and decides, in this order:
 6. Otherwise: create a `jobs` row (`queued`) and start `scrape-leads.yml` with `{trade, town, max, job_id}`; move
    `territory.next` past that town.
 
-Why 30 and 40: with 9 follow-ups per lead at about 10 sends a day, one mailbox takes about 1 new business a day, so 30
-good leads waiting is about a month of first emails for one mailbox; 40 queued is 2–3 days of Claude research. The
+Why 30 and 40: with 9 follow-ups per lead at about 10 sends a day, one mailbox takes about 0.5 new businesses a day
+(measured in stage 6, 06 A2), so 30 good leads waiting is about two months of first emails for one mailbox; 40
+queued is 2–3 days of Claude research. The
 287 existing landscapers alone put about 200 into the queue on day one, so automatic searching pauses until Claude
 catches up. Revisit the numbers when more than 3 mailboxes are active.
 
