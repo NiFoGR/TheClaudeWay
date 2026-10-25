@@ -2,22 +2,23 @@
 // "Ready to email" rule (READY_SQL), today's room for first emails (capacityNow) and the ready counts behind Ready's
 // grades, the banner and the morning pick todo. The rules themselves are pure, in shortlist.js.
 //
-// D1 budget (Part B: GET /api/leads makes at most 12 statements): capacityNow 4 (cold mailboxes with the queued first
-// emails, sentToday, followupsDueToday's 2), readyCounts 1, then one batch of the page's rows and, on page 1 only,
-// the grade counts and the facets (with the All leads count): 8 on page 1, 6 on a later page (7 past the last one,
-// whose total is counted on its own), so stage 6's roomForFirsts fits inside the 12. Never l.* or audit: no raw HTML
-// or audit blob leaves the API.
+// D1 budget (Part B: GET /api/leads makes at most 12 statements): capacityNow 4 (one batch of the cold mailboxes with
+// the queued first emails and stage 6's two planning reads, which also give followupsDueToday's number; then
+// sentToday), readyCounts 1, then one batch of the page's rows and, on page 1 only, the grade counts and the facets
+// (with the All leads count): 8 on page 1, 6 on a later page (7 past the last one, whose total is counted on its own).
+// Never l.* or audit: no raw HTML or audit blob leaves the API.
 //
-// Stage 6 (Task 6) caps `room` inside capacityNow with roomForFirsts, so the banner and the composer always agree.
+// Stage 6 (Task 6) caps `room` inside capacityNow with roomForFirsts' total (planFirsts in followups.js, the same
+// read), so the banner and the composer always agree.
 //
 // The lead panel (leadDetail, GET /api/leads/:id) makes at most 4: the lead row, then one batch of its live demo,
 // messages and calls. Its "Not a fit" (markNotFit, POST /api/leads/:id/not-a-fit) makes 4.
 //
 // The tick's `pick` step (pickStep) makes at most 9: capacityNow 4, readyCounts 1, then up to 4 for its todo. Outside
 // stage 0's send window for cold email (all Sunday, and from 19:00 UK) it reads nothing and makes at most 3.
-import { followupsDueToday } from "./followups.js";
+import { planFirsts } from "./followups.js";
 import { mailboxCap } from "./mail/capacity.js";
-import { COLD_WINDOW, sentToday } from "./mail/outbox.js";
+import { COLD_WINDOW, leadReadySql, sentToday } from "./mail/outbox.js";
 import { GUARANTEE, offerFor } from "./offer.js";
 import { parseResearch } from "./research.js";
 import { getSetting, setSetting } from "./settings.js";
@@ -82,10 +83,13 @@ const ROW_SQL = `SELECT l.place_id, l.name, l.trade, l.town, l.phone, l.website,
   ${FROM_SQL}`;
 
 // Cold mailboxes, with the first emails still queued ('sending' ones are already in sentToday) on every row; one row
-// of NULL mailbox columns when there's no cold mailbox, so the count always arrives.
+// of NULL mailbox columns when there's no cold mailbox, so the count always arrives. Not one whose lead no longer
+// passes the ready rule as of now (?1; the outbox's leadReadySql): the outbox holds it until Nik cancels it (stage 6,
+// "Set aside after Send"), so it isn't "waiting to go" and takes no place (stage 6's plan leaves it out too).
 const MAILBOXES_SQL = `SELECT q.n AS first_queued, m.id, m.address, m.role, m.started_on, m.cap_override, m.status,
     m.paused_reason
-  FROM (SELECT COUNT(*) AS n FROM messages WHERE kind = 'first' AND status = 'queued') AS q
+  FROM (SELECT COUNT(*) AS n FROM messages WHERE kind = 'first' AND status = 'queued'
+    AND ${leadReadySql("messages.place_id", "?1")}) AS q
   LEFT JOIN mailboxes m ON m.role = 'cold'
   ORDER BY m.created_at, m.id`;
 
@@ -125,16 +129,20 @@ const whereSql = (conds) => (conds.length ? `WHERE ${conds.join("\n    AND ")}` 
  * sendDay, nextDay, banner}. today = the UK day; sendDay = the UK day cold email next goes out (today inside stage 0's
  * COLD_WINDOW, Mon–Sat 07:00–19:00 UK, else the next window's: Monday on a Sunday or a Saturday evening); nextDay =
  * the first send day after today. The banner uses them so it never says "today" when nothing can go today.
- * `now` is a Date (or UTC ISO text). 4 D1 statements, run together.
+ * room = the smaller of max(0, cap − sent − followupsDue − firstQueued) and stage 6's roomForFirsts total (room on the
+ * send day and on all 9 follow-up days), so the banner never offers more first emails than Send allows; followupsDue
+ * is followupsDueToday's number; firstQueued counts the queued first emails, not one the outbox holds because its
+ * lead no longer passes the ready rule (stage 6, "Set aside after Send"). `now` is a Date (or UTC ISO text). 4 D1
+ * statements, run together.
  */
 export async function capacityNow(DB, now) {
   const at = asDate(now);
   const today = ukDate(at);
-  const [{ results }, sentBy, followupsDue] = await Promise.all([
-    DB.prepare(MAILBOXES_SQL).all(),
-    sentToday(DB, at),
-    followupsDueToday(DB, at),
-  ]);
+  // Stage 6's planFirsts reads the mailboxes in one batch with its two planning reads, and gives followupsDueToday's
+  // number from the same rows: roomForFirsts' answer costs no more statements than followupsDueToday's 2 did.
+  const [plan, sentBy] = await Promise.all([planFirsts(DB, at, DB.prepare(MAILBOXES_SQL).bind(iso(at))), sentToday(DB, at)]);
+  const results = plan.mailboxes;
+  const followupsDue = plan.followupsDue;
   const firstQueued = num(results[0]?.first_queued);
   const cold = results.filter((m) => m.id !== null && m.id !== undefined);
   const cap = cold.reduce((sum, m) => sum + mailboxCap(m, today), 0);
@@ -142,7 +150,8 @@ export async function capacityNow(DB, now) {
   const paused = cold
     .filter((m) => m.status === "paused")
     .map((m) => ({ address: m.address, reason: m.paused_reason ?? "" }));
-  const room = firstEmailRoom({ cap, sent, followupsDue, firstQueued });
+  // Never more than the composer's Send allows: room on the send day and on all 9 follow-up days (stage 6).
+  const room = Math.min(firstEmailRoom({ cap, sent, followupsDue, firstQueued }), plan.room.total);
   const sendDay = ukDate(nextUkWindowStart(at, COLD_WINDOW));
   const nextDay = ukDate(nextUkWindowStart(ukToUtc(addUkDays(today, 1), "00:00"), COLD_WINDOW));
   const c = {
