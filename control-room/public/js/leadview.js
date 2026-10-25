@@ -250,26 +250,19 @@ function actionsHtml(d, capacity) {
   return `<div class="drawer-actions">${out.join("")}</div>`;
 }
 
-// 4. Demo: link, expiry and views, the Preview toggle (its frame waits in an inert <template> until pressed, so it's
-// only built on demand; leads.js copies it into [data-preview-box]), then stage 4's #d-demo slot.
+// 4. Demo: the heading, stage 4's #d-demo slot (leads.js mounts public/js/demo.js demoCardHtml there from GET
+// /api/demo/lead/:id: the link, views and expiry, or why there's no demo, so they show once) and, for a live demo in a
+// look, the Preview toggle (its frame waits in an inert <template> until pressed, so it's only built on demand;
+// leads.js copies it into [data-preview-box]).
 function demoHtml(d) {
-  const href = demoHref(d.demo);
-  if (!href) return `<h3>Demo site</h3><p class="muted">No demo yet. One is made automatically when Claude grades a lead A+, A or B and finds an email.</p><div id="d-demo"></div>`;
-  const p = isObj(d.prospect) ? d.prospect : {};
-  const views = countOf(p.views) ?? 0;
-  const last = ukDay(p.last_view_at);
-  const ends = ukDay(d.demo.expires_at);
-  const template = str(d.demo.template);
+  const template = demoHref(d.demo) ? str(d.demo.template) : "";
   const src = `/api/demo/preview?template=${encodeURIComponent(template)}&place_id=${encodeURIComponent(String(d.lead.place_id ?? ""))}`;
   const preview = template ? `<button class="btn secondary sm" data-preview-toggle aria-expanded="false">${icon("layout")} Preview</button>
     <template data-preview-frame><iframe class="demo-preview" sandbox="" loading="lazy" title="Preview of their demo site" src="${esc(src)}"></iframe></template>
     <div class="demo-preview-box" data-preview-box hidden></div>` : "";
   return `<h3>Demo site</h3>
-    <div class="demo-facts"><a href="${esc(href)}" target="_blank" rel="noopener">${esc(href)}</a>
-      ${ends ? ` · <span>Ends ${esc(ends)}</span>` : ""}
-      · <span>${views ? `Viewed ${views}×${last ? `, last ${esc(last)}` : ""}` : "Not viewed yet"}</span></div>
-    ${preview}
-    <div id="d-demo"></div>`;
+    <div id="d-demo"></div>
+    ${preview}`;
 }
 
 // 5. Google Maps (only their own town's scan reaches the payload): average rank, top-3 % of town, found %, Heatmap.
@@ -349,7 +342,7 @@ function factsHtml(lead) {
 /**
  * The lead panel for a GET /api/leads/:id payload, top to bottom as Part A lists it: head (name, "trade · town",
  * grade, stage + Hot, Do not email, close ×), actions, stage 2's research card (unchanged, in #d-research so leads.js
- * can redraw it after "Research is wrong"), demo + the #d-demo slot, Google Maps, the #d-email slot + the read-only
+ * can redraw it after "Research is wrong"), demo (the #d-demo slot for stage 4's card, and Preview), Google Maps, the #d-email slot + the read-only
  * conversation ([data-conversation], right after the slot: style.css hides it once stage 6 mounts its thread or
  * composer there, and it's back if the slot is emptied), top reviews, the call script + the #d-call slot, business facts, notes (#d-notes, #d-saved).
  * opts = {capacity (capacityNow, for Write first email), sender (the call script's name), origin (the Control Room's,

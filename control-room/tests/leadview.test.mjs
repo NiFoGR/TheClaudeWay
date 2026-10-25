@@ -209,13 +209,19 @@ test("mount points: #d-demo, #d-email and #d-call exactly once each", () => {
   assert.match(css, /^#d-email:not\(:empty\) \+ \[data-conversation\] \{ display: none; \}$/m);
 });
 
-test("demo: relative link, expiry and views, and a preview frame only built when pressed", () => {
+// The link, views, expiry and no-demo reason are stage 4's Demo site card now (public/js/demo.js demoCardHtml, mounted
+// into #d-demo by leads.js; tested in demo-ui.test.mjs), so they show once and a lead that won't get a demo never
+// reads "made automatically". The section keeps its heading, the slot and Preview.
+test("demo: the heading, stage 4's #d-demo slot, a relative Open demo and a preview frame only built when pressed", () => {
   const html = draw(detail({ prospect: { ...PROSPECT, views: 3, last_view_at: "2026-10-20T13:05:00Z" } }));
   assert.match(html, /href="\/d\/green-leaf"/);
   assert.doesNotMatch(html, /href="https?:\/\/[^"]*\/d\/green-leaf/);
-  assert.match(plain(html), /Ends 1 Jan 2027/);
-  assert.match(plain(html), /Viewed 3×/);
-  assert.match(plain(draw(detail())), /Not viewed yet/);
+  const section = html.slice(html.indexOf("<h3>Demo site</h3>"), html.indexOf("<h3>Google Maps</h3>"));
+  assert.match(section, /^<h3>Demo site<\/h3>\s*<div id="d-demo"><\/div>\s*<button class="btn secondary sm" data-preview-toggle/);
+  // the card's facts aren't drawn here as well
+  for (const d of [detail({ prospect: { ...PROSPECT, views: 3, last_view_at: "2026-10-20T13:05:00Z" } }), detail(), detail({ demo: null })]) {
+    assert.doesNotMatch(plain(draw(d)), /Ends 1 Jan 2027|Viewed \d|Not viewed yet|No demo yet|made automatically/);
+  }
 
   // Preview toggle; the frame sits in an inert <template> until it's pressed.
   assert.match(html, /data-preview-toggle/);
@@ -232,10 +238,9 @@ test("demo: relative link, expiry and views, and a preview frame only built when
   assert.doesNotMatch(noTemplate, /data-preview-toggle|<iframe|\/api\/demo\/preview/);
   assert.match(noTemplate, /href="\/d\/green-leaf"/);
 
-  // no live demo: true for every lead under stage 4's rules (only A+, A and B leads with an email get one), so a C or
-  // D lead's panel never promises a demo
+  // no live demo: the heading and the slot only (stage 4's card says why), no Preview and no Open demo
   const none = draw(detail({ demo: null }));
-  assert.ok(plain(none).includes("No demo yet. One is made automatically when Claude grades a lead A+, A or B and finds an email."));
+  assert.match(none, /<h3>Demo site<\/h3>\s*<div id="d-demo"><\/div>\s*<h3>Google Maps<\/h3>/);
   assert.doesNotMatch(none, /template is approved/);
   assert.doesNotMatch(none, /data-preview-toggle|Open demo/);
   // a link that isn't our relative /d/<slug> is never used
@@ -702,7 +707,9 @@ test("app.js routes through parseRoute and PAGES; #/lead/<id> opens the Leads pa
   assert.ok(app.indexOf("closeDrawer();") < app.indexOf("await page.render(params)"));
   assert.doesNotMatch(app, /function currentPage/);
   const routes = [...app.matchAll(/route: "([^"]*)"/g)].map((m) => m[1]);
-  assert.deepEqual(routes, ["home", "leads", "scraper", "maprank", "money", "setup"]);
+  // stage 4's Demo page is routed (#/demo) but not in the nav
+  assert.deepEqual(routes, ["home", "leads", "scraper", "maprank", "money", "demo", "setup"]);
+  assert.match(app, /\{ route: "demo", [^}]*nav: false \}/);
 });
 
 test("Lead Scraper: a finished run links to its leads instead of its own table; Home opens the new panel", async () => {

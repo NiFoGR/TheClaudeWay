@@ -1,4 +1,5 @@
 // Aetos Control Room: navigation and routing. Each page lives in its own file next to this one, and PAGES lists them.
+import { demoPage } from "./demo.js";
 import { homePage } from "./home.js";
 import { closeDrawer, leadsPage, openLeadDrawer } from "./leads.js";
 import { parseRoute } from "./leadview.js";
@@ -23,6 +24,8 @@ export const PAGES = [
   },
   { route: "maprank", label: "Map Rank", icon: "map", render: (params) => mapRankRoute(params) },
   { route: "money", label: "Money", icon: "pound", render: () => moneyPage() },
+  // Stage 4: reached from the "Approve the … look" todo and the lead panel's "Demo page" link, not the nav.
+  { route: "demo", label: "Demo", icon: "layout", render: () => demoPage(), nav: false },
   { route: "setup", label: "Setup", icon: "sliders", render: (params) => setupPage(params), nav: "bottom" },
 ];
 

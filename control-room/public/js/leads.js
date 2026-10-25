@@ -1,9 +1,11 @@
 // The Leads page and the lead panel (stage 3, docs/rebuild/04-shortlist.md): the wiring only. The HTML is leadview.js
 // (pure, tested in tests/leadview.test.mjs); this file fetches GET /api/leads and GET /api/leads/:id, puts that HTML on
 // the page and binds its data-* hooks: filters, paging, the panel's buttons (Write first email, Not a fit, Preview,
-// notes) and stage 2's research card (Copy, Research is wrong).
+// notes), stage 2's research card (Copy, Research is wrong) and stage 4's Demo site card (demo.js demoCardHtml, from
+// GET /api/demo/lead/:id, in the panel's #d-demo slot; Copy link).
 // The URL is the page's state: #/leads?<leadsQueryString> (kept in step as filters change, without a reload) and
 // #/lead/<place_id> (app.js opens the page, then the panel). Loading this file only adds a keydown listener.
+import { bindCopyLinks, demoCardErrorHtml, demoCardHtml } from "./demo.js";
 import { api, esc, icon, modal, pageHead, safeUrl, state, toast, view } from "./lib.js";
 import {
   drawerHtml, leadsBodyHtml, leadsErrorHtml, leadsQueryString, notAFitHtml, notAFitReason, parseLeadsQuery,
@@ -215,6 +217,24 @@ function showDrawer(r, id, detail, capacity, ask) {
   bindNotes(r, id);
   const slot = r.querySelector("#d-research");
   if (slot) wireResearch(slot, id, { research: detail.research ?? null, waiting: detail.research_waiting });
+  loadDemoCard(r, id, ask);
+}
+
+// Stage 4's Demo site card in the #d-demo slot: its own request (GET /api/demo/lead/:id: the link, views, expiry, or
+// why there's no demo), drawn only if this panel is still the one open (not closed, another lead, or redrawn).
+async function loadDemoCard(r, id, ask) {
+  const slot = r.querySelector("#d-demo");
+  if (!slot) return;
+  let info;
+  try {
+    info = await api(`/api/demo/lead/${encodeURIComponent(id)}`);
+  } catch (err) {
+    if (ask === drawerAsk && slot.isConnected) slot.innerHTML = demoCardErrorHtml(err.message);
+    return;
+  }
+  if (ask !== drawerAsk || !slot.isConnected) return;
+  slot.innerHTML = demoCardHtml(info);
+  bindCopyLinks(slot, toast);
 }
 
 // Write first email: stage 6's composer (public/js/compose.js, mountEmail) in the #d-email slot. Until stage 6 ships

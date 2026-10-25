@@ -522,7 +522,11 @@ input[type="radio"] { width: auto; accent-color: var(--gold); }
 /* the lead panel */
 .head-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .drawer-actions .hint { align-self: center; margin: 0; }
-.demo-facts { font-size: 13px; color: var(--text-2); margin-bottom: 10px; overflow-wrap: anywhere; }
+/* stage 4's Demo site card in the panel's #d-demo slot (demo.js demoCardHtml): the link, views, expiry, Open/Copy */
+.demo-card { display: grid; gap: 8px; margin-bottom: 10px; font-size: 13px; color: var(--text-2); }
+.demo-card p { margin: 0; }
+.demo-url { color: var(--text); font-weight: 550; overflow-wrap: anywhere; user-select: all; }
+.demo-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .demo-preview-box { margin-top: 10px; }
 .demo-preview { display: block; width: 100%; height: 420px; border: 1px solid var(--line-2); border-radius: var(--r); background: #FFFFFF; }
 .review { padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; }
@@ -545,6 +549,30 @@ h3 + .review { border-top: 0; padding-top: 0; }
   .pager { flex-direction: column; align-items: stretch; }
   .pager .actions .btn { flex: 1; }
   .demo-preview { height: 300px; }
+}
+
+/* ---------------------------------------------------------------- Demo page (stage 4: demo.js) */
+/* one card per look: three phone-sized previews (390 px wide, 700 tall, each scrolling its own page) in a row that
+   scrolls sideways, the quality check's problems in red under each; then the Demo sites table */
+.demo-look { min-width: 0; }
+.demo-look .card-head { margin-bottom: 8px; }
+.demo-look > p { margin: 0 0 6px; }
+.demo-look .actions { margin-top: 14px; }
+.demo-look [data-look-again] { margin-top: 8px; }
+.demo-previews { display: flex; gap: 16px; overflow-x: auto; padding: 10px 0 6px; overscroll-behavior-x: contain; }
+.demo-shot { flex: none; width: min(390px, 100%); margin: 0; display: grid; gap: 8px; align-content: start; }
+.demo-shot figcaption { font-size: 13px; color: var(--text-2); overflow-wrap: anywhere; }
+.demo-shot figcaption b { color: var(--text); }
+.demo-shot .hint { margin: 0; }
+.demo-frame { display: block; width: 100%; height: 700px; border: 1px solid var(--line-2); border-radius: var(--r); background: #FFFFFF; }
+.demo-problems { margin: 0; padding-left: 18px; color: var(--bad); font-size: 13px; display: grid; gap: 2px; }
+.demos-table { min-width: 720px; }
+.demo-biz { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+.demo-biz .grade { min-width: 34px; height: 26px; font-size: 13px; }
+.demo-row-actions { display: flex; justify-content: flex-end; gap: 6px; }
+@media (max-width: 860px) {
+  .table-card:has(.demos-table) .table-wrap { overflow-x: auto; }
+  .demo-frame { height: 600px; }
 }
 
 /* roadmap */
