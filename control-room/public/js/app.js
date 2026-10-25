@@ -8,6 +8,7 @@ import { mapRankRoute } from "./maprank.js";
 import { moneyPage } from "./money.js";
 import { scraperRoute } from "./scraper.js";
 import { setupPage } from "./setup.js";
+import { voicePage } from "./voice.js";
 
 // Every page: {route, label, icon, render(params), nav?}. The nav shows the pages in this order; `nav: false` is
 // routable but not in the nav, and `nav: "bottom"` sits at the bottom, above Log out. Only built pages are listed.
@@ -24,6 +25,8 @@ export const PAGES = [
   },
   { route: "maprank", label: "Map Rank", icon: "map", render: (params) => mapRankRoute(params) },
   { route: "money", label: "Money", icon: "pound", render: () => moneyPage() },
+  // Stage 5–6: the 9 follow-up emails to approve, and Nik's own replies and rules for Claude.
+  { route: "voice", label: "Voice", icon: "mail", render: () => voicePage() },
   // Stage 4: reached from the "Approve the … look" todo and the lead panel's "Demo page" link, not the nav.
   { route: "demo", label: "Demo", icon: "layout", render: () => demoPage(), nav: false },
   { route: "setup", label: "Setup", icon: "sliders", render: (params) => setupPage(params), nav: "bottom" },

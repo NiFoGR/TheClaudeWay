@@ -81,7 +81,7 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
 - Don't overcomplicate: prefer free, simple setups (Cloudflare + GitHub free tiers). Budget for leads + mailboxes: £100/month.
 - **`docs/plan.md` is the money plan Claude drives** (phases, targets, levers); keep it current. The original plans are the owner's claude.ai docs *GoldBar Websites — System Plan* and *Launch Action Plan* (read them before
   building a feature). The nav lists built pages only, no "soon" items: `PAGES` in `control-room/public/js/app.js`
-  (Home, Leads, Lead Scraper, Map Rank, Money, then Setup and Log out at the bottom); each stage adds its own page
+  (Home, Leads, Lead Scraper, Map Rank, Money, Voice, then Setup and Log out at the bottom); each stage adds its own page
   there. The Roadmap and Outreach pages are gone (kept in `legacy/`); file 11's Todo page replaces Home.
 - Built so far: Control Room (Home, Lead Scraper with live progress, Map Rank heatmaps, Leads with a details drawer,
   Money, Setup: health lights, mailboxes and the SMTP test, DNS, receiving replies, Claude's access key and Routines,
@@ -121,6 +121,24 @@ and `CONTROL_ROOM_PASSWORD` set (don't commit that wrangler.toml; Pages is confi
   Claude's research is saved only in the `research` table. Best email order (the scraper's `contacts.rank_emails`
   too): owner's → director@/owner@ → a named person in a small business → info@ → named staff of a bigger firm (the
   scraper ranks departments last; Claude never picks one).
+- First email + automatic follow-ups (stages 5–6, `docs/rebuild/06-email-followups.md`): the owner writes every first
+  email in the lead drawer's Email card (`public/js/compose.js`, routes `api/compose/:id`, `/preview`, `/send`, logic
+  `_lib/first-email.js`, text checks `_lib/mail/rules.js`). To is picked from the sourced addresses only; the system adds
+  "Hi Mark," (or "Hi,") and the cold footer under `business:sender_name`; one demo link, no other link, no "SEO", under
+  150 words. Send queues it in one batch and the lead stays `ready` until it has really gone. Send is allowed only
+  when the mailbox has room on the send day and on all 9 follow-up days (`roomForFirsts` in `_lib/followups.js`, the
+  same number as the Leads banner). Tick step `followups` (every 5 min, at most 18 D1 queries and 3 queued a run):
+  marks the lead emailed once sent, keeps the owner's words as a style example, and sends follow-ups 1–9 on days 1, 2,
+  4, 7, 10, 17, 24, 30 and 60. They go at the first email's UK clock time (Sunday → Monday, never two a day), in the
+  same thread from the same mailbox. They stop on a reply, opt-out or bounce or a stage past viewed (a demo view
+  doesn't stop them). A failed one is retried the next morning (3 sends at most; an interrupted one never). The lead
+  closes as lost 7 days after step 9. Follow-ups wait while any of the 9 templates is a draft (todo `setup:followups`)
+  or the demo is down (todo `health:followup-demo:<id>`). Health light `followups`. Voice page (`#/voice`,
+  `public/js/voice.js`, `api/voice/*`): approve the 9 follow-ups (any edit makes one a draft again) and add the owner's
+  own example replies and rules for the reply Routine. The thread shows in the drawer (`_lib/thread.js`,
+  `api/thread/:id`, Cancel/Try again via `api/messages/:id/cancel|retry`). `tests/email-e2e.test.mjs` simulates 75
+  days with fake SMTP. It measured about 0.5 new businesses a day per mailbox at 10 emails a day, not 1: Sunday
+  follow-ups move to Monday, so Monday fills first and blocks new first emails (a question for the owner).
 - Stripe (`functions/_lib/stripe.js`, `stripe-events.js`): Setup's button creates products, payment links and the webhook
   from `STRIPE_SECRET_KEY` (Cloudflare secret); ids + webhook secret live in the `settings` table. Webhook payloads are
   pinned to API version 2024-06-20. Card clients' income = actual `payments`; their schedule is only the forecast.
