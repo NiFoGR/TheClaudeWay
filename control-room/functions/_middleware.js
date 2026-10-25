@@ -4,9 +4,12 @@ import {
   DEFAULT_CONTACT, PRIVACY_UPDATED, ROBOTS, loadSiteSettings, renderLanding, renderNotFound, renderPrivacy, rootHostFor,
   siteResponse,
 } from "./_lib/site.js";
+import { readCookie, safeEqual, SESSION_COOKIE, sessionToken } from "./_lib/session.js";
 import { db } from "./_lib/util.js";
 
-const COOKIE = "cr_session";
+// The login cookie (SESSION_COOKIE) and its token live in _lib/session.js, unchanged, so the demo beacon can tell Nik's
+// own visits apart with the same check.
+
 // /api/stripe/webhook is called by Stripe, not you: it checks Stripe's signature instead of the login cookie.
 // /d/<slug> are the prospects' demo sites (public, unguessable links, never indexed).
 // /api/tick is called by the mail relay Worker's cron: it only does work that is already due, under a lease, and
@@ -18,25 +21,6 @@ const PUBLIC_PATHS = new Set(["/login", "/login.html", "/style.css", "/favicon.p
 // functions/<prefix>/[[path]].js that is the 404 page, so a path nothing answers yet never falls through to Pages'
 // single-page-app fallback (the Control Room's index.html, with 200, without a login).
 const PUBLIC_PREFIXES = ["/d/", "/onboard/", "/s/"];
-
-async function sessionToken(password) {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey("raw", enc.encode(password), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const sig = await crypto.subtle.sign("HMAC", key, enc.encode("goldbar-control-room-session"));
-  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-function safeEqual(a, b) {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
-function readCookie(request, name) {
-  const match = (request.headers.get("cookie") || "").match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
-  return match ? match[1] : "";
-}
 
 const redirect = (to, headers = {}) => new Response(null, { status: 303, headers: { location: to, ...headers } });
 
@@ -104,12 +88,13 @@ export async function onRequest({ request, env, next }) {
 
   if (url.pathname === "/login" && request.method === "POST") {
     const form = await request.formData();
-    const attempt = await sessionToken(String(form.get("password") || ""));
-    if (!safeEqual(attempt, token)) return redirect("/login?wrong=1");
-    return redirect("/", { "set-cookie": `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000${secure}` });
+    const password = String(form.get("password") || "");
+    // An empty attempt is simply wrong (WebCrypto refuses a zero-length HMAC key, which would be a 500).
+    if (!password || !safeEqual(await sessionToken(password), token)) return redirect("/login?wrong=1");
+    return redirect("/", { "set-cookie": `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000${secure}` });
   }
   if (url.pathname === "/logout") {
-    return redirect("/login", { "set-cookie": `${COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}` });
+    return redirect("/login", { "set-cookie": `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}` });
   }
   if (PUBLIC_PATHS.has(url.pathname)) return next();
   // demo sites (prospects open these from our emails), onboarding forms and client-site files
@@ -119,7 +104,7 @@ export async function onRequest({ request, env, next }) {
   // routes still use agentDenied, OUTREACH_AGENT_TOKEN only). It still goes through the catch below, so an error (e.g.
   // no database bound) reaches the Routine in plain English.
   const agent = url.pathname.startsWith("/api/agent/");
-  if (!agent && !safeEqual(readCookie(request, COOKIE), token)) {
+  if (!agent && !safeEqual(readCookie(request, SESSION_COOKIE), token)) {
     if (url.pathname.startsWith("/api/")) return new Response(JSON.stringify({ error: "Not logged in" }), { status: 401 });
     return redirect("/login");
   }
