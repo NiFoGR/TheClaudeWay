@@ -24,6 +24,7 @@
 import { countingDB } from "./d1count.js";
 import { dailyFindStep, staleJobsStep } from "./find.js";
 import { healthStep } from "./health.js";
+import { hotStep } from "./hot.js";
 import { inboundStep } from "./mail/inbound-db.js";
 import { sendStep } from "./mail/outbox.js";
 import "./research-db.js"; // no tick step: imported so its research health light is registered
@@ -54,6 +55,7 @@ export const STEPS = [
   // slot: send (every tick; stage 0)
   sendStep,
   // slot: hot (every 5 min; stages 4 and 6)
+  { name: "hot", everyMinutes: 5, run: (ctx) => hotStep(ctx) },
   // slot: pick (every 30 min; stage 3)
   { name: "pick", everyMinutes: 30, run: (ctx) => pickStep(ctx) },
   // slot: daily_find (every 5 min; stage 1)
