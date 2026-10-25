@@ -5,7 +5,12 @@
 // cut off half way may already have reached them). Cold email (first, followup) waits for the send window
 // (Mon–Sat 07:00–19:00 UK), the mailbox's warm-up cap and an active mailbox; replies and system mail go any time.
 // Suppression is checked for first, followup and reply, before any of those holds (a suppressed row is cancelled,
-// never left waiting); system mail (paying clients) always goes.
+// never left waiting); system mail (paying clients) always goes. A first email also waits while its lead doesn't pass
+// stage 3's ready rule (READY_SQL below), checked again in the claim: a lead a later search set aside after Send
+// (06-email-followups.md Part A, "Set aside after Send") is never emailed, and Nik cancels the email from the thread.
+// A follow-up tied to a lead waits unless the lead is still emailed or viewed (FOLLOWUP_OPEN_SQL), also checked again in
+// the claim: a lead who has just replied is never sent the next follow-up, even on a tick (an inbound one, say) where
+// the followups step, which cancels it (Part A §A5), hasn't run yet.
 //
 // D1 budget (Part A: 50 queries a tick, and the send step can be started with only 10 left): every check that can
 // only hold a row back is pure or read once per call (suppression too: one batched read), so a held row costs no
@@ -132,20 +137,25 @@ export async function sentToday(DB, now) {
 // Queued rows due by `at`, follow-ups first, then first emails, then the rest, oldest first. Each mailbox's cold
 // rows, and its other rows, are looked at only up to `perGroup` at a time, so rows a paused (or full, or
 // password-less) mailbox is holding can never crowd out other mailboxes' mail, or replies and client mail.
-// thread_mailbox_id is the prospect's mailbox (the one that owns the thread).
+// thread_mailbox_id is the prospect's mailbox (the one that owns the thread); lead_ready is 0 for a first email whose
+// lead doesn't pass stage 3's ready rule (it's held without costing a query or a send), else 1; thread_open is 0 for a
+// follow-up whose lead is no longer emailed or viewed (held the same way), else 1.
+// ?1 = at (also READY_SQL's now), ?2 = perGroup, ?3 = the kinds as a JSON list (only when given).
 async function dueRows(DB, at, perGroup, kinds) {
-  const onlyKinds = kinds ? "\n         AND m.kind IN (SELECT value FROM json_each(?))" : "";
+  const onlyKinds = kinds ? "\n         AND m.kind IN (SELECT value FROM json_each(?3))" : "";
   const sql = `SELECT * FROM (
        SELECT m.*, p.mailbox_id AS thread_mailbox_id, p.place_id IS NOT NULL AS has_prospect,
+         CASE WHEN m.kind = 'first' THEN ${leadReadySql("m.place_id", "?1")} ELSE 1 END AS lead_ready,
+         CASE WHEN m.kind = 'followup' THEN ${followupOpenSql("m.place_id")} ELSE 1 END AS thread_open,
          ROW_NUMBER() OVER (
            PARTITION BY m.kind IN ('first', 'followup'), COALESCE(m.mailbox_id, p.mailbox_id)
            ORDER BY CASE m.kind WHEN 'followup' THEN 0 WHEN 'first' THEN 1 ELSE 2 END, m.due_at, m.id
          ) AS scan_rank
        FROM messages m LEFT JOIN prospects p ON p.place_id = m.place_id
-       WHERE m.direction = 'out' AND m.status = 'queued' AND m.due_at <= ?${onlyKinds}
-     ) WHERE scan_rank <= ?
+       WHERE m.direction = 'out' AND m.status = 'queued' AND m.due_at <= ?1${onlyKinds}
+     ) WHERE scan_rank <= ?2
      ORDER BY CASE kind WHEN 'followup' THEN 0 WHEN 'first' THEN 1 ELSE 2 END, due_at, id`;
-  const binds = kinds ? [at, JSON.stringify(kinds), perGroup] : [at, perGroup];
+  const binds = kinds ? [at, perGroup, JSON.stringify(kinds)] : [at, perGroup];
   return (await DB.prepare(sql).bind(...binds).all()).results;
 }
 
@@ -198,7 +208,9 @@ function mailboxFor(row, ctx) {
 // out, say) can never take a mailbox past its cap between them. Same query count: it's the one UPDATE either way.
 const CLAIM = "UPDATE messages SET status = 'sending', sent_at = ?, mailbox_id = ?, from_addr = ?, message_id = ? WHERE id = ? AND status = 'queued'";
 // For first/followup/reply the claim also checks suppression again (no extra query): an opt-out stored since the
-// batched read (while an earlier row was being sent, say) leaves the row queued, and the next call cancels it.
+// batched read (while an earlier row was being sent, say) leaves the row queued, and the next call cancels it. A first
+// email's claim also checks its lead against READY_SQL again (leadReadySql), so one set aside since the read stays
+// queued and the next call holds it.
 const NOT_SUPPRESSED = `
      AND NOT EXISTS (SELECT 1 FROM suppression s
                      WHERE (s.kind = 'email' AND s.value = ?) OR (s.kind = 'domain' AND s.value = ?))`;
@@ -206,6 +218,33 @@ const CAP_GUARD = `
      AND (SELECT COUNT(*) FROM messages
           WHERE direction = 'out' AND kind IN ('first', 'followup') AND mailbox_id = ?
             AND (status = 'sending' OR (status = 'sent' AND sent_at >= ?))) < ?`;
+
+// Stage 3's ready rule, word for word as READY_SQL in shortlist-db.js (outbox.test.mjs checks it still is): it can't be
+// imported, since shortlist-db.js imports this file and the string is built when the module loads. Aliases l (leads),
+// r (research), p (prospects); ?1 is now. Cancelling or failing a row is never this rule's doing: a lead that stops
+// passing it only holds its first email (stage 6, Part A "Set aside after Send").
+const READY_SQL = `l.excluded = 0 AND r.status = 'done' AND r.too_big = 0
+AND p.stage = 'ready' AND COALESCE(p.email, '') <> ''
+AND EXISTS (SELECT 1 FROM demos d WHERE d.place_id = l.place_id AND d.expires_at > ?1)
+AND NOT EXISTS (SELECT 1 FROM suppression s WHERE s.value IN
+    (lower(p.email), lower(substr(p.email, instr(p.email, '@') + 1)), COALESCE(l.company_number, '')))`;
+
+// Whether a first email may go as far as its lead is concerned (SQL, true or false): it's tied to no lead (only stage
+// 0's own tests queue one like that: sendFirst always ties it), or its lead passes READY_SQL. `placeId` is the SQL for
+// the row's place_id; `nowParam` the parameter holding now ("?1", "?11"). Exported so stage 6's capacity planning
+// (followups.js, shortlist-db.js) and its held-first-email todo leave out, and name, exactly the rows this holds.
+export const leadReadySql = (placeId, nowParam) => `(${placeId} IS NULL OR EXISTS (SELECT 1 FROM leads l
+         JOIN research r ON r.place_id = l.place_id
+         JOIN prospects p ON p.place_id = l.place_id
+         WHERE l.place_id = ${placeId} AND ${READY_SQL.replace(/\?1(?!\d)/g, nowParam)}))`;
+
+// Whether a follow-up may go as far as its lead is concerned (SQL, true or false): it's tied to no lead (only stage 0's
+// own tests queue one like that: the followups step always ties it), or its lead is still emailed or viewed, the only
+// stages whose follow-ups go on (Part A §A5: replied, needs_nik, call_booked, won and lost stop them; the followups
+// step's sweep cancels what's left). A human reply moves the lead to replied at once (the inbound step), so this holds
+// a follow-up queued before it, which the next followups run cancels. `placeId` is the SQL for the row's place_id.
+const followupOpenSql = (placeId) => `(${placeId} IS NULL OR EXISTS (SELECT 1 FROM prospects fp
+         WHERE fp.place_id = ${placeId} AND fp.stage IN ('emailed', 'viewed')))`;
 
 const endsWithOptOut = (body) => String(body ?? "").replace(/\r\n?/g, "\n").trimEnd().endsWith(OPT_OUT_LINE);
 
@@ -247,9 +286,11 @@ function checkOptions(limit, send, kinds) {
  *
  * First, rows stuck in `sending` for over 10 minutes are marked failed (never resent). Then, for each due row (Task
  * 13's order): footer (first/followup must end with the "no thanks" line) → suppression (first/followup/reply:
- * cancelled, so a suppressed row is never held) → mailbox (the row's, else its thread's; a cold row with neither gets
- * pickMailbox's, which is also saved as prospects.mailbox_id when that's null) → paused, window, cap (first/followup
- * only) → password → compose → claim → send → record. The row's message_id, in_reply_to and refs are used; a
+ * cancelled, so a suppressed row is never held) → a first email's lead (held while it doesn't pass stage 3's
+ * READY_SQL, e.g. set aside by a later search; checked again in the claim) → a follow-up's lead (held unless it's still
+ * emailed or viewed; checked again in the claim) → mailbox (the row's, else its thread's;
+ * a cold row with neither gets pickMailbox's, which is also saved as prospects.mailbox_id when that's null) → paused,
+ * window, cap (first/followup only) → password → compose → claim → send → record. The row's message_id, in_reply_to and refs are used; a
  * Message-ID is generated (and stored) only when it has none. An error that means the email may have gone starts with
  * INTERRUPTED_PREFIX; no other does.
  */
@@ -299,6 +340,15 @@ export async function dispatchDue(DB, env, now, { limit = DEFAULT_LIMIT, send = 
     if (reason != null) {
       attempts++;
       await settle(DB, row.id, "cancelled", `Suppressed: ${reason}`);
+      continue;
+    }
+
+    if (row.kind === "first" && !Number(row.lead_ready)) {
+      tally.held++; // its lead was set aside (or stopped being ready) after Send: it waits, and Nik cancels it
+      continue;
+    }
+    if (row.kind === "followup" && !Number(row.thread_open)) {
+      tally.held++; // its lead replied (or booked, paid, closed) since it was queued: the followups step cancels it
       continue;
     }
 
@@ -360,6 +410,15 @@ export async function dispatchDue(DB, env, now, { limit = DEFAULT_LIMIT, send = 
       claimSql += CAP_GUARD;
       binds.push(mailbox.id, ctx.since, cap);
     }
+    if (row.kind === "first") {
+      // Its lead still passes stage 3's ready rule, as of now (the lead_ready read can be a moment old). Every
+      // parameter so far is a bare ?, numbered 1 to n in order, so now goes in as ?<n+1>, written out (READY_SQL
+      // numbers its own).
+      binds.push(at);
+      claimSql += `\n     AND ${leadReadySql("messages.place_id", `?${binds.length}`)}`;
+    }
+    // A follow-up's lead is still emailed or viewed, as of now (a reply read since the due rows were, say).
+    if (row.kind === "followup") claimSql += `\n     AND ${followupOpenSql("messages.place_id")}`;
     const claim = await DB.prepare(claimSql).bind(...binds).run();
     // Another request took it, it was cancelled since we read it, it was suppressed since the batched read (the next
     // call cancels it), or (cold) another request filled today's cap.

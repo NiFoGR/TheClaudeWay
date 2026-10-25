@@ -1,6 +1,7 @@
 // Outbox: queueing email, and sending what's due (caps, the cold send window, suppression, one claim per send).
 // Run: node --test control-room/tests/outbox.test.mjs
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { COLD_WINDOW, INTERRUPTED_PREFIX, dispatchDue, queueMessage, sendStep, sentToday } from "../functions/_lib/mail/outbox.js";
 import { OPT_OUT_LINE, coldFooter } from "../functions/_lib/mail/compose.js";
@@ -44,11 +45,21 @@ async function setup({ mailbox = {}, password = "pw" } = {}) {
 
 const addMailbox = (DB, row) => insert(DB, "mailboxes", { ...MAILBOX, ...row });
 
-const seedProspect = (DB, place_id, extra = {}) =>
-  insert(DB, "prospects", {
+// A prospect (stage ready unless given, writing to bob@x.com) whose lead passes stage 3's ready rule (READY_SQL): the
+// lead, its research done and a live demo. A first email tied to a lead only goes while it does (stage 6, Part A "Set
+// aside after Send").
+const seedProspect = async (DB, place_id, extra = {}) => {
+  await insert(DB, "leads", {
+    place_id, name: `Lead ${place_id}`, trade: "landscaper", search_town: "Warrington", excluded: 0,
+    first_seen_at: "2026-10-19T08:00:00Z", updated_at: "2026-10-19T08:00:00Z",
+  });
+  await insert(DB, "research", { place_id, status: "done", grade: "A", too_big: 0 });
+  await insert(DB, "demos", { slug: `demo-${place_id}`, place_id, created_at: "2026-10-19T08:00:00Z", expires_at: "2027-01-01T00:00:00Z" });
+  await insert(DB, "prospects", {
     place_id, stage: "ready", stage_at: "2026-10-19T08:00:00Z", email: "bob@x.com", mailbox_id: null,
     created_at: "2026-10-19T08:00:00Z", updated_at: "2026-10-19T08:00:00Z", ...extra,
   });
+};
 
 // An outgoing message for queueMessage: cold kinds carry the footer, from mailbox m1, to bob@x.com.
 const out = (kind, extra = {}) => ({
@@ -898,9 +909,12 @@ test("a suppressed reply whose mailbox has no password is cancelled, not held; s
 });
 
 test("suppression is read once per call, whatever the number of rows, and not at all for system mail only", async () => {
+  // A read of the suppression list. The due-row scan (the one with ROW_NUMBER) names it only inside stage 3's ready
+  // rule, which it checks for first emails (stage 6), so it isn't one.
   const reads = (DB) => {
     const c = { n: 0 };
-    c.DB = { ...DB, prepare: (sql) => (/^\s*SELECT\b[\s\S]*\bFROM suppression\b/.test(sql) && c.n++, DB.prepare(sql)) };
+    const isRead = (sql) => /^\s*SELECT\b[\s\S]*\bFROM suppression\b/.test(sql) && !/\bROW_NUMBER\(\)/.test(sql);
+    c.DB = { ...DB, prepare: (sql) => (isRead(sql) && c.n++, DB.prepare(sql)) };
     return c;
   };
   const DB = await setup({ mailbox: { status: "paused" } });
@@ -1013,4 +1027,158 @@ test("every stored error that means \"it may have gone\" starts with INTERRUPTED
   const { error } = await message(DB, long);
   assert.equal(error.length, 1000);
   assert.ok(error.startsWith(`${INTERRUPTED_PREFIX}: the send stopped with an error (xxx`), error.slice(0, 80));
+});
+
+// ---------------------------------------------------------------- stage 6: a first email goes only while its lead is ready
+
+// 06-email-followups.md Part A, "Set aside after Send": the lead stays `ready` until its first email has gone, so a
+// later search can set it aside (a chain's branch, a duplicate listing) while the email waits for the window. Stage 0's
+// claim of a `first` row also needs the lead to pass stage 3's READY_SQL (l.excluded = 0 among it); the row stays
+// queued and Nik cancels it from the thread.
+test("a first email whose lead no longer passes stage 3's ready rule is held, never sent", async () => {
+  for (const [what, ...sql] of [
+    ["set aside by a later search", "UPDATE leads SET excluded = 1, exclude_reason = 'A branch of a chain' WHERE place_id = 'p1'"],
+    ["Not a fit (research skipped)", "UPDATE research SET status = 'skipped' WHERE place_id = 'p1'"],
+    ["too big", "UPDATE research SET too_big = 1 WHERE place_id = 'p1'"],
+    ["no longer ready", "UPDATE prospects SET stage = 'needs_nik' WHERE place_id = 'p1'"],
+    ["no address on the prospect", "UPDATE prospects SET email = '' WHERE place_id = 'p1'"],
+    ["its demo ended", "UPDATE demos SET expires_at = '2026-10-20T08:59:59Z' WHERE place_id = 'p1'"],
+    ["its company is on the do-not-contact list", "UPDATE leads SET company_number = 'SC123456' WHERE place_id = 'p1'",
+      "INSERT INTO suppression (value, kind, reason, created_at) VALUES ('SC123456', 'company', 'manual', '2026-10-19T08:00:00Z')"],
+    ["the lead is gone", "DELETE FROM leads WHERE place_id = 'p1'"],
+    ["the prospect is gone", "DELETE FROM prospects WHERE place_id = 'p1'"],
+  ]) {
+    const DB = await setup();
+    await seedProspect(DB, "p1");
+    const id = await queueMessage(DB, out("first", { place_id: "p1", due_at: "2026-10-20T08:30:00Z" }));
+    for (const s of sql) await DB.prepare(s).run();
+    const { send, calls } = recorder();
+    assert.deepEqual(await dispatchDue(DB, {}, TUE, { send }), { sent: 0, failed: 0, held: 1 }, what);
+    assert.equal((await message(DB, id)).status, "queued", what);
+    assert.equal(calls.length, 0, what);
+  }
+});
+
+test("a lead set aside after Send is emailed once it's ready again; its follow-ups and replies aren't held by the rule", async () => {
+  const DB = await setup();
+  await seedProspect(DB, "p1");
+  const id = await queueMessage(DB, out("first", { place_id: "p1", due_at: "2026-10-20T08:30:00Z" }));
+  await DB.prepare("UPDATE leads SET excluded = 1 WHERE place_id = 'p1'").run();
+  const { send, calls } = recorder();
+  assert.deepEqual(await dispatchDue(DB, {}, TUE, { send }), { sent: 0, failed: 0, held: 1 });
+  await DB.prepare("UPDATE leads SET excluded = 0 WHERE place_id = 'p1'").run();
+  assert.deepEqual(await dispatchDue(DB, {}, TUE, { send }), { sent: 1, failed: 0, held: 0 });
+  assert.equal((await message(DB, id)).status, "sent");
+
+  // An emailed lead set aside later still gets its follow-ups and replies: the ready rule is for first emails only.
+  await seedProspect(DB, "p2", { stage: "emailed", email: "amy@y.com", mailbox_id: "m1" });
+  await DB.prepare("UPDATE leads SET excluded = 1 WHERE place_id = 'p2'").run();
+  const f = await queueMessage(DB, out("followup", { place_id: "p2", to_addr: "amy@y.com", due_at: "2026-10-20T08:40:00Z" }));
+  const r = await queueMessage(DB, out("reply", { place_id: "p2", to_addr: "amy@y.com", due_at: "2026-10-20T08:40:00Z" }));
+  assert.deepEqual(await dispatchDue(DB, {}, TUE, { send }), { sent: 2, failed: 0, held: 0 });
+  assert.equal((await message(DB, f)).status, "sent");
+  assert.equal((await message(DB, r)).status, "sent");
+  assert.equal(calls.length, 3);
+});
+
+test("a held set-aside first email doesn't use up a send: with room for one, the next lead's first email goes", async () => {
+  const DB = await setup();
+  await seedProspect(DB, "p1", { email: "a@y.com" });
+  await seedProspect(DB, "p2", { email: "b@y.com" });
+  const a = await queueMessage(DB, out("first", { place_id: "p1", to_addr: "a@y.com", due_at: "2026-10-20T08:00:00Z" }));
+  const b = await queueMessage(DB, out("first", { place_id: "p2", to_addr: "b@y.com", due_at: "2026-10-20T08:10:00Z" }));
+  await DB.prepare("UPDATE leads SET excluded = 1 WHERE place_id = 'p1'").run();
+  const { send, calls } = recorder();
+  const c = counting(DB);
+  assert.deepEqual(await dispatchDue(c.DB, {}, TUE, { limit: 1, send }), { sent: 1, failed: 0, held: 1 });
+  assert.equal((await message(DB, a)).status, "queued");
+  assert.equal((await message(DB, b)).status, "sent");
+  assert.deepEqual(calls.map((x) => x.message.to), ["b@y.com"]);
+  assert.ok(c.n <= 5 + 4, `the held row cost no query: ${c.n}`); // QUERIES_FIXED + QUERIES_EACH for the one send
+});
+
+test("the claim checks the ready rule again: a lead set aside between the read and the claim is never emailed", async () => {
+  const DB = await setup();
+  await seedProspect(DB, "p1");
+  const id = await queueMessage(DB, out("first", { place_id: "p1", due_at: "2026-10-20T08:30:00Z" }));
+  // A search sets the lead aside while dispatchDue is between its read of the due rows and the claim.
+  const racing = {
+    ...DB,
+    prepare(sql) {
+      if (sql.startsWith("UPDATE messages SET status = 'sending'")) DB.raw.prepare("UPDATE leads SET excluded = 1 WHERE place_id = 'p1'").run();
+      return DB.prepare(sql);
+    },
+  };
+  const { send, calls } = recorder();
+  assert.deepEqual(await dispatchDue(racing, {}, TUE, { send }), { sent: 0, failed: 0, held: 0 });
+  assert.equal(calls.length, 0);
+  const row = await message(DB, id);
+  assert.equal(row.status, "queued");
+  assert.equal(row.sent_at, null);
+  assert.deepEqual(await dispatchDue(DB, {}, TUE, { send }), { sent: 0, failed: 0, held: 1 }); // and held from then on
+});
+
+test("the outbox's ready rule is stage 3's READY_SQL word for word (it can't import it: shortlist-db.js imports the outbox)", async () => {
+  const { READY_SQL } = await import("../functions/_lib/shortlist-db.js");
+  const source = readFileSync(new URL("../functions/_lib/mail/outbox.js", import.meta.url), "utf8");
+  assert.ok(source.includes(READY_SQL), "outbox.js's copy of READY_SQL differs from shortlist-db.js's: copy it again");
+});
+
+// ---------------------------------------------------------------- stage 6: a follow-up goes only while its lead is open
+
+// 06-email-followups.md Part A §A5: a reply, a booking, a payment or a close stops the follow-ups. The followups step
+// cancels what's queued every 5 minutes, but the send step runs on every tick (an inbound one too, right after the
+// inbound step has moved the lead to `replied`), so the outbox holds a follow-up whose lead is no longer emailed or
+// viewed: it is never sent to someone who has just replied.
+test("a follow-up whose lead replied, booked, paid or closed is held, never sent; emailed and viewed go", async () => {
+  for (const [stage, sent] of [
+    ["emailed", 1], ["viewed", 1],
+    ["replied", 0], ["needs_nik", 0], ["call_booked", 0], ["won", 0], ["lost", 0], [null, 0],
+  ]) {
+    const DB = await setup();
+    await seedProspect(DB, "p1", { stage: stage ?? "emailed", mailbox_id: "m1" });
+    if (stage === null) await DB.prepare("DELETE FROM prospects WHERE place_id = 'p1'").run(); // the prospect is gone
+    const id = await queueMessage(DB, out("followup", { place_id: "p1", due_at: "2026-10-20T08:30:00Z" }));
+    const { send, calls } = recorder();
+    const what = stage ?? "no prospect";
+    assert.deepEqual(await dispatchDue(DB, {}, TUE, { send }), { sent, failed: 0, held: 1 - sent }, what);
+    assert.equal((await message(DB, id)).status, sent ? "sent" : "queued", what);
+    assert.equal(calls.length, sent, what);
+  }
+});
+
+test("a held follow-up of a lead who replied doesn't use up a send: with room for one, the next lead's goes", async () => {
+  const DB = await setup();
+  await seedProspect(DB, "p1", { stage: "replied", email: "a@y.com", mailbox_id: "m1" });
+  await seedProspect(DB, "p2", { stage: "emailed", email: "b@y.com", mailbox_id: "m1" });
+  const a = await queueMessage(DB, out("followup", { place_id: "p1", to_addr: "a@y.com", due_at: "2026-10-20T08:00:00Z" }));
+  const b = await queueMessage(DB, out("followup", { place_id: "p2", to_addr: "b@y.com", due_at: "2026-10-20T08:10:00Z" }));
+  const { send, calls } = recorder();
+  const c = counting(DB);
+  assert.deepEqual(await dispatchDue(c.DB, {}, TUE, { limit: 1, send }), { sent: 1, failed: 0, held: 1 });
+  assert.equal((await message(DB, a)).status, "queued");
+  assert.equal((await message(DB, b)).status, "sent");
+  assert.deepEqual(calls.map((x) => x.message.to), ["b@y.com"]);
+  assert.ok(c.n <= 5 + 4, `the held row cost no query: ${c.n}`); // QUERIES_FIXED + QUERIES_EACH for the one send
+});
+
+test("the claim checks the follow-up's lead again: a reply read between the due rows and the claim stops it", async () => {
+  const DB = await setup();
+  await seedProspect(DB, "p1", { stage: "emailed", mailbox_id: "m1" });
+  const id = await queueMessage(DB, out("followup", { place_id: "p1", due_at: "2026-10-20T08:30:00Z" }));
+  // The inbound step reads their reply (lead → replied) while dispatchDue is between its read and the claim.
+  const racing = {
+    ...DB,
+    prepare(sql) {
+      if (sql.startsWith("UPDATE messages SET status = 'sending'")) DB.raw.prepare("UPDATE prospects SET stage = 'replied' WHERE place_id = 'p1'").run();
+      return DB.prepare(sql);
+    },
+  };
+  const { send, calls } = recorder();
+  assert.deepEqual(await dispatchDue(racing, {}, TUE, { send }), { sent: 0, failed: 0, held: 0 });
+  assert.equal(calls.length, 0);
+  const row = await message(DB, id);
+  assert.equal(row.status, "queued");
+  assert.equal(row.sent_at, null);
+  assert.deepEqual(await dispatchDue(DB, {}, TUE, { send }), { sent: 0, failed: 0, held: 1 }); // and held from then on
 });
