@@ -23,6 +23,7 @@
 // and the tick beat (1). The finishing queries never undo the tick: if one fails it's logged and the results stand.
 import { countingDB } from "./d1count.js";
 import { dailyFindStep, staleJobsStep } from "./find.js";
+import { followupsStep } from "./followups.js";
 import { healthStep } from "./health.js";
 import { hotStep } from "./hot.js";
 import { inboundStep } from "./mail/inbound-db.js";
@@ -52,6 +53,7 @@ export const STEPS = [
   inboundStep,
   // slot: reply_fire (every tick; stage 7)
   // slot: followups (every 5 min; stage 6)
+  { name: "followups", everyMinutes: 5, run: (ctx) => followupsStep(ctx) },
   // slot: send (every tick; stage 0)
   sendStep,
   // slot: hot (every 5 min; stages 4 and 6)
