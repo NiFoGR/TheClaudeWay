@@ -34,6 +34,7 @@ import "./research-db.js"; // no tick step: imported so its research health ligh
 import { beat } from "./routines.js";
 import { setSetting } from "./settings.js";
 import { pickStep } from "./shortlist-db.js";
+import "./stripe.js"; // no tick step: imported so its Payments health light is registered
 import { db } from "./util.js";
 
 export const TICK_BUDGET = Object.freeze({ total: 50, minToStart: 10 });

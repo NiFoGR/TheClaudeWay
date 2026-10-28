@@ -64,12 +64,16 @@ For now: **receive** email at `hello@aetoswebsites.com` and have it land in your
 | Public details → Statement descriptor (what clients see on their bank statement) | `AETOS WEBSITES` |
 | Public details → Website | `https://aetoswebsites.com` (see the note below) |
 | Public details → Support email | `hello@aetoswebsites.com` |
+| Public details → Support address | your name and a service address, not your home (trading-name rule: you trade as Aetos Websites, so your own name goes with it) |
 | Public details → Support phone | leave empty. If Stripe insists, use a cheap second SIM (£5–10), never your personal number |
 | Bank accounts / payouts | the account you want paid into (your separate sole-trader account if you opened one) |
 | Branding → Icon and Logo | upload `docs/brand/aetos-logo.png` |
 | Branding → Brand colour / Accent colour | `#1A1C20` / `#C9A13B` |
 | Customer emails | turn on **Successful payments** and **Refunds** |
-| Billing → Subscriptions and emails | turn on **Send reminders before free trials end** and **Smart Retries**; for failed payments, email the customer |
+| Billing → Invoices | turn on **email finalised invoices to customers** |
+| Billing → Revenue recovery → Retries | turn on **Smart Retries**; **if all retries fail: cancel the subscription** (the Control Room already emails the client a link to pay when a card fails) |
+| Billing → Subscriptions and emails | leave **Send reminders before free trials end** off for now (Question Q-AD in the plan) |
+| Payment links | the old system made three: open each → **Archive** (orders now come from each prospect's own order page) |
 | Team and security | turn on **two-step authentication** |
 | Tax | leave off: you don't charge VAT until your turnover passes £90,000 a year |
 
@@ -85,19 +89,31 @@ For now: **receive** email at `hello@aetoswebsites.com` and have it land in your
 
 ### 4b. Connect it to the Control Room
 
-1. Stripe → **Developers → API keys → Create restricted key** → choose **Full access – except sensitive operations**.
-   Name it "Aetos Control Room" → create → copy it (`rk_test_…` in test mode).
-2. Cloudflare → Workers & Pages → Control Room project → **Settings → Variables and Secrets → Add**:
-   name `STRIPE_SECRET_KEY`, type **Secret**, paste → Save.
-3. **Deployments → Retry deployment** on the latest one, or tell me and I'll redeploy.
-4. Control Room → **Setup** → press **Set up Stripe**. Three payment links appear.
-5. **Test it:** open the Full Package link and pay with `4242 4242 4242 4242`, any future date, any CVC.
-   Check the client appears on the **Money** page. Also note what the checkout said was due today (£1,950 or £0) and tell me.
-6. **Go live** once Stripe has approved the account: switch Stripe to live mode → make the same kind of key (`rk_live_…`) →
-   replace `STRIPE_SECRET_KEY` in Cloudflare → retry the deployment → press **Set up Stripe** again.
+1. Stripe (in **test mode**) → **Developers → API keys → Create restricted key** → choose
+   **Full access – except sensitive operations**. Name it "Aetos Control Room" → create → copy it (`rk_test_…`).
+   The standard secret key (`sk_test_…`) works too. Never the publishable key (`pk_…`).
+2. Control Room → **Setup → Payments (Stripe)** → paste it into **Stripe secret key** → press **Connect Stripe**.
+   The card then shows `Secret key: saved ✓ · Test mode (no real money)` and `Stripe messages (webhook): connected ✓`.
+   No Cloudflare variable and no redeploy are needed. (A key already in Cloudflare as `STRIPE_SECRET_KEY` still
+   works: press **Connect Stripe** with the field empty.)
+   Press it on the Control Room's usual address (never a deployment's preview link): Stripe's messages go to the
+   address you press it on, so if that address changes, press **Connect Stripe** again.
+3. Tick off the account-settings checklist on the same card (the same list as 4a: public details, customer emails
+   and invoices, retries → cancel the subscription, archive the old payment links).
+4. **Test it:** open any demo → **Order this site** → pay with card `4242 4242 4242 4242`, any future date, any 3
+   digits. You land on the thank-you page with the onboarding form link; the client appears on the **Money** page,
+   a Todo says "New client", and the card's `Last message from Stripe` shows a minute or so ago (for example
+   `checkout.session.completed` or `invoice.paid`).
+5. **Go live** once Stripe has approved the account: switch Stripe to live mode → make the same kind of key
+   (`rk_live_…`) → paste it on Setup → press **Connect Stripe** again. The card shows `Live (real payments)`.
 
-☐ Test payment shows on the Money page
-☐ Stripe account approved, live key in, Set up Stripe pressed in live mode
+If Connect Stripe shows an error, it says what to do: a publishable key, a key that isn't a Stripe key, a key
+Stripe doesn't accept (copy it again), or a restricted key without webhook access (use "Full access – except
+sensitive operations").
+
+☐ Connected in test mode, test order shows on the Money page
+☐ Account-settings checklist done
+☐ Stripe account approved, live key pasted, Connect Stripe pressed in live mode
 
 ---
 

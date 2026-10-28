@@ -73,7 +73,7 @@ export function steps(n, manual = {}, now = Date.now()) {
       done: !!manual.domain },
     { key: "mailboxes", title: "Buy the mailboxes", how: "Namecheap Private Email on aetoswebsites.com, then add it on Setup → Mailboxes. Cold emails start 14 days after the date you bought it, to warm it up.",
       done: !!manual.mailboxes },
-    { key: "stripe", title: "Stripe: test payment, then live key", how: "Setup page → Stripe card.", done: !!n.stripeLive, auto: true, href: "#/setup" },
+    { key: "stripe", title: "Stripe: test payment, then live key", how: "Setup → Payments (Stripe): paste the key and press Connect Stripe (test key first, then the live one).", done: !!n.stripeLive, auto: true, href: "#/setup" },
     { key: "funnel", title: "Decide the last funnel questions", how: "docs/funnel.md: preview length, call-back link, chasing unpaid order pages, founding-client deal.",
       done: !!manual.funnel },
   ];

@@ -39,11 +39,13 @@ export async function onRequestGet({ env, now: at }) {
     upcomingCalls(DB, new Date(now.getTime() - CALL_GRACE_MS), callsTo),
     DB.prepare(REPLIES_SQL).first(),
   ]);
-  const [stripe, territory, manual] = await Promise.all([getSetting(DB, "stripe"), getSetting(DB, "territory"), getSetting(DB, "setup_done")]);
+  // Stripe is live once Connect Stripe made the webhook with a live key ("stripe:webhook"), or the old payment-link
+  // setup ("stripe") was live.
+  const [stripe, hook, territory, manual] = await Promise.all([getSetting(DB, "stripe"), getSetting(DB, "stripe:webhook"), getSetting(DB, "territory"), getSetting(DB, "setup_done")]);
   const hot = (maybeHot?.results || []).filter((p) => isHot(p, now)).length;
   return json(steps({
     hot, waitingClaude: research.queued, lastResearchAt: research.lastPostAt, oldestQueuedAt: research.oldestQueuedAt,
-    stripeLive: stripe?.mode === "live", autopilotOn: territory ? !!territory.on : true,
+    stripeLive: stripe?.mode === "live" || hook?.mode === "live", autopilotOn: territory ? !!territory.on : true,
     calls, needYou: Number(replies?.need_you || 0), replyRoutineAt: replies?.reply_beat || null,
   }, manual || {}, now.getTime()));
 }
