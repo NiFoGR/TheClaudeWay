@@ -6,25 +6,24 @@ import test from "node:test";
 const js = (name) => new URL(`../public/js/${name}`, import.meta.url);
 const read = (name) => readFileSync(js(name), "utf8");
 
-test("app.js lists built pages only: no soon items, no Roadmap or Outreach routes", () => {
+test("app.js lists built pages only: no soon items, no Roadmap or Outreach routes", async () => {
   const app = read("app.js");
-  assert.doesNotMatch(app, /\bsoon\b/i);
-  const routes = [...app.matchAll(/route: "([^"]*)"/g)].map((m) => m[1]);
-  for (const gone of ["roadmap", "outreach"]) assert.ok(!routes.includes(gone), `app.js still has a ${gone} route`);
-  assert.doesNotMatch(app, /\.\/(roadmap|outreach)\.js|#\/(roadmap|outreach)\b/);
+  const nav = read("nav.js");
+  for (const src of [app, nav]) {
+    assert.doesNotMatch(src, /\bsoon\b/i);
+    assert.doesNotMatch(src, /\.\/(roadmap|outreach)\.js|#\/(roadmap|outreach)\b/);
+  }
+  // nav.js holds the one route list (file 11): neither old page is in the nav, and both old links open Todo.
+  const { NAV, routeFor } = await import("../public/js/nav.js");
+  for (const gone of ["roadmap", "outreach"]) {
+    assert.ok(!NAV.some((n) => n[0] === gone), `the nav still has ${gone}`);
+    assert.equal(routeFor(`#/${gone}`).page, "todo", `#/${gone} should open Todo`);
+  }
   // Both pages are gone from the Control Room and kept in legacy/.
   for (const gone of ["roadmap.js", "outreach.js"]) {
     assert.ok(!existsSync(js(gone)), `public/js/${gone} should be deleted`);
     assert.ok(existsSync(new URL(`../../legacy/control-room/public/js/${gone}`, import.meta.url)), `legacy/ has no ${gone}`);
   }
-});
-
-// File 11 Task 11 deletes this test when it replaces PAGES with nav.js.
-test("PAGES has stage 0's five routes", () => {
-  const app = read("app.js");
-  assert.match(app, /export const PAGES\s*=/, "app.js has no PAGES registry");
-  const routes = [...app.matchAll(/route: "([^"]*)"/g)].map((m) => m[1]);
-  for (const r of ["home", "leads", "scraper", "maprank", "money"]) assert.ok(routes.includes(r), `PAGES has no ${r} route`);
 });
 
 test("app.js shows the red banner while the business details are missing", () => {

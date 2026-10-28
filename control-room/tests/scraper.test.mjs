@@ -132,5 +132,5 @@ test("inProgress is the server's queued/running; isStuck and STUCK_MINUTES are g
   for (const status of ["done", "failed", "anything"]) assert.equal(inProgress({ status, created_at: long }), false, status);
   assert.equal(scraper.isStuck, undefined);
   assert.equal(scraper.STUCK_MINUTES, undefined);
-  assert.equal(typeof runRow, "function"); // home.js's Latest searches uses it
+  assert.equal(typeof runRow, "function");
 });

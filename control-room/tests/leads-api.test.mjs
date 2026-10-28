@@ -3,7 +3,6 @@
 // Handlers are called the way Pages calls them: {request, env: {DB}, params: {id}}.
 // Run: node --test control-room/tests/leads-api.test.mjs
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 import { countingDB } from "../functions/_lib/d1count.js";
 import { parseLeadFilters } from "../functions/_lib/shortlist.js";
@@ -12,12 +11,11 @@ import { ukDate } from "../functions/_lib/ukTime.js";
 import { onRequestGet as listRoute } from "../functions/api/leads.js";
 import { onRequestGet as detailRoute, onRequestPatch as patchRoute } from "../functions/api/leads/[id]/index.js";
 import { onRequestPost as notFitRoute } from "../functions/api/leads/[id]/not-a-fit.js";
-import { onRequestGet as overviewRoute } from "../functions/api/overview.js";
 import { drawerHtml } from "../public/js/leadview.js";
 import { researchCard } from "../public/js/researchcard.js";
 import { fakeD1 } from "./helpers/fakeD1.mjs";
 import {
-  seedDemo, seedLead, seedMailbox, seedMessage, seedProspect, seedResearch, seedSuppression,
+  seedDemo, seedLead, seedMailbox, seedMessage, seedProspect, seedResearch,
 } from "./helpers/shortlistSeed.mjs";
 
 const ORIGIN = "https://control.example";
@@ -449,72 +447,4 @@ test("Not a fit on a lead with no prospect row works and leaves other tables alo
   // The lead and its demo stay (only the research row and a ready prospect change).
   assert.ok(await DB.prepare("SELECT 1 FROM leads WHERE place_id = 'np'").first());
   assert.ok(await DB.prepare("SELECT 1 FROM demos WHERE place_id = 'np'").first());
-});
-
-// ---------------------------------------------------------------- Home (api/overview.js, until stage 11 removes it)
-
-// A card payer is won on their prospect (fulfilCheckout never writes leads); a client added by hand on Money is won on
-// leads.status. Home's "Won" tile counts both, once each.
-test("Home's Won count: a prospect won by card and a lead won by hand both count", async () => {
-  const DB = fakeD1();
-  const counts = async () => (await (await overviewRoute({ env: { DB } })).json()).counts;
-  await seedLead(DB, { place_id: "card" });
-  await seedProspect(DB, { place_id: "card", stage: "won" });
-  assert.equal((await counts()).won, 1);
-  await seedLead(DB, { place_id: "hand", status: "won" });
-  assert.equal((await counts()).won, 2);
-  await seedLead(DB, { place_id: "both", status: "won" });
-  await seedProspect(DB, { place_id: "both", stage: "won" });
-  await seedLead(DB, { place_id: "open" });
-  await seedProspect(DB, { place_id: "open", stage: "viewed" });
-  const c = await counts();
-  assert.equal(c.won, 3);
-  assert.equal(c.total, 4);
-});
-
-// Nothing writes leads.status since the Status select went (only 'won' from Stripe and Money), so Home's "Contact
-// these next" (status 'new') must leave out what Nik already decided on: Not a fit, too big, on the do-not-contact
-// list, excluded, or emailed. A `ready` prospect hasn't been emailed yet, so it stays.
-test("Home's Contact these next drops a lead Nik marked not a fit, and leads that are too big, suppressed or emailed", async () => {
-  const DB = fakeD1();
-  const next = async () => (await (await overviewRoute({ env: { DB } })).json()).next.map((l) => l.place_id);
-  await seedLead(DB, { place_id: "top", quality_score: 95 });
-  await seedLead(DB, { place_id: "second", quality_score: 60 });
-  await readyLead(DB, "ready", { lead: { quality_score: 55 } });
-  await seedLead(DB, { place_id: "excluded", quality_score: 99, excluded: 1 });
-  await seedLead(DB, { place_id: "won", quality_score: 98, status: "won" });
-  await seedLead(DB, { place_id: "big", quality_score: 90 });
-  await seedResearch(DB, { place_id: "big", too_big: 1 });
-  await readyLead(DB, "emailed", { lead: { quality_score: 85 }, prospect: { stage: "emailed", first_sent_at: SENT } });
-  await readyLead(DB, "lost", { lead: { quality_score: 84 }, prospect: { stage: "lost", lost_reason: "opt_out" } });
-  // On the do-not-contact list by the address we'd write to, by its domain, or by the company number.
-  await seedLead(DB, { place_id: "optout", quality_score: 80, email: "Owner@OptOut.example" });
-  await seedSuppression(DB, "owner@optout.example");
-  await seedLead(DB, { place_id: "domain", quality_score: 79 });
-  await seedResearch(DB, { place_id: "domain", best_email: "sue@blocked.example" });
-  await seedSuppression(DB, "blocked.example");
-  await seedLead(DB, { place_id: "company", quality_score: 78, company_number: "SC123456" });
-  await seedSuppression(DB, "sc123456", "company");
-  await seedLead(DB, { place_id: "skipped", quality_score: 77 });
-  await seedResearch(DB, { place_id: "skipped", status: "skipped", grade: null });
-
-  assert.deepEqual(await next(), ["top", "second", "ready"]);
-  assert.equal((await notFit(DB, "top", { reason: "Wrong trade" })).status, 200);
-  assert.deepEqual(await next(), ["second", "ready"]);
-  assert.equal((await notFit(DB, "ready", { reason: "Front-desk business" })).status, 200);
-  assert.deepEqual(await next(), ["second"]);
-  // Still six at most, best score first.
-  for (let i = 0; i < 8; i++) await seedLead(DB, { place_id: `more-${i}`, quality_score: 30 + i });
-  assert.deepEqual(await next(), ["second", "more-7", "more-6", "more-5", "more-4", "more-3"]);
-});
-
-// The funnel's numbers count every lead, so its tiles open All leads (Ready to email is a short, filtered list).
-test("Home's funnel tiles open All leads, not the Ready to email view", () => {
-  const src = readFileSync(new URL("../public/js/home.js", import.meta.url), "utf8");
-  assert.doesNotMatch(src, /["'`]#\/leads["'`]/);
-  const tiles = src.slice(src.indexOf("const funnel = ["), src.indexOf("].map(", src.indexOf("const funnel = [")));
-  assert.deepEqual([...tiles.matchAll(/^\s*\["([^"]+)".*, "(#\/[^"]*)"(?:, "\w+")?\],?$/gm)].map((m) => `${m[1]} ${m[2]}`), [
-    "To contact #/leads?view=all", "Contacted #/leads?view=all", "Replied #/leads?view=all",
-    "Calls booked #/leads?view=all", "Won #/money",
-  ]);
 });

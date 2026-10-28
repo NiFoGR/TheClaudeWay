@@ -200,7 +200,7 @@ test("saveTerritory stores the JSON {on, trade, towns, next, max} that Python an
   assert.equal(typeof text, "string");
   assert.deepEqual(JSON.parse(text), t); // what aetos_leads/autopilot.py json.loads
   assert.deepEqual(Object.keys(JSON.parse(text)), ["on", "trade", "towns", "next", "max"]);
-  assert.deepEqual(await getJsonSetting(DB, "territory"), t); // api/today.js reads it this way
+  assert.deepEqual(await getJsonSetting(DB, "territory"), t); // stripe.js getSetting reads it this way
   assert.deepEqual(await loadTerritory(DB), t);
 });
 

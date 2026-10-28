@@ -323,19 +323,6 @@ test("GET/POST /api/stripe/setup without a database → 500 with db()'s plain-En
   }
 });
 
-test("Home's Stripe step is done once Connect Stripe ran with a live key", async () => {
-  const { onRequestGet: today } = await import("../functions/api/today.js");
-  const DB = fakeD1();
-  const stripeStep = async () => (await (await today({ env: { DB } })).json()).setup.find((s) => s.key === "stripe");
-  const { fetchImpl } = fakeStripe({ "POST webhook_endpoints": HOOK });
-  await connectStripe(DB, {}, { key: KEY, origin: "https://x.test" }, { fetchImpl });
-  const test = await stripeStep();
-  assert.equal(test.done, false, "test mode isn't live yet");
-  assert.match(test.how, /Connect Stripe/);
-  await connectStripe(DB, {}, { key: "rk_live_abc123456789", origin: "https://x.test" }, { fetchImpl });
-  assert.equal((await stripeStep()).done, true);
-});
-
 // ---------------------------------------------------------------- the Payments light
 
 test("light is registered", async () => {

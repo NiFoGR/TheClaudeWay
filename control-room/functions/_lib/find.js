@@ -40,7 +40,7 @@ export async function loadTerritory(DB) {
 
 /**
  * Save the territory as the JSON text {on, trade, towns, next, max}: the shape Python's autopilot.py json.loads and
- * stripe.js getSetting (api/today.js) read. Only those five keys are stored.
+ * stripe.js getSetting read. Only those five keys are stored.
  */
 export async function saveTerritory(DB, territory) {
   await setSetting(DB, "territory", territoryText(territory));

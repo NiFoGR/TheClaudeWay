@@ -3,7 +3,7 @@
 // server's count, done again in the browser: words after the {greeting} line, each {placeholder} one), one card per
 // follow-up ("Follow-up 3 · day 4", Draft / Approved 19 Oct, the checks, what they'll see, Save and Approve), and Your
 // style (the "How much is it?" card until Nik writes his own price answer, the add form, his examples and rules, the
-// first emails he sent, collapsed). Everything from the server is escaped. The page is in app.js's main nav after
+// first emails he sent, collapsed). Everything from the server is escaped. The page is in nav.js's NAV after
 // Money and before Setup. voice.js touches no page when it loads (lib.js is loaded inside voicePage), so this file
 // needs none; the server's own answers (Task 12's routes on fakeD1) are drawn too, so the two keep agreeing.
 // Run: node --test control-room/tests/voice-ui.test.mjs
@@ -282,17 +282,18 @@ test("after approving all 9 and adding his price answer: green, Approved, no pri
 
 // ---------------------------------------------------------------- the nav, the toasts, the styles
 
-test("app.js: Voice is in the main nav, after Money and before Setup", () => {
+test("Voice is in the nav, after Money and before Setup; app.js runs voicePage", async () => {
   const app = read("../public/js/app.js");
   assert.match(app, /^import \{ voicePage \} from "\.\/voice\.js";$/m);
-  const routes = [...app.matchAll(/route: "([^"]*)"/g)].map((m) => m[1]);
+  assert.match(app, /voice: \(\) => voicePage\(\)/);
+  // file 11's nav.js holds the nav (tests/nav.test.mjs checks the whole order)
+  const { NAV, routeFor } = await import("../public/js/nav.js");
+  const routes = NAV.map((n) => n[0]);
   assert.equal(routes.indexOf("voice"), routes.indexOf("money") + 1);
   assert.ok(routes.indexOf("voice") < routes.indexOf("setup"));
-  const entry = app.match(/\{ route: "voice"[^\n]*\}/)?.[0] ?? "";
-  assert.match(entry, /label: "Voice"/);
-  assert.match(entry, /render: \(\) => voicePage\(\)/);
-  assert.doesNotMatch(entry, /\bnav:/, "a main nav item (no nav: false or bottom)");
-  const name = entry.match(/icon: "([^"]+)"/)?.[1];
+  const [, label, name] = NAV.find((n) => n[0] === "voice");
+  assert.equal(label, "Voice");
+  assert.equal(routeFor("#/voice").page, "voice");
   assert.ok(name && icon(name) !== icon("no-such-icon"), `the icon "${name}" isn't in html.js ICONS`);
 });
 

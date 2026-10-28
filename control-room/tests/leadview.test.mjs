@@ -495,7 +495,7 @@ test("lib.js re-exports html.js's esc, safeUrl and icon", async () => {
 test("routes", () => {
   assert.deepEqual({ ...parseRoute("#/lead/ChIJ123"), params: undefined }, { page: "leads", leadId: "ChIJ123", params: undefined });
   assert.equal(parseRoute("#/leads?view=all&job=j1").params.get("job"), "j1");
-  assert.equal(parseRoute("#/nope").page, "nope");          // unknown pages are app.js's job (PAGES.find → home)
+  assert.equal(parseRoute("#/nope").page, "nope");          // unknown pages: nav.js's routeFor opens Todo
   assert.equal(parseRoute("#/replies?x=1").page, "replies"); // later stages' routes pass through
   assert.equal(parseRoute("").page, "home");
   assert.equal(parseRoute("#/").page, "home");
@@ -697,23 +697,18 @@ test("leads.js: leadsPage(params), openLeadDrawer(placeId) and closeDrawer; the 
   assert.doesNotMatch(src, /innerHTML\s*=\s*`[^`]*\$\{(?!icon\(|esc\(|pageHead\(|inner\})/, "anything put in the page by hand is escaped");
 });
 
-test("app.js routes through parseRoute and PAGES; #/lead/<id> opens the Leads page then its panel", () => {
+test("app.js routes through nav.js's routeFor; #/lead/<id> opens the Leads page then its panel", () => {
   const app = js("app.js");
-  assert.match(app, /import \{ parseRoute \} from "\.\/leadview\.js";/);
-  assert.match(app, /parseRoute\(location\.hash\)/);
-  assert.match(app, /PAGES\.find\(\(p\) => p\.route === name\) \|\| PAGES\.find\(\(p\) => p\.route === "home"\)/);
-  assert.match(app, /\{ route: "leads", label: "Leads", icon: "users", render: \(params\) => leadsPage\(params\) \}/);
-  assert.ok(app.indexOf("await page.render(params)") < app.indexOf("openLeadDrawer(leadId)"));
-  assert.ok(app.indexOf("closeDrawer();") < app.indexOf("await page.render(params)"));
+  assert.match(app, /routeFor\(location\.hash\)/);
+  assert.match(app, /leads: \(\{ params \}\) => leadsPage\(params\)/);
+  assert.match(app, /lead: \(\{ params \}\) => leadsPage\(params\)/);
+  assert.ok(app.indexOf("await (PAGE_RUN[page]") < app.indexOf("openLeadDrawer(id)"));
+  assert.ok(app.indexOf("closeDrawer();") < app.indexOf("await (PAGE_RUN[page]"));
+  assert.match(app, /if \(page === "lead" && id && mine === turn\) openLeadDrawer\(id\)/);
   assert.doesNotMatch(app, /function currentPage/);
-  const routes = [...app.matchAll(/route: "([^"]*)"/g)].map((m) => m[1]);
-  // stage 4's Demo page is routed (#/demo) but not in the nav; stage 5–6's Voice page sits after Money, stage 7's
-  // Replies page after Voice, stage 8's Call page (#/call/<id>) routed after Demo, not in the nav
-  assert.deepEqual(routes, ["home", "leads", "scraper", "maprank", "money", "voice", "replies", "demo", "call", "setup"]);
-  assert.match(app, /\{ route: "demo", [^}]*nav: false \}/);
 });
 
-test("Lead Scraper: a finished run links to its leads instead of its own table; Home opens the new panel", async () => {
+test("Lead Scraper: a finished run links to its leads instead of its own table", async () => {
   const src = js("scraper.js");
   assert.doesNotMatch(src, /from "\.\/leads\.js"|leadsTable|bindTable|\/api\/leads\?job=/);
   const { seeLeadsHtml } = await withPage(() => import("../public/js/scraper.js"));
@@ -740,13 +735,6 @@ test("Lead Scraper: a finished run links to its leads instead of its own table; 
   assert.doesNotMatch(allMoved, /class="btn|job=/, "no button to an empty list");
   assert.match(allMoved, /href="#\/leads\?view=all"/);
   noRawHtml(seeLeadsHtml({ id: XSS, found: 3, pitchable: XSS, leads_now: XSS }));
-  const home = js("home.js");
-  assert.match(home, /import \{ openLeadDrawer \} from "\.\/leads\.js";/);
-  assert.match(home, /openLeadDrawer\(next\[Number\(el\.dataset\.i\)\]\?\.place_id\)/);
-  assert.doesNotMatch(home, /openDrawer\(/);
-  // its "All leads" and "See all" links say All leads, so they open All leads (#/leads alone is Ready to email)
-  assert.match(home, /href="#\/leads\?view=all">All leads<\/a>/);
-  assert.match(home, /href="#\/leads\?view=all">See all<\/a>/);
 });
 
 test("GET /api/jobs: leads_now is what the run's See these leads link then lists", async () => {

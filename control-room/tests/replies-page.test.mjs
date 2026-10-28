@@ -132,8 +132,6 @@ test("the spec's test: escaping, empty state, cards, median, pause, nav entry", 
   assert.equal(list.median_minutes, 3);
   await replies.onRequestPost(ctx(DB, "/api/replies", { paused: true }));
   assert.equal(await getSetting(DB, "replies:paused"), "1");
-  const app = readFileSync(new URL("../public/js/app.js", import.meta.url), "utf8");
-  assert.match(app, /route: "replies", label: "Replies"/);   // in the nav until file 11's NAV takes over
 });
 
 // ---------------------------------------------------------------- GET /api/replies
@@ -382,15 +380,6 @@ test("callTimeMessage and ukInputToIso: Nik's call-time message and the UK time 
   assert.equal(ukInputToIso("2026-03-28", "11:00"), "2026-03-28T11:00:00Z");
   assert.equal(ukInputToIso("2026-10-22", ""), null);
   assert.equal(ukInputToIso("22/10/2026", "15:00"), null);
-});
-
-test("app.js: Replies after Voice and before Setup, with both its routes", () => {
-  const app = readFileSync(new URL("../public/js/app.js", import.meta.url), "utf8");
-  const routes = [...app.matchAll(/route: "([^"]*)"/g)].map((m) => m[1]);
-  assert.ok(routes.indexOf("replies") > routes.indexOf("voice"), "Replies comes after Voice");
-  assert.ok(routes.indexOf("replies") < routes.indexOf("setup"));
-  assert.match(app, /import \{[^}]*\brepliesPage\b[^}]*\} from "\.\/replies\.js"/);
-  assert.match(app, /threadPage\(/);
 });
 
 test("askedSlot: the call-time card starts on the day and time they asked for, in UK time", () => {

@@ -231,7 +231,7 @@ export async function callPage(id) {
     data = await lib.api(`/api/calls/${encodeURIComponent(callId)}`);
   } catch (err) {
     const el = document.getElementById("call-body");
-    if (ask === pageAsk && el) el.innerHTML = `<p class="error">${esc(err.message)}</p><p class="hint"><a href="#/home">Back to Home</a></p>`;
+    if (ask === pageAsk && el) el.innerHTML = `<p class="error">${esc(err.message)}</p><p class="hint"><a href="/#/">Back to Todo</a></p>`;
     return;
   }
   if (ask !== pageAsk || !document.getElementById("call-body")) return; // a newer load, or Nik has gone elsewhere

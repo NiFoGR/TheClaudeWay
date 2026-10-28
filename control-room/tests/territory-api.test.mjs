@@ -4,7 +4,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { onRequestGet, onRequestPut } from "../functions/api/territory.js";
-import { onRequestGet as getToday } from "../functions/api/today.js";
 import { loadTerritory, saveTerritory } from "../functions/_lib/find.js";
 import { getSetting, setSetting } from "../functions/_lib/settings.js";
 import { DEFAULT_TERRITORY } from "../functions/_lib/territory.js";
@@ -173,7 +172,7 @@ test("PUT: every plain-English error, and nothing is saved", async () => {
   assert.equal(await getSetting(DB, "territory"), null);
 });
 
-test("PUT saves only the five keys Python reads, and Home's checklist still reads the territory", async () => {
+test("PUT saves only the five keys Python reads, and the on switch is saved as sent", async () => {
   const DB = fakeD1();
   const resp = await put(DB, { on: false, trade: " roofer ", towns: ["Leigh", "Wigan"], max: 100, next: 9, upcoming: "Wigan" });
   assert.equal(resp.status, 200);
@@ -181,10 +180,9 @@ test("PUT saves only the five keys Python reads, and Home's checklist still read
   assert.deepEqual(await resp.json(), { territory: t });
   assert.deepEqual(JSON.parse(await getSetting(DB, "territory")), t);
   assert.deepEqual(Object.keys(JSON.parse(await getSetting(DB, "territory"))), ["on", "trade", "towns", "next", "max"]);
-  const home = await (await getToday({ env: { DB } })).json();
-  assert.equal(home.setup.find((s) => s.key === "autopilot").done, false); // api/today.js sees "off"
+  assert.equal((await loadTerritory(DB)).on, false);
   await put(DB, { on: true, trade: "roofer", towns: ["Leigh", "Wigan"], max: 100 });
-  assert.equal((await (await getToday({ env: { DB } })).json()).setup.find((s) => s.key === "autopilot").done, true);
+  assert.equal((await loadTerritory(DB)).on, true);
   const { territory, upcoming } = await get(DB, new Date("2026-10-19T09:00:00Z"));
   assert.deepEqual(territory, { ...t, on: true });
   assert.equal(upcoming, "Leigh");

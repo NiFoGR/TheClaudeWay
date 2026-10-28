@@ -290,7 +290,7 @@ export async function paymentsLight(DB, env, now = new Date()) {
 }
 
 // ---------------------------------------------------------------- JSON settings helpers
-// The old JSON-valued settings (stripe, territory, setup_done…); outreach-db.js, api/today.js and others still use them.
+// The old JSON-valued settings (stripe, territory, setup_done…); outreach-db.js, find.js and others still use them.
 
 export async function getSetting(DB, key) {
   const row = await DB.prepare("SELECT value FROM settings WHERE key = ?").bind(key).first();

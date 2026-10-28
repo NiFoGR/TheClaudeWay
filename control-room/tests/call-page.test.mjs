@@ -1,6 +1,6 @@
 // Stage 8 call page (#/call/<id>) and the call box in the lead drawer / thread view (docs/rebuild/07-replies-calls.md
 // Part A "Call page" and "Lead drawer", Part B Task 16): the pure renderers in public/js/call.js (callPageHtml,
-// callBoxHtml) and the wiring in app.js and leads.js. call.js touches no page when it loads (lib.js is loaded inside
+// callBoxHtml) and the wiring in leads.js (app.js's route is in tests/nav.test.mjs). call.js touches no page when it loads (lib.js is loaded inside
 // the entry points), so this file needs none.
 // Run: node --test control-room/tests/call-page.test.mjs
 import assert from "node:assert/strict";
@@ -23,8 +23,6 @@ test("the call page: who, when, tap to call, the script at the call day's prices
   for (const b of ["Done", "No answer", "They're ordering: send the order link", "Not for them"]) assert.match(html, new RegExp(b));
   assert.match(callPageHtml({ ...data, after_slot: false }), /Cancel call/);
   assert.doesNotMatch(callPageHtml({ ...data, lead: { ...data.lead, name: "<img src=x onerror=alert(1)>" } }), /<img src=x/);
-  const app = readFileSync(new URL("../public/js/app.js", import.meta.url), "utf8");
-  assert.match(app, /route: "call", nav: false/);   // routed, never a nav item
 });
 
 const BASE = {
@@ -152,7 +150,6 @@ test("wiring: the drawer mounts the call box in #d-call; the page posts each out
   assert.match(call, /\/api\/calls\/\$\{encodeURIComponent\(/);
   assert.match(call, /\/api\/calls\?place_id=\$\{encodeURIComponent\(/);
   for (const action of ["cancel", "done", "no_show", "ordering", "lost"]) assert.match(call, new RegExp(`"${action}"`));
-  const app = js("app.js");
-  assert.match(app, /import \{[^}]*\bcallPage\b[^}]*\} from "\.\/call\.js"/);
-  assert.match(app, /\{ route: "call", nav: false, [^}]*callPage\(/);
+  // app.js imports callPage and runs it for #/call/<id> (tests/nav.test.mjs checks the route and the nav).
+  assert.match(js("app.js"), /import \{[^}]*\bcallPage\b[^}]*\} from "\.\/call\.js"/);
 });

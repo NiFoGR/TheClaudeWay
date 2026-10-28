@@ -379,19 +379,21 @@ test("GET /api/demo and GET /api/demo/lead/:id answers render as Part A says", a
 
 // ---------------------------------------------------------------- the wiring (needs a page, so read as text)
 
-test("app.js routes #/demo to demoPage with no nav item", () => {
+test("app.js routes #/demo to demoPage with no nav item", async () => {
   const app = read("../public/js/app.js");
   assert.match(app, /^import \{ demoPage \} from "\.\/demo\.js";$/m);
-  assert.match(app, /\{ route: "demo", label: "Demo", icon: "layout", render: \(\) => demoPage\(\), nav: false \}/);
-  // the nav builder leaves nav: false out (routable only), and an unknown route still goes home
-  assert.match(app, /const place = \(p\) => \(p\.nav === false \? null :/);
-  assert.match(app, /PAGES\.find\(\(p\) => p\.route === name\) \|\| PAGES\.find\(\(p\) => p\.route === "home"\)/);
+  assert.match(app, /demo: \(\) => demoPage\(\)/);
+  // file 11's nav.js: #/demo is routed but not in the nav, and an unknown route opens Todo
+  const { NAV, routeFor } = await import("../public/js/nav.js");
+  assert.equal(routeFor("#/demo").page, "demo");
+  assert.ok(!NAV.some((n) => n[0] === "demo"));
+  assert.equal(routeFor("#/no-such-page").page, "todo");
 });
 
 test("demo.js: the page loads GET /api/demo, approves with {template, version} and shows the API's error in a toast", () => {
   const src = read("../public/js/demo.js");
   assert.match(src, /export async function demoPage\(\)/);
-  // titled as everything else names it ("the Demo page") and as its PAGES label
+  // titled as everything else names it ("the Demo page")
   assert.match(src, /^const TITLE = "Demo";/m);
   assert.match(src, /pageHead\(TITLE, SUB\)/);
   assert.match(src, /api\("\/api\/demo"\)/);

@@ -378,19 +378,6 @@ const CALLS_WITH_NAMES = `SELECT c.id, c.place_id, c.slot_at, l.name, p.greet_na
     AND NOT (COALESCE(p.stage, '') = 'lost' AND COALESCE(p.lost_reason, '') = 'opt_out')`;
 
 /**
- * Confirmed calls with slot_at in [from, to), soonest first, as Home's "What to do" shows them until stage 11's Todo
- * page: [{id, place_id, slot_at, who: "Mark (Diamond Kickboxing)", phone: the call's or the lead's, or null}]. The
- * same calls the `calls-day` Todo lists (no drills, no opted-out prospects). One statement.
- */
-export async function upcomingCalls(DB, from, to) {
-  const [a, b] = [toDate(from), toDate(to)];
-  if (!isValid(a) || !isValid(b)) throw new TypeError("upcomingCalls needs two times, as Dates or ISO times.");
-  const { results } = await DB.prepare(`${CALLS_WITH_NAMES} AND c.slot_at >= ?1 AND c.slot_at < ?2 ORDER BY c.slot_at, c.id`)
-    .bind(iso(a), iso(b)).all();
-  return results.map((c) => ({ id: c.id, place_id: c.place_id, slot_at: c.slot_at, who: whoFor(c), phone: String(c.phone ?? "").trim() || null }));
-}
-
-/**
  * The tick's `calls` step: (1) releases offers whose hold ran out (48 hours, or the slot time if sooner: offerExpired's
  * rule, in SQL); (2) from 07:00 UK, once a day, when any confirmed calls are today, adds the `call` Todo
  * "Today's calls: 11:00 Mark (Diamond Kickboxing)" (dedupe calls-day:<YYYY-MM-DD>, due 07:00 UK), and closes an
