@@ -156,3 +156,34 @@ and the Replies Routine's own light goes red after a failed fire or 26 hours wit
 claude.ai/code/routines, check `aetos-reply` is on and its last run finished, then press Run now. If it's gone, make
 it again from this section and paste the new URL and token on Setup (section 6). Meanwhile, answer from the Replies
 page yourself.
+
+### weekly-kpis (`aetos-weekly-kpis`)
+
+Every Sunday evening Claude reads the week's email numbers (your first emails, the follow-ups, its own replies, grades
+and research) and writes you a short review on the KPIs page: what worked, what didn't, and at most 3 things to try
+next week, each with the number behind it. Numbers from fewer than 30 emails only ever get "too early to tell". It
+never changes anything itself: the review arrives as one Todo, and you decide. Prompt: `routines/weekly-kpis.md`
+(written in stage Todo/KPIs, `docs/rebuild/11-todo-kpis.md`).
+
+1. Make the shared "Aetos" environment first if it doesn't exist yet (section 1): its `AETOS_AGENT` network secret
+   and `CONTROL_ROOM_URL` environment variable are all this Routine needs, nothing extra.
+2. claude.ai/code/routines → New task → Set up manually (section 2):
+   - **Name:** `aetos-weekly-kpis`.
+   - **Repository:** `NiFoGR/TheClaudeWay`.
+   - **Model:** Sonnet.
+   - **Environment:** "Aetos".
+   - **Prompt:** the whole contents of `routines/weekly-kpis.md`, pasted as it is (nothing to replace).
+   - **Schedule:** weekly, Sunday at 18:47, Europe/London (UK time).
+3. Add the API trigger (section 3): Edit → in the Trigger row press + → API → Generate token (shown once: copy it
+   straight away), then copy the trigger's Fire URL (it ends in `/fire`).
+4. In the Control Room: Setup → Claude → the Weekly KPIs row → paste the URL and the token → Save → Test fire. Within
+   a few minutes the row says "Last ran just now". A test only posts the heartbeat: no review is written.
+5. Press Run now once on `aetos-weekly-kpis` in claude.ai/code/routines, wait a few minutes, then open the KPIs page:
+   this week's review shows there with "Written <time>", and Todo has one "Claude's email review for …" item.
+
+What starts it: the Sunday 18:47 schedule (it reviews the week ending that night) and Setup's Test fire (heartbeat
+only). A fire whose text names a week like `2026-W43` reviews that week instead.
+
+If it stops: the Weekly KPIs light on Setup → Health goes red after a failed fire, or 8 days without a heartbeat.
+Open claude.ai/code/routines, check `aetos-weekly-kpis` is on and its last run finished, then press Run now. If it's
+gone, make it again from this section and paste the new URL and token on Setup (section 6).
