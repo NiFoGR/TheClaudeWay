@@ -21,6 +21,7 @@
 // The runner's own cost: the gap check (1 query, which also reads every timed step's last run), the lease (1),
 // tick:last (1); then, after the steps, one write for all the timed steps that ran (only if any did), the release (1)
 // and the tick beat (1). The finishing queries never undo the tick: if one fails it's logged and the results stand.
+import { runCallsStep } from "./calls-db.js";
 import { countingDB } from "./d1count.js";
 import { dailyFindStep, staleJobsStep } from "./find.js";
 import { followupsStep } from "./followups.js";
@@ -28,6 +29,7 @@ import { healthStep } from "./health.js";
 import { hotStep } from "./hot.js";
 import { inboundStep } from "./mail/inbound-db.js";
 import { sendStep } from "./mail/outbox.js";
+import { runReplyFire } from "./replies-db.js"; // also registers the Replies health light
 import "./research-db.js"; // no tick step: imported so its research health light is registered
 import { beat } from "./routines.js";
 import { setSetting } from "./settings.js";
@@ -52,6 +54,7 @@ export const STEPS = [
   // slot: inbound (every tick; stage 0, stage 7 adds its reply hook inside it)
   inboundStep,
   // slot: reply_fire (every tick; stage 7)
+  { name: "reply_fire", everyMinutes: 0, run: runReplyFire },
   // slot: followups (every 5 min; stage 6)
   { name: "followups", everyMinutes: 5, run: (ctx) => followupsStep(ctx) },
   // slot: send (every tick; stage 0)
@@ -65,6 +68,7 @@ export const STEPS = [
   // slot: stale_jobs (every 15 min; stage 1)
   staleJobsStep,
   // slot: calls (every 5 min; stage 8)
+  { name: "calls", everyMinutes: 5, run: runCallsStep },
   // slot: sites (every 5 min; stage 10)
   // slot: care (every 10 min; stage 11)
   // slot: purge (monthly; file 11)
