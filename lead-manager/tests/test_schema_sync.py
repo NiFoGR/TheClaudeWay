@@ -17,7 +17,7 @@ def test_control_room_schema_matches_lead_manager():
 def test_rebuild_tables_present():
     js = sync_schema.render()
     for t in ["research","prospects","mailboxes","messages","inbound_raw","followup_templates","style_examples",
-              "calls","todos","heartbeats","routine_fires","kpi_reports","onboarding"]:
+              "calls","todos","heartbeats","routine_fires","kpi_reports","onboarding","stripe_events"]:
         assert f"CREATE TABLE IF NOT EXISTS {t} (" in js
     assert re.search(r'export const SCHEMA_VERSION = "[0-9a-f]{12}";', js)
 

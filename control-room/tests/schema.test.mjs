@@ -136,17 +136,21 @@ test("every schema statement is CREATE TABLE|INDEX IF NOT EXISTS <name>, so db()
   assert.equal(schemaObject("ALTER TABLE leads ADD COLUMN x TEXT"), null);
 });
 
-test("migrating the live database (old 29 statements, no version) runs only the 23 new ones: 26 queries", async () => {
+// Stage 0 added 23 statements to the live database's 29; later stages append their own (stage 9: stripe_events).
+test("migrating the live database (old 29 statements, no version) runs only the new ones, in one call", async () => {
   assert.equal(LIVE_SCHEMA.length, 29);
+  const fresh = SCHEMA.length - LIVE_SCHEMA.length;
+  assert.ok(fresh >= 24, String(fresh));
   const DB = liveDB();
   await DB.exec("INSERT INTO leads (place_id, name, trade, search_town, first_seen_at, updated_at) VALUES ('p1', 'Smith Roofing', 'roofer', 'Leeds', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')");
   const c = countingDB(DB);
-  const { db, schemaObject } = await newIsolate();
+  const { db, schemaObject, MIGRATION_MAX } = await newIsolate();
+  assert.ok(fresh <= MIGRATION_MAX, "the live database still migrates in one call");
   const report = {};
   await db({ DB: c.DB }, report);
-  assert.equal(c.used(), 1 + 1 + 23 + 1, "version read, sqlite_master, the 23 new statements, version write");
+  assert.equal(c.used(), 1 + 1 + fresh + 1, "version read, sqlite_master, the new statements, version write");
   assert.ok(c.used() <= 50);
-  assert.deepEqual(report, { migrated: 25, created: 23 }, "what the migration itself ran, after the version read");
+  assert.deepEqual(report, { migrated: fresh + 2, created: fresh }, "what the migration itself ran, after the version read");
   assert.equal(await storedVersion(DB), SCHEMA_VERSION);
   for (const sql of SCHEMA) {
     const [type, name] = schemaObject(sql).split(":");
@@ -155,7 +159,7 @@ test("migrating the live database (old 29 statements, no version) runs only the 
   assert.equal(await DB.prepare("SELECT COUNT(*) AS n FROM leads").first("n"), 1);
   // Done: the next call in this isolate runs nothing and reports no migration.
   await db({ DB: c.DB }, report);
-  assert.equal(c.used(), 26);
+  assert.equal(c.used(), 1 + 1 + fresh + 1);
   assert.deepEqual(report, { migrated: 0, created: 0 });
 });
 

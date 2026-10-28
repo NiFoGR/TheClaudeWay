@@ -51,6 +51,7 @@ export const SCHEMA = [
   "CREATE TABLE IF NOT EXISTS heartbeats (\n  name     TEXT PRIMARY KEY,              \n  last_at  TEXT NOT NULL,\n  ok       INTEGER NOT NULL,\n  detail   TEXT NOT NULL DEFAULT ''\n)",
   "CREATE TABLE IF NOT EXISTS routine_fires (\n  id         TEXT PRIMARY KEY,\n  routine    TEXT NOT NULL,\n  reason     TEXT NOT NULL,\n  http_status INTEGER,\n  error      TEXT,\n  session_url TEXT,\n  at         TEXT NOT NULL\n)",
   "CREATE TABLE IF NOT EXISTS kpi_reports (\n  week       TEXT PRIMARY KEY,            \n  numbers    TEXT NOT NULL,               \n  analysis   TEXT NOT NULL DEFAULT '',    \n  created_at TEXT NOT NULL\n)",
-  "CREATE TABLE IF NOT EXISTS onboarding (\n  client_id    TEXT PRIMARY KEY,\n  token        TEXT NOT NULL UNIQUE,      \n  status       TEXT NOT NULL,             \n  form         TEXT,                      \n  submitted_at TEXT,                      \n  due_live_at  TEXT,\n  live_at      TEXT,\n  site_url     TEXT,\n  created_at   TEXT NOT NULL\n)"
+  "CREATE TABLE IF NOT EXISTS onboarding (\n  client_id    TEXT PRIMARY KEY,\n  token        TEXT NOT NULL UNIQUE,      \n  status       TEXT NOT NULL,             \n  form         TEXT,                      \n  submitted_at TEXT,                      \n  due_live_at  TEXT,\n  live_at      TEXT,\n  site_url     TEXT,\n  created_at   TEXT NOT NULL\n)",
+  "CREATE TABLE IF NOT EXISTS stripe_events (\n  id      TEXT PRIMARY KEY,   \n  type    TEXT NOT NULL,\n  result  TEXT NOT NULL,      \n  at      TEXT NOT NULL\n)"
 ];
-export const SCHEMA_VERSION = "c4f9efb3067c";
+export const SCHEMA_VERSION = "f6b97110b6ab";

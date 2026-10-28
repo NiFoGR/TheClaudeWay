@@ -463,3 +463,11 @@ CREATE TABLE IF NOT EXISTS onboarding (
   site_url     TEXT,
   created_at   TEXT NOT NULL
 );
+
+-- Every Stripe webhook event seen, and what the handler did (stage 9): a repeat of a stored id changes nothing.
+CREATE TABLE IF NOT EXISTS stripe_events (
+  id      TEXT PRIMARY KEY,   -- Stripe event id
+  type    TEXT NOT NULL,
+  result  TEXT NOT NULL,      -- what the handler did, in plain English
+  at      TEXT NOT NULL
+);
