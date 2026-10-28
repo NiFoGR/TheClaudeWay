@@ -2,7 +2,7 @@
 // Stopping a client who pays through Stripe also cancels their Stripe subscription, so the card stops being charged.
 // DELETE /api/money/clients/:id → remove a client added by mistake.
 import { isDate } from "../../../_lib/money.js";
-import { stripe } from "../../../_lib/stripe.js";
+import { stripeApi, stripeKey } from "../../../_lib/stripe.js";
 import { bad, db, json } from "../../../_lib/util.js";
 
 export async function onRequestPatch({ request, env, params }) {
@@ -15,7 +15,7 @@ export async function onRequestPatch({ request, env, params }) {
     const link = await DB.prepare("SELECT stripe_subscription FROM client_links WHERE client_id = ?").bind(params.id).first();
     if (body.cancelled_on && link?.stripe_subscription) {
       try {
-        await stripe(env, "DELETE", `subscriptions/${link.stripe_subscription}`);
+        await stripeApi((await stripeKey(env, DB))?.key, "DELETE", `subscriptions/${link.stripe_subscription}`);
       } catch (e) {
         if (!/No such subscription|canceled/i.test(e.message)) return bad(`Couldn't cancel their card payments in Stripe: ${e.message}`, 502);
       }

@@ -2,17 +2,24 @@
 // (mailboxes, Claude, DNS, business details, receiving: loadSetupStatus) and what's still to set up (setupGaps).
 // Never returns secret values: the status only says whether each secret is set.
 import { loadSetupStatus, setupGaps } from "../_lib/setupStatus.js";
-import { getSetting, isCurrent, stripeMode } from "../_lib/stripe.js";
+import { paymentsLight, stripeStatus } from "../_lib/stripe.js";
 import { db, json } from "../_lib/util.js";
 
+// The Payments row: the same answer as the payments health light (paymentsLight), and the mode from stripeStatus.
 async function checkStripe(env) {
-  if (!env.STRIPE_SECRET_KEY) return { ok: false, fix: "Not connected yet: follow “Connect Stripe” below." };
   try {
-    const saved = env.DB ? await getSetting(env.DB, "stripe") : null;
-    if (await isCurrent(env, saved)) return { ok: true };
-    return { ok: false, fix: "Key added. Press “Set up Stripe” below to create your payment links." };
+    const DB = env.DB ? await db(env) : null; // db() first: stripe_events may be new since the last deploy
+    const status = DB ? await stripeStatus(DB, env) : null;
+    if (!status?.key) {
+      if (!DB && env.STRIPE_SECRET_KEY) return { ok: false, mode: null, fix: "Couldn't check Stripe: the database isn't connected yet." };
+      return { ok: false, mode: null, fix: "Not connected yet: paste your Stripe key on Setup and press Connect Stripe." };
+    }
+    const light = await paymentsLight(DB, env, new Date());
+    if (light.level === "green") return { ok: true, mode: status.mode };
+    const fix = [light.detail, light.fix].filter(Boolean).map((t) => t.replace(/\.?$/, ".")).join(" ");
+    return { ok: false, mode: status.mode, fix };
   } catch {
-    return { ok: false, fix: "Key added, but the database isn't answering yet." };
+    return { ok: false, mode: null, fix: "Couldn't check Stripe: the database isn't answering yet." };
   }
 }
 
@@ -56,13 +63,14 @@ async function readStatus(env) {
 }
 
 export async function onRequestGet({ env }) {
-  const [database, github, payments, setup] = await Promise.all([checkDatabase(env), checkGitHub(env), checkStripe(env), readStatus(env)]);
+  const [database, github, stripe, setup] = await Promise.all([checkDatabase(env), checkGitHub(env), checkStripe(env), readStatus(env)]);
+  const { mode, ...payments } = stripe;
   return json({
     checks: [
       { name: "Password", ok: true, detail: "You're logged in." },
       { name: "Database (Cloudflare D1)", ...database, detail: "Stores your leads and runs." },
       { name: "Scraper connection (GitHub)", ...github, detail: "Lets the Find leads button start the scraper." },
-      { name: `Payments (Stripe${env.STRIPE_SECRET_KEY ? `, ${stripeMode(env)} mode` : ""})`, ...payments, detail: "Clients pay by card; payments land on the Money page by themselves." },
+      { name: `Payments (Stripe${mode ? `, ${mode} mode` : ""})`, ...payments, detail: "Clients pay by card; payments land on the Money page by themselves." },
     ],
     note: "Google Places and Companies House keys live in GitHub (repo → Settings → Secrets and variables → Actions). If they're missing, a run will show as failed with the reason.",
     ...setup,
