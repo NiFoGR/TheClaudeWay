@@ -29,6 +29,7 @@ import { healthStep } from "./health.js";
 import { hotStep } from "./hot.js";
 import { inboundStep } from "./mail/inbound-db.js";
 import { sendStep } from "./mail/outbox.js";
+import { purgeStep } from "./purge.js";
 import { runReplyFire } from "./replies-db.js"; // also registers the Replies health light
 import "./research-db.js"; // no tick step: imported so its research health light is registered
 import { beat } from "./routines.js";
@@ -73,6 +74,7 @@ export const STEPS = [
   // slot: sites (every 5 min; stage 10)
   // slot: care (every 10 min; stage 11)
   // slot: purge (monthly; file 11)
+  purgeStep,
   // slot: health (only in the ?reason=health call; stage 0)
   healthStep,
 ];
