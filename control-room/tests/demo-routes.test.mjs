@@ -6,7 +6,8 @@
 // user-agent, Nik's login cookie, an unknown kind, a body over 200 bytes, a missing or ended demo, or a prospect that is
 // missing or still `ready` with no first email sent (a `ready` one whose first email has gone, before stage 6's
 // followups step records it, counts: mayCount); a view goes through countView (one per 30 minutes; ready → emailed →
-// viewed for such a prospect), order_page/order_click through recordEvent. session.js holds the login cookie the
+// viewed for such a prospect), order_page through recordEvent; order_click is the checkout route's alone (stage 9), so a
+// beacon sending it stores nothing. session.js holds the login cookie the
 // middleware has always set; bots.js the user-agents never counted.
 // Run: node --test control-room/tests/demo-routes.test.mjs
 import assert from "node:assert/strict";
@@ -20,6 +21,7 @@ import { checkDemoHtml } from "../functions/_lib/demo/check.js";
 import { buildDemoData } from "../functions/_lib/demo/data.js";
 import { countView, EVENT_KINDS, mayCount } from "../functions/_lib/demo-db.js";
 import { offerFor } from "../functions/_lib/offer.js";
+import { renderOrder } from "../functions/_lib/order-page.js";
 import { page } from "../functions/_lib/page.js";
 import { isOwnerRequest, SESSION_COOKIE, sessionToken } from "../functions/_lib/session.js";
 import { countingDB } from "../functions/_lib/d1count.js";
@@ -220,8 +222,10 @@ const OLD_NAMES = [["render", "Demo"], ["services", "For"], ["PREVIEW", "_DAYS"]
 
 test("the old demo renderer is gone and nothing imports it; the order page's pieces stay", () => {
   for (const name of OLD_NAMES) assert.equal(name in oldDemo, false, `${name} still exported`);
-  for (const name of ["renderOrder", "renderExpired", "isWeekendUK", "shortName", "slugFor"]) {
-    assert.equal(typeof oldDemo[name], "function", `${name} is kept for the order page (stage 9 moves it)`);
+  // Stage 9 moved the order page to _lib/order-page.js; the rest of the old module stays.
+  assert.equal("renderOrder" in oldDemo, false, "renderOrder lives in _lib/order-page.js now");
+  for (const name of ["renderExpired", "isWeekendUK", "shortName", "slugFor"]) {
+    assert.equal(typeof oldDemo[name], "function", `${name} is still exported`);
   }
   const files = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
     e.isDirectory() ? files(new URL(`${e.name}/`, dir)) : /\.m?js$/.test(e.name) ? [new URL(e.name, dir)] : []);
@@ -410,10 +414,11 @@ test("a first email that has gone counts at once, before the followups step reco
   assert.equal((await beaconTo(DB)(CHROME, VIEW)).status, 204);
   assert.deepEqual(prospectRow(DB), { views: 1, stage: "viewed", stage_at: NOW_ISO, last_view_at: NOW_ISO, updated_at: NOW_ISO });
   assert.deepEqual(events(DB), [`view ${NOW_ISO}`]);
-  // the order page's events count too, and never move the stage
+  // the order page's event counts too, and never moves the stage; order_click is the checkout route's alone (stage 9:
+  // it feeds the checkout rate limit), so a beacon sending it stores nothing
   await beaconTo(DB)(CHROME, '{"kind":"order_page"}');
   await beaconTo(DB)(CHROME, '{"kind":"order_click"}');
-  assert.deepEqual(events(DB), [`view ${NOW_ISO}`, `order_page ${NOW_ISO}`, `order_click ${NOW_ISO}`]);
+  assert.deepEqual(events(DB), [`view ${NOW_ISO}`, `order_page ${NOW_ISO}`]);
   assert.equal(prospectRow(DB).views, 1);
 
   // Order events first, on a lead still `ready`: stored, the stage left for the followups step to move.
@@ -533,12 +538,13 @@ test("the 30-minute window: 29 minutes later doesn't count, 31 does; the stage s
   t.mock.timers.setTime(NOW.getTime() + 31 * MIN);
   await post(CHROME);
   assert.deepEqual(prospectRow(DB), { views: 2, stage: "viewed", stage_at: "2026-10-21T10:00:00Z", last_view_at: "2026-10-21T10:31:00Z", updated_at: "2026-10-21T10:31:00Z" });
-  // order events in between are stored but never de-duplicated or counted as views
+  // order_page events in between are stored but never de-duplicated or counted as views; order_click beacons are
+  // ignored (the checkout route records those)
+  await post(CHROME, '{"kind":"order_page"}');
   await post(CHROME, '{"kind":"order_page"}');
   await post(CHROME, '{"kind":"order_click"}');
-  await post(CHROME, '{"kind":"order_click"}');
   assert.deepEqual(events(DB), ["view 2026-10-21T10:00:00Z", "view 2026-10-21T10:31:00Z", "order_page 2026-10-21T10:31:00Z",
-    "order_click 2026-10-21T10:31:00Z", "order_click 2026-10-21T10:31:00Z"]);
+    "order_page 2026-10-21T10:31:00Z"]);
   assert.equal(prospectRow(DB).views, 2);
 });
 
@@ -638,17 +644,20 @@ test("the demo page's and the order page's own beacons post kinds the route stor
   assert.ok(demoHtml.includes(`var u="/d/${SLUG}/e"`), "the demo page posts to this demo's beacon");
   assert.deepEqual(kindsIn(demoHtml), ["order_page", "view"]);
 
+  // Stage 9's order page (_lib/order-page.js): one beacon, order_page after 4 seconds. Its buttons carry none:
+  // order_click is recorded by the checkout route when the POST arrives.
   const lead = DB.raw.prepare("SELECT * FROM leads").get();
-  const demo = DB.raw.prepare("SELECT * FROM demos").get();
-  const orderHtml = oldDemo.renderOrder(lead, demo, {}, NOW);
-  assert.ok(orderHtml.includes(`var u="/d/${SLUG}/e"`), "the order page posts to the same beacon");
-  assert.deepEqual(kindsIn(orderHtml), ["order_click", "order_page"]);
+  const orderHtml = renderOrder({ lead, slug: SLUG, offer: offerFor(NOW), extras: {}, notice: null, trader: "" });
+  const orderBeacons = [...orderHtml.matchAll(/sendBeacon\("([^"]+)", '\{"kind":"([a-z_]+)"\}'\)/g)];
+  assert.deepEqual(orderBeacons.map((m) => m[1]), [`/d/${SLUG}/e`], "the order page posts to the same beacon");
+  const orderKinds = orderBeacons.map((m) => m[2]);
+  assert.deepEqual(orderKinds, ["order_page"]);
+  assert.doesNotMatch(orderHtml, /data-ev=/);
 
-  for (const kind of [...kindsIn(demoHtml), ...kindsIn(orderHtml)]) {
+  for (const kind of [...kindsIn(demoHtml), ...orderKinds]) {
     assert.equal((await beaconTo(DB)(CHROME, JSON.stringify({ kind }))).status, 204, kind);
   }
-  assert.deepEqual(events(DB), ["order_page 2026-10-21T10:00:00Z", "view 2026-10-21T10:00:00Z", "order_click 2026-10-21T10:00:00Z",
-    "order_page 2026-10-21T10:00:00Z"]);
+  assert.deepEqual(events(DB), ["order_page 2026-10-21T10:00:00Z", "view 2026-10-21T10:00:00Z", "order_page 2026-10-21T10:00:00Z"]);
   assert.equal(prospectRow(DB).views, 1);
   assert.deepEqual(EVENT_KINDS, ["view", "order_page", "order_click", "ordered"], "kept for stage 9");
 });
