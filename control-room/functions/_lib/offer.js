@@ -3,7 +3,7 @@
 // pence.
 //
 // Owned by stage 0. Later stages only add exports (each tested in its own new test file); none re-creates this module.
-import { isWeekendUK } from "./ukTime.js";
+import { addUkDays, isWeekendUK, ukDate, ukToUtc } from "./ukTime.js";
 
 const freeze = (o) => Object.freeze(o);
 
@@ -71,4 +71,53 @@ export function formatPounds(pence) {
   const pennies = whole % 100;
   const sign = pence < 0 && whole > 0 ? "-" : "";
   return `${sign}£${pounds}${pennies ? `.${String(pennies).padStart(2, "0")}` : ""}`;
+}
+
+const FACT_TERMS = freeze([
+  "No contract and no cancellation fees.",
+  "If we're not making you money, we don't want your money.",
+  "If you stop paying, you keep the website; the monthly work stops.",
+  "Your card is taken at checkout and charged automatically when the free days end.",
+]);
+
+const pounds = (pence) => pence / 100;
+
+/**
+ * The offer at `at` in whole pounds, for Claude's replies (stage 7): built from `offerFor(at)` and `PACKAGES`, so no
+ * price is written twice. `weekend_ends_at` is Monday 00:00 UK as "YYYY-MM-DDTHH:MM:SSZ" (null on a weekday). The
+ * review and chat-assistant lines are in `included` only when the caller switches them on (settings
+ * `offer:review_booster_live` / `offer:chatbot_live`).
+ */
+export function offerFacts(at, { chatbot = false, reviews = false } = {}) {
+  const now = offerFor(at);
+  let weekendEndsAt = null;
+  if (now.weekend) {
+    const today = ukDate(at);
+    const sunday = new Date(`${today}T00:00:00Z`).getUTCDay() === 0;
+    weekendEndsAt = ukToUtc(addUkDays(today, sunday ? 1 : 2), "00:00").toISOString().replace(/\.\d{3}Z$/, "Z");
+  }
+  const full = {
+    build: pounds(now.full.build),
+    anchor: pounds(PACKAGES.weekend.wasBuild),
+    monthly: pounds(now.full.monthly),
+    free_days: now.full.freeDays,
+  };
+  const websiteOnly = { build: pounds(PACKAGES.website.build) };
+  return {
+    weekend: now.weekend,
+    weekend_ends_at: weekendEndsAt,
+    website_only: websiteOnly,
+    full,
+    amounts: [...new Set([websiteOnly.build, full.build, full.anchor, full.monthly])],
+    guarantees: [GUARANTEE.headline, GUARANTEE.section, BUILD_GUARANTEE],
+    terms: [...FACT_TERMS],
+    included: [
+      "A new website, live within 7 days of you sending us your details.",
+      "Monthly work to get you into the top 3 on Google for your main service in your town.",
+      ...(reviews ? ["Getting more Google reviews from your customers: your review link, QR card and messages."] : []),
+      ...(chatbot ? ["A chat assistant on your website."] : []),
+      "A monthly report.",
+      "If you haven't got a domain, we buy one in your name and you keep it.",
+    ],
+  };
 }
