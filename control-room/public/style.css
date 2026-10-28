@@ -619,11 +619,6 @@ ul.checks { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; fo
 .voice-card.highlight p { margin: 0; }
 .voice-card > summary { cursor: pointer; font-weight: 600; }
 
-/* roadmap */
-.road-row { display: grid; grid-template-columns: 92px 1fr; gap: 12px; align-items: start; padding: 10px 0; border-top: 1px solid var(--line); }
-.road-row:first-child { border-top: 0; padding-top: 0; }
-.road-row .badge { justify-self: start; }
-
 /* call script in the lead drawer */
 details.script { margin: 12px 0 4px; border: 1px solid var(--line); border-radius: var(--r); background: var(--surface-2); }
 details.script > summary { cursor: pointer; padding: 10px 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
@@ -642,16 +637,147 @@ details.script-obj > summary { cursor: pointer; font-weight: 600; font-size: 13p
 .pick-row input { margin-top: 4px; }
 label.check { display: flex; gap: 8px; align-items: center; font-weight: 600; margin-bottom: 8px; }
 
-/* What to do (Home) */
-.card.todo { margin-bottom: 16px; border-color: var(--gold); }
-.todo-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
-.todo-row .grow { min-width: 0; flex: 1; }
-.todo-row.is-done b { color: var(--text-3); font-weight: 500; }
-.todo-mark { flex: none; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 13px;
-  background: var(--surface-3); color: var(--text-2); }
-.todo-mark.gold { background: var(--gold); color: var(--gold-ink); }
-.todo-mark.good { background: var(--good-soft); color: var(--good); }
-.todo-mark.bad { background: var(--bad-soft); color: var(--bad); }
-.todo-setup { margin-top: 8px; }
-.todo-setup > summary { cursor: pointer; font-weight: 600; padding: 8px 0; color: var(--text-2); }
-label.tick { display: flex; gap: 6px; align-items: center; white-space: nowrap; cursor: pointer; }
+
+/* ---------------------------------------------------------------- Todo page (stage 11: todo.js + todoview.js) */
+/* Top to bottom: the lights (red and amber rows, the greens in one chip), Today's rows, the pipeline board (columns
+   side by side that scroll sideways inside the board; stacked <details> on a phone) and the client cards. Gold only
+   on primary buttons and the Hot tag: every other link on the page is plain text. */
+#todo-body { min-width: 0; }
+#todo-body a:not(.btn) { color: var(--text); text-decoration: underline; text-decoration-color: var(--line-2); text-underline-offset: 2px; }
+#todo-body a:not(.btn):hover { text-decoration-color: var(--text-2); }
+#todo-body .section-title { margin-top: 28px; }
+.empty-line { margin: 0; padding: 14px 16px; color: var(--text-2); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
+
+.lights { display: grid; gap: 10px; }
+.lights > .error { margin: 0; padding: 12px 16px; background: var(--bad-soft); border: 1px solid rgba(239, 107, 91, 0.45); border-radius: var(--r); }
+.lights > .light { padding: 12px 16px; border-radius: var(--r); border: 1px solid var(--line-2); background: var(--surface); min-width: 0; }
+.lights > .light.red { background: var(--bad-soft); border-color: rgba(239, 107, 91, 0.45); }
+.lights > .light.amber { background: var(--warn-soft); border-color: rgba(233, 168, 59, 0.45); }
+.lights > .light .detail, .lights > .light .fix { overflow-wrap: anywhere; }
+.lights > .light .fix { color: var(--text); }
+.lights-ok { justify-self: start; max-width: 100%; }
+.ok-chip { display: inline-flex; align-items: center; min-height: 32px; padding: 4px 14px; border-radius: 99px; border: 1px solid rgba(69, 195, 129, 0.4); background: var(--good-soft); color: var(--good); font-weight: 600; cursor: pointer; list-style: none; }
+.ok-chip::-webkit-details-marker { display: none; }
+.lights-ok > .ok-chip { cursor: default; }
+details.lights-ok > summary.ok-chip { cursor: pointer; }
+.lights-list { margin: 10px 0 0; padding: 12px 16px 12px 32px; display: grid; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); color: var(--text-2); font-size: 13px; overflow-wrap: anywhere; }
+.lights-list li.grey { color: var(--text-3); }
+
+.todo-list { display: grid; gap: 10px; }
+.todo-group { display: grid; gap: 8px; }
+.group-label { font-size: 12px; font-weight: 650; letter-spacing: 0.05em; text-transform: uppercase; }
+.late { color: var(--bad); }
+.todo-item { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 10px 16px; padding: 14px 16px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); min-width: 0; }
+.todo-group.overdue .todo-item { border-color: rgba(239, 107, 91, 0.45); }
+.todo-main { flex: 1 1 320px; min-width: 0; display: grid; gap: 4px; }
+.todo-title { font-weight: 600; overflow-wrap: anywhere; }
+.todo-meta { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 550; }
+.todo-detail { color: var(--text-2); font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.draft-box { margin-top: 6px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--r); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.55; }
+.draft-edit { margin-top: 6px; min-height: 140px; font: 14px/1.55 var(--font); }
+.todo-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: flex-end; }
+.todo-actions .btn { max-width: 100%; }
+.todo-later { margin-top: 4px; }
+.todo-later > summary { cursor: pointer; font-weight: 600; color: var(--text-2); padding: 8px 0; }
+.todo-later[open] > summary { margin-bottom: 8px; }
+.todo-later > .todo-item + .todo-item { margin-top: 8px; }
+
+.board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(230px, 1fr); gap: 12px; overflow-x: auto; overscroll-behavior-x: contain; padding-bottom: 6px; align-items: start; }
+.board details.col { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 10px; min-width: 0; }
+.board details.col > summary { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 2px 4px 10px; font-weight: 650; list-style: none; cursor: default; }
+.board details.col > summary::-webkit-details-marker { display: none; }
+.board .n, details.lost > summary .n { color: var(--text-3); font-variant-numeric: tabular-nums; font-weight: 600; }
+.col-cards, .lost-cards { display: grid; gap: 8px; }
+.empty-col { margin: 0; padding: 4px 4px 6px; font-size: 13px; }
+.pcard { display: grid; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r); min-width: 0; }
+.pcard:hover { border-color: var(--line-2); }
+#todo-body a.pcard-link, .pcard-link { display: grid; gap: 3px; padding: 10px 12px; color: var(--text); text-decoration: none; min-width: 0; }
+.pcard-top { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pcard-top .biz { flex: 1 1 100%; overflow-wrap: anywhere; }
+.pcard-top .grade { min-width: 30px; height: 24px; font-size: 12px; }
+.pcard-event { font-size: 13px; color: var(--text-2); overflow-wrap: anywhere; }
+.pcard-next { font-size: 12px; color: var(--text-3); }
+#todo-body a.pcard-thread { justify-self: start; margin: -4px 12px 8px; font-size: 12px; color: var(--text-2); }
+.tag.hot { background: var(--gold); color: var(--gold-ink); }
+#todo-body a.more { display: block; padding: 4px; font-size: 13px; color: var(--text-2); }
+details.lost { margin-top: 12px; }
+details.lost > summary { cursor: pointer; font-weight: 600; color: var(--text-2); padding: 8px 0; }
+details.lost .lost-cards { grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+
+.ccards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.ccard { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); padding: 14px 16px; min-width: 0; }
+.ccard.attention { border-color: rgba(239, 107, 91, 0.5); }
+.ccard-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.ccard-head .biz { overflow-wrap: anywhere; min-width: 0; }
+.ccard-lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13px; color: var(--text-2); overflow-wrap: anywhere; }
+.ccard-lines li.late { color: var(--bad); font-weight: 600; }
+
+@media (max-width: 640px) {
+  .board { grid-auto-flow: row; grid-auto-columns: auto; grid-template-columns: minmax(0, 1fr); overflow-x: visible; padding-bottom: 0; }
+  .board details.col { padding: 0 10px; }
+  .board details.col > summary { min-height: 44px; padding: 10px 4px; cursor: pointer; }
+  .board details.col > summary::after { content: "▾"; color: var(--text-3); margin-left: 6px; }
+  .board details.col:not([open]) > summary::after { content: "▸"; }
+  .board details.col[open] { padding-bottom: 10px; }
+  .board details.col > summary .col-label { flex: 1; }
+  details.lost .lost-cards { grid-template-columns: minmax(0, 1fr); }
+  .ccards { grid-template-columns: minmax(0, 1fr); }
+  .todo-item { padding: 12px 14px; }
+  .todo-main { flex-basis: 100%; }
+  .todo-actions { flex-basis: 100%; justify-content: flex-start; }
+  #todo-body .btn { min-height: 40px; padding: 8px 14px; font-size: 14px; white-space: normal; text-align: center; }
+  /* summary stays display: list-item, so Coming up and Lost keep their open/closed triangle. */
+  #todo-body summary { min-height: 40px; }
+  #todo-body .todo-later > summary, #todo-body details.lost > summary { padding: 10px 0; }
+  #todo-body a.pcard-thread { display: inline-flex; align-items: center; min-height: 40px; margin: -8px 12px 0; }
+  #todo-body a.more { display: flex; align-items: center; min-height: 40px; }
+}
+
+/* ---------------------------------------------------------------- KPIs page (stage 11: kpis.js + kpisview.js) */
+/* The week bar, five tiles (2 per row on a phone), your emails vs Claude's, the tables (each scrolls sideways inside
+   its card, never the page) and Claude's review. Grey means "too early to tell" (fewer than 30 emails). No gold here:
+   the arrows are secondary buttons and the week links are plain text. */
+.early { color: var(--text-3); }
+.table-scroll { overflow-x: auto; overscroll-behavior-x: contain; }
+.kpis-page { min-width: 0; }
+.kpis-page a:not(.btn) { color: var(--text); text-decoration: underline; text-decoration-color: var(--line-2); text-underline-offset: 2px; }
+.kpis-page a:not(.btn):hover { text-decoration-color: var(--text-2); }
+.week-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.week-bar .week-label { font-size: 17px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.week-bar .week-arrow { min-width: 40px; min-height: 40px; font-size: 18px; line-height: 1; }
+.still-counting { margin: 0 0 16px; font-size: 13px; }
+.kpis-page .empty-line { margin: 0 0 4px; padding: 14px 16px; color: var(--text-2); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg); }
+.kpi-tiles .kpi-value .early { color: var(--text-3); }
+.kpis-page .section-title { margin-top: 28px; }
+.kpi-kv { margin: 0; display: grid; gap: 8px; }
+.kpi-kv .kv-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.kpi-kv .kv-row:last-child { border-bottom: 0; padding-bottom: 0; }
+.kpi-kv dt { color: var(--text-2); }
+.kpi-kv dd { margin: 0; font-variant-numeric: tabular-nums; font-weight: 550; text-align: right; }
+.kpi-table td, .kpi-table th { white-space: nowrap; }
+.kpi-table td.muted { white-space: normal; min-width: 180px; }
+.review { overflow-wrap: anywhere; }
+.review h3 { font-size: 14px; font-weight: 650; margin: 16px 0 6px; }
+.review h3:first-child { margin-top: 0; }
+.review p, .review ul, .review ol { margin: 0 0 10px; color: var(--text-2); line-height: 1.6; }
+.review ul, .review ol { padding-left: 22px; }
+.review li + li { margin-top: 4px; }
+.review > .hint:last-child { margin: 12px 0 0; }
+.review-none { margin: 0; }
+
+@media (max-width: 640px) {
+  .kpi-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kpi-tiles .kpi { padding: 12px 14px; }
+  .kpis-page .btn { min-height: 40px; }
+  .kpi-table th, .kpi-table td { padding: 10px 12px; }
+}
+
+/* ---------------------------------------------------------------- nav: the Todo badge (file 11) */
+/* the gold count of overdue + today's todos, and a red dot when any light is red; hidden at 0 and 0 */
+.nav-badge { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; }
+.nav-count { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 99px; display: inline-grid; place-items: center; background: var(--gold); color: var(--gold-ink); font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
+.nav-red { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); box-shadow: 0 0 0 2px var(--bg); }
+@media (max-width: 860px) {
+  .nav a { min-height: 40px; }
+  .nav-badge { margin-left: 2px; }
+}
