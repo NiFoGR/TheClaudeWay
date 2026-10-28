@@ -18,7 +18,7 @@ async function loadMoney() {
   }
   try { return await import("../public/js/money.js"); } finally { for (const name of added) delete globalThis[name]; }
 }
-const { leadForClient } = await loadMoney();
+const { leadForClient, paymentsCard } = await loadMoney();
 
 const SMITH = { place_id: "ChIJsmith", name: "Smith Roofing", town: "Leeds" };
 
@@ -60,6 +60,25 @@ test("money.js: Add a client resolves its lead when sent, and a failed suggestio
   assert.match(add, /place_id: lead\?\.place_id \|\| ""/);
   assert.doesNotMatch(add, /place_id: match\(\)/, "not the last debounced answer");
   assert.doesNotMatch(add, /let rows = \[\];/, "a failed search doesn't wipe the suggestions");
+});
+
+// ---------------------------------------------------------------- Card payments (refunds are negative lines)
+
+test("paymentsCard: a Stripe refund shows as −£249, not +−£249 in the money-in green", () => {
+  const html = paymentsCard([
+    { paid_on: "2026-10-20", name: "Smith Roofing", category: "Build fee", amount_pence: 175000, fee_pence: 2650 },
+    { paid_on: "2026-10-24", name: "Smith Roofing", category: "Refunds", amount_pence: -24900, fee_pence: 0 },
+  ]);
+  const cells = [...html.matchAll(/<td class="r num([^"]*)">([^<]*)<\/td>/g)].map((m) => ({ cls: m[1].trim(), text: m[2] }));
+  assert.equal(cells.length, 2);
+  assert.deepEqual(cells[0], { cls: "amount-in", text: "+£1,750" }, "a payment stays +£ in green");
+  assert.equal(cells[1].text, "−£249", "money() puts the minus in front");
+  assert.doesNotMatch(cells[1].text, /\+/);
+  assert.doesNotMatch(cells[1].cls, /amount-in/);
+  assert.doesNotMatch(html, /\+−/);
+  assert.match(html, /<h2>Card payments and refunds<\/h2>/, "the heading says refunds are in it");
+  assert.match(paymentsCard([{ paid_on: "2026-10-20", name: "A", category: "Build fee", amount_pence: 175000 }]), /<h2>Card payments received<\/h2>/);
+  assert.equal(paymentsCard([]), "");
 });
 
 // ---------------------------------------------------------------- POST /api/money/clients

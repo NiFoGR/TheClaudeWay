@@ -453,6 +453,25 @@ test("Not a fit on a lead with no prospect row works and leaves other tables alo
 
 // ---------------------------------------------------------------- Home (api/overview.js, until stage 11 removes it)
 
+// A card payer is won on their prospect (fulfilCheckout never writes leads); a client added by hand on Money is won on
+// leads.status. Home's "Won" tile counts both, once each.
+test("Home's Won count: a prospect won by card and a lead won by hand both count", async () => {
+  const DB = fakeD1();
+  const counts = async () => (await (await overviewRoute({ env: { DB } })).json()).counts;
+  await seedLead(DB, { place_id: "card" });
+  await seedProspect(DB, { place_id: "card", stage: "won" });
+  assert.equal((await counts()).won, 1);
+  await seedLead(DB, { place_id: "hand", status: "won" });
+  assert.equal((await counts()).won, 2);
+  await seedLead(DB, { place_id: "both", status: "won" });
+  await seedProspect(DB, { place_id: "both", stage: "won" });
+  await seedLead(DB, { place_id: "open" });
+  await seedProspect(DB, { place_id: "open", stage: "viewed" });
+  const c = await counts();
+  assert.equal(c.won, 3);
+  assert.equal(c.total, 4);
+});
+
 // Nothing writes leads.status since the Status select went (only 'won' from Stripe and Money), so Home's "Contact
 // these next" (status 'new') must leave out what Nik already decided on: Not a fit, too big, on the do-not-contact
 // list, excluded, or emailed. A `ready` prospect hasn't been emailed yet, so it stays.

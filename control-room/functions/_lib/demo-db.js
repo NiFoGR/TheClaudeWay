@@ -379,9 +379,13 @@ const VIEW_DEDUPE_MS = 30 * 60_000;
 // the same INSERT, so two beacons arriving together can't both count. ?1 slug, ?2 place_id, ?3 kind, ?4 at.
 // The check names the demo's place_id too (a slug's events always carry its demo's place_id), so it reads through the
 // demo_events_place (place_id, kind) index instead of scanning every event of every demo on each beacon.
+// An order is stored once per demo, ever: stage 9's fulfilCheckout records it on every run (the webhook, the thanks
+// page and their retries) until it is there, so a run cut off after the welcome email still records it, never twice.
 const INSERT_EVENT_SQL = `INSERT INTO demo_events (slug, place_id, kind, at) SELECT ?1, ?2, ?3, ?4
-  WHERE ?3 <> 'view' OR NOT EXISTS (SELECT 1 FROM demo_events
-    WHERE place_id = ?2 AND kind = 'view' AND slug = ?1 AND at > ?5)`;
+  WHERE (?3 <> 'view' OR NOT EXISTS (SELECT 1 FROM demo_events
+    WHERE place_id = ?2 AND kind = 'view' AND slug = ?1 AND at > ?5))
+    AND (?3 <> 'ordered' OR NOT EXISTS (SELECT 1 FROM demo_events
+      WHERE place_id = ?2 AND kind = 'ordered' AND slug = ?1))`;
 // The lead's prospect stage, and whether a first email to it has gone (`sent`: queued, sending, failed and cancelled
 // ones haven't), in one read. The unary + on m.status keeps SQLite on messages_place (place_id first), never
 // messages_due (status, due_at), which would read every sent email of every lead (tests/demo-routes.test.mjs checks
@@ -393,7 +397,7 @@ const COUNT_VIEW_SQL = "UPDATE prospects SET views = views + 1, last_view_at = ?
 
 /**
  * Record what a prospect did (`kind` one of EVENT_KINDS, at util.now() format); repeat views within 30 minutes count
- * once. Nothing but an order is stored once the demo has ended (expires_at <= now, as demoBySlug's `expired` reads it).
+ * once, and an order is stored once per demo. Nothing but an order is stored once the demo has ended (expires_at <= now, as demoBySlug's `expired` reads it).
  * → true when a row was stored. 1 D1 statement (none for an unknown kind or an ended demo).
  */
 export async function recordEvent(DB, demo, kind, now = new Date()) {

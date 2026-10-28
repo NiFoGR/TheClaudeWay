@@ -1,14 +1,14 @@
 // POST /d/:slug/e {kind} → the demo page's beacon (05-demo.md Part A §8, Task 11): "view" after 4 seconds with the tab
-// visible, "order_page" when "Order this site" is clicked or the order page has been open 4 seconds, "order_click" for
-// the order page's payment buttons. Always 204 with no body, whatever happens, so the page learns nothing from it.
+// visible, "order_page" when "Order this site" is clicked or the order page has been open 4 seconds. Always 204 with no
+// body, whatever happens, so the page learns nothing from it.
 //
-// Stored only when the request is a real prospect's: nothing for a body over 200 bytes or whose kind isn't view,
-// order_page or order_click ("ordered" only ever comes from Stripe), a bot, link scanner or empty user-agent
+// Stored only when the request is a real prospect's: nothing for a body over 200 bytes or whose kind isn't view or
+// order_page, a bot, link scanner or empty user-agent
 // (demo/bots.js), Nik's login cookie (session.js), an unknown or bad slug, an ended demo, or a lead with no prospect
 // or no first email gone out (demo-db.js's mayCount: then it can only be Nik or a leak). A prospect still `ready` whose
 // first email has gone counts: stage 6 records the send (ready → emailed) only on its next followups run, minutes
 // later, and they may tap the link as it arrives. A view goes to countView (one per 30 minutes, prospects.views, a
-// ready prospect's first_sent, emailed → viewed); the order kinds to mayCount, then recordEvent.
+// ready prospect's first_sent, emailed → viewed); order_page to mayCount, then recordEvent.
 // D1: none for anything turned away before the database (body, user-agent, Nik); demoBySlug's batch of 4, then
 // countView's 1–7 (4–5 for a counted view, 7 when it moves a ready prospect on), or mayCount's 1 and recordEvent's 1.
 // Tested in control-room/tests/demo-routes.test.mjs and tests/email-e2e.test.mjs.
@@ -17,8 +17,11 @@ import { countView, demoBySlug, mayCount, recordEvent } from "../../_lib/demo-db
 import { isOwnerRequest } from "../../_lib/session.js";
 import { db } from "../../_lib/util.js";
 
-const MAX_BODY = 200; // bytes: {"kind":"order_click"} is 22
-const KINDS = new Set(["view", "order_page", "order_click"]);
+const MAX_BODY = 200; // bytes: {"kind":"order_page"} is 21
+// "order_click" is the server's alone (08-order-pay.md Part A: the checkout route records it when the POST arrives, and
+// counts it for the 5-an-hour checkout limit), so a beacon can't block a prospect's checkout. "ordered" only ever comes
+// from Stripe.
+const KINDS = new Set(["view", "order_page"]);
 
 // The request body as text when it is at most `max` bytes, else null. Reads no more than `max` bytes plus the chunk
 // that crosses it, then cancels the rest.

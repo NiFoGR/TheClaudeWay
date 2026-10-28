@@ -475,6 +475,8 @@ test("recordEvent: views count once per 30 minutes; unknown kinds and expired de
   assert.equal(await recordEvent(DB, demo, "view", new Date("2026-10-20T10:00:00Z")), false, "expired");
   assert.equal(await recordEvent(DB, demo, "order_page", new Date("2026-10-18T10:00:00Z")), false, "ended at expires_at, as demoBySlug reads it");
   assert.equal(await recordEvent(DB, demo, "ordered", new Date("2026-10-20T10:00:00Z")), true, "an order counts even after");
+  // a checkout is fulfilled by the webhook and the thanks page, and retried: one order per demo, however often
+  assert.equal(await recordEvent(DB, demo, "ordered", new Date("2026-10-21T10:00:00Z")), false, "an order is stored once");
   const rows = DB.raw.prepare("SELECT kind, at FROM demo_events ORDER BY rowid").all().map((r) => `${r.kind} ${r.at}`);
   assert.deepEqual(rows, ["view 2026-10-04T10:00:00Z", "view 2026-10-04T10:31:00Z", "order_page 2026-10-04T10:00:00Z",
     "ordered 2026-10-20T10:00:00Z"]);

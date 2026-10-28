@@ -76,6 +76,11 @@ What each row shows. All text comes from the todo row, enriched by the API.
 | `hot` | title, phone | **Call <phone>** when there's a phone, **Open lead**, Done, Dismiss |
 | `health`, `payment`, `build`, `care`, `kpi`, `pick`, `setup` | title, detail | **Open** (`todos.link`), Done, Dismiss |
 
+- **Client mail with no mailbox** (stage 9's `sendClientMail`: `setup:welcome:<client_id>`,
+  `setup:client-mail:<client_id>:<kind>`): the `setup` todo's detail is the whole email (`To: …`, `Subject: …`, a
+  blank line, then the body, the onboarding or pay link included), so no draft box is needed. Show the detail with its
+  line breaks kept (escaped, like all detail).
+
 - **Phone:** for `call`, it's the phone on the soonest `calls` row with `status = 'confirmed'` for that `place_id`,
   else `leads.phone`. For `hot`, `call_time` and `escalation`, it's `leads.phone`. Phones are formatted as stored.
 - **Links** (every in-app link uses the `/#/…` form):

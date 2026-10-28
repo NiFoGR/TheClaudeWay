@@ -22,10 +22,13 @@ export async function onRequestGet({ env }) {
   const DB = await db(env);
   const [counts, next, jobs] = await DB.batch([
     DB.prepare(
-      `SELECT COUNT(*) AS total, SUM(status = 'new') AS fresh, SUM(status = 'new' AND email IS NOT NULL AND email != '') AS fresh_email,
-              SUM(status = 'contacted') AS contacted, SUM(status = 'replied') AS replied,
-              SUM(status = 'call booked') AS call_booked, SUM(status = 'won') AS won
-       FROM leads WHERE excluded = 0`
+      // Won: a card payer is won on their prospect (stage 9 never writes leads), a client added by hand on Money on
+      // leads.status. prospects is keyed by place_id, so the join adds no rows.
+      `SELECT COUNT(*) AS total, SUM(l.status = 'new') AS fresh,
+              SUM(l.status = 'new' AND l.email IS NOT NULL AND l.email != '') AS fresh_email,
+              SUM(l.status = 'contacted') AS contacted, SUM(l.status = 'replied') AS replied,
+              SUM(l.status = 'call booked') AS call_booked, SUM(l.status = 'won' OR COALESCE(p.stage, '') = 'won') AS won
+       FROM leads l LEFT JOIN prospects p ON p.place_id = l.place_id WHERE l.excluded = 0`
     ),
     DB.prepare(NEXT_SQL),
     DB.prepare("SELECT * FROM jobs ORDER BY created_at DESC LIMIT 4"),

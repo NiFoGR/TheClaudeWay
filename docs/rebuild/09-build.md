@@ -1829,7 +1829,9 @@ CREATE TABLE IF NOT EXISTS rate_hits (
   `systemMailbox(DB, now)` and `sendClientMail(DB, {client_id, place_id, to, business, compose, now})` carry every
   client email here, with the `noMailboxTodo` option (`null` for enquiries, `setup:client-mail:<client_id>:<kind>`
   for go-live and domain emails; section 12); its order page reads `offer:chatbot_live` / `offer:review_booster_live`;
-  its `build:new:<id>` todo is closed here on Send.
+  its `build:new:<id>` todo is closed here on Send, in the same step as `onboarding.status` leaves `sent` (stage 9's
+  `fulfilCheckout` re-runs on thanks-page reloads and Stripe redeliveries and files `build:new:` only while the status
+  is `sent`).
 - **Stage 4 (05-demo.md):** `DemoData`, `renderSite(data, {mode, page})`, `templateIdFor`, `slugFor`, `h()`. This
   stage extends `DemoData.live` from `{form_action, canonical_url}` to `{form_action, canonical_url, page: {key, path,
   title, meta, h1, intro, sections, faq, photo}, nav: [{label, href}], footer: {nap, legal_line, review_url,

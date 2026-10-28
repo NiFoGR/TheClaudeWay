@@ -170,9 +170,14 @@ Ignored unless `payment_status` is `paid` or `no_payment_required` and `metadata
 4. `payments` row id `build:<stripe_customer>`, category `Website builds`, `amount_pence` = `amount_total`,
    `paid_on` as above; on conflict update `name` only. (`invoice.paid` uses the same id for the build line, so
    whichever arrives first, there is one row.)
-5. `onboarding` (INSERT OR IGNORE): `token` = 24 random bytes base64url (32 chars), `status` `sent`.
-   **Only the runner whose insert created this row** queues the welcome email (after steps 6–7) and records the
-   `ordered` demo event.
+5. `onboarding` (INSERT OR IGNORE): `token` = 24 random bytes base64url (32 chars), `status` `sent`. The token is
+   made once and never changes (a link the thanks page showed stays valid). Then (after steps 6–7, on **every run
+   until it is done**) the welcome email: queued with the fixed message id `welcome:<client_id>` unless that message
+   or the `setup:welcome:<client_id>` todo already exists; a racing runner's primary-key error ("UNIQUE constraint
+   failed: messages.id") counts as "already queued", any other error is rethrown (the webhook answers 500, Stripe
+   retries). The `ordered` demo event is recorded on every run too, and stored once per demo (`recordEvent`), so a
+   run cut off anywhere (the email's own insert included) is finished by the retry, or by the webhook after a thanks
+   page that failed, and never doubles. `created` = this run queued the welcome email (or filed its no-mailbox todo).
 6. Prospect: `applyStageEvent(DB, place_id, "paid", now, {email, greet_name: null})` (stage 0's `prospects.js`;
    `paid` goes from any stage to `won`, so a `lost` prospect becomes `won`). No prospect row → the `{email,
    greet_name}` option inserts one in `won` with the checkout email. Then `next_followup_at = NULL` and queued
@@ -181,13 +186,19 @@ Ignored unless `payment_status` is `paid` or `no_payment_required` and `metadata
    `client_id` set, a `client-mail:<message_id>` Todo), because Claude never answers a client.
 7. Suppression: delete the `suppression` row (kind `email`) for the lower-cased checkout email, so a past "no
    thanks" can't block client mail.
-8. `closeLeadTodos(DB, place_id, {exceptKinds: ["build", "payment"]})`, then the `build` Todo.
+8. Only while `onboarding.status` is `sent` (the form isn't in yet): `closeLeadTodos(DB, place_id, {exceptKinds:
+   ["build", "payment", "escalation", "call_time", "call"]})`, then the `build` Todo. The sales-chasing todos (hot,
+   pick/checkback…) close; Nik's open conversations and calls stay (a booked call becomes a welcome call; an
+   escalated question, an `optout-mail:` read-it-yourself or a `call_time:` still needs his answer). Once stage 10 has
+   moved the row past `sent`, a re-run (a thanks-page reload, a late Stripe redelivery) files nothing again.
 9. Another non-cancelled client already existed for this `place_id` → `payment` Todo "paid twice".
 
 ### Welcome email (kind `system`, author `system`, plain text)
 
 From the active `system`-role mailbox; if none, the active cold mailbox with the most capacity left plus a `setup`
-Todo; if no active mailbox at all, nothing is queued and a `setup` Todo carries the email as its `draft`.
+Todo; if no active mailbox at all, nothing is queued and a `setup` Todo carries the whole email in its `detail`
+(`To: …`, `Subject: …`, a blank line, then the body, so the onboarding or pay link shows on the Todo board, which
+shows a setup todo's detail) and the body as its `draft`.
 Greeting: `Hi {greet_name},` when `prospects.greet_name` is set, else `Hi,`. Sign-off name = the
 `business:sender_name` setting (else `Nik`), for this and every client email. Stage 11 (10-monthly-care.md Task 19)
 adds `CLOCK_START` (`Your 90 days start the day you give us access to your Google Business Profile.`) as the last
@@ -320,20 +331,21 @@ will arrive by email in the next few minutes.`, status 200.
 | kind | dedupe | title (exact) | link |
 | --- | --- | --- | --- |
 | `build` | `build:new:<client_id>` | `New client: {name} — onboarding form sent` | `/#/money` |
-| `payment` | `payment:failed:<invoice id>` | `Card failed: {name} ({£249}). They've been emailed a link to pay; Stripe will retry.` | `/#/money` |
+| `payment` | `payment:failed:<invoice id>` | `Card failed: {name} ({£249}). They've been emailed a link to pay; Stripe will retry.` (no email address: `Card failed: {name} ({£249}). We have no email address for them: send them the pay link yourself; Stripe will retry.`; no mailbox: `Card failed: {name} ({£249}). No mailbox yet, so nobody has emailed them: send the email in the "Send {name} this email yourself" todo; Stripe will retry.`) | `/#/money` |
 | `payment` | `payment:stopped:<client_id>` | `{name} stopped the monthly plan: switch off the extras (their site stays up)` | `/#/money` |
 | `payment` | `payment:double:<place_id>:<session id>` | `{name} paid twice: refund one in Stripe` | `/#/money` |
 | `payment` | `payment:checkout:<place_id>` | `{name} tried to pay but Stripe refused: {error}` | `/#/setup` |
 | `hot` | `checkout:<place_id>` | `Call {name}: they opened the payment page but didn't pay` | `/#/lead/<place_id>` |
 | `setup` | `setup:stripe` | `Connect Stripe: {name} tried to order` | `/#/setup` |
 | `setup` | `setup:system_mailbox` | `Add a system mailbox for client emails (welcome emails are going from a cold mailbox)` | `/#/setup` |
-| `setup` | `setup:welcome:<client_id>` | `Send {name} their onboarding link yourself (no mailbox yet)` + `draft` = the welcome email | `/#/money` |
-| `setup` | `setup:client-mail:<client_id>:payment-failed:<invoice id>` | `Send {name} this email yourself (no mailbox yet)` + `draft` = the payment-failed email | `/#/money` |
+| `setup` | `setup:welcome:<client_id>` | `Send {name} their onboarding link yourself (no mailbox yet)` + `detail` = To, Subject, blank line, the welcome email (link visible); `draft` = its body | `/#/money` |
+| `setup` | `setup:client-mail:<client_id>:payment-failed:<invoice id>` | `Send {name} this email yourself (no mailbox yet)` + `detail` = To, Subject, blank line, the payment-failed email (pay link visible); `draft` = its body | `/#/money` |
 
 `sendClientMail`'s `noMailboxTodo` option picks which no-mailbox todo is filed: the welcome todo by default, the
 `setup:client-mail:<client_id>:<kind>` form for every other client email (stage 10 passes its own kinds, and `null`
 for enquiry emails). `setup:stripe` closes when Connect Stripe succeeds. `build:new:<client_id>` is closed by stage 10 when the form is
-submitted.
+submitted, in the same step as it moves `onboarding.status` away from `sent` (fulfilCheckout files the todo only
+while the status is `sent`).
 
 ### Health light
 
@@ -681,11 +693,12 @@ welcomeEmail({business, greetName, terms, amountPaid, onboardUrl, firstChargeOn,
 paymentFailedEmail({business, greetName, amountDue, payUrl, signName}) → {subject, body}
 systemMailbox(DB, now) → Promise<{mailbox, fallback: boolean} | null>   // system role first, else cold with most room left
 senderName(DB) → Promise<string>                                         // setting business:sender_name, else "Nik"
-sendClientMail(DB, {client_id, place_id, to, business, compose: (signName) => {subject, body}, now,
+sendClientMail(DB, {id?, client_id, place_id, to, business, compose: (signName) => {subject, body}, now,
                     noMailboxTodo = WELCOME_TODO})
   → Promise<{queued: string|null, fallback: boolean}>
-// noMailboxTodo: {dedupe, title, link?} | null — the setup todo filed (with the composed email as its draft) when
-// there is no active mailbox at all. `{name}` in title is replaced by `business`; link defaults to "/#/money".
+// id: optional message id (the welcome email passes "welcome:<client_id>"; a repeat is D1's primary-key error).
+// noMailboxTodo: {dedupe, title, link?} | null — the setup todo filed (detail = "To: …\nSubject: …\n\n" + body,
+// draft = body) when there is no active mailbox at all. `{name}` in title is replaced by `business`; link defaults to "/#/money".
 // Default WELCOME_TODO =
 // {dedupe: "setup:welcome:<client_id>", title: "Send {name} their onboarding link yourself (no mailbox yet)"}.
 // null = no todo (stage 10's enquiry emails). Any other client email passes
@@ -707,7 +720,7 @@ sendClientMail(DB, {client_id, place_id, to, business, compose: (signName) => {s
   - `sign-off fallback`: no `business:sender_name` → `senderName(DB) === "Nik"`.
   - `falls back to cold`: only `cold1` → `mailbox_id 'cold1'`, `fallback true`, todo `setup:system_mailbox`.
   - `no mailbox`: none → `queued null`, no `messages` row, todo `setup:welcome:<client_id>` whose `draft` contains
-    the onboarding URL.
+    the onboarding URL and whose `detail` is `To: …\nSubject: …\n\n` + the draft (so it contains the URL too).
   - `no mailbox, other email`: none, `noMailboxTodo: {dedupe: "setup:client-mail:c1:go-live", title: "Send {name} this email yourself (no mailbox yet)"}`
     → todo `setup:client-mail:c1:go-live` titled `Send Smith Roofing this email yourself (no mailbox yet)` with the
     composed body as `draft`; no `setup:welcome:c1` todo. A second call with `noMailboxTodo: {dedupe: "setup:client-mail:c1:domain-cname", …}`
@@ -718,7 +731,8 @@ sendClientMail(DB, {client_id, place_id, to, business, compose: (signName) => {s
 - [ ] **Step 3: Implement `sendClientMail(...)` in `_lib/client-mail.js`** — `systemMailbox` → `compose(await senderName(DB))`
   → `queueMessage(DB, {place_id, client_id, mailbox_id, direction: "out", kind: "system", author: "system", to_addr, from_addr: mailbox.address, subject, body, due_at: now})`;
   todo titles exactly as Part A; with no mailbox, `addTodo(DB, {kind: "setup", dedupe: noMailboxTodo.dedupe, title:
-  noMailboxTodo.title.replace("{name}", business), draft, client_id, place_id, link: noMailboxTodo.link ?? "/#/money"})` unless
+  noMailboxTodo.title.replace("{name}", business), detail: `To: ${to}\nSubject: ${subject}\n\n${body}`, draft: body,
+  client_id, place_id, link: noMailboxTodo.link ?? "/#/money"})` unless
   `noMailboxTodo` is `null`; the no-mailbox draft is composed with `senderName(DB)` too.
 - [ ] **Step 4: Run tests to verify they pass** — same command → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/client-mail.js control-room/tests/client-mail.test.mjs`
@@ -753,6 +767,12 @@ fulfilCheckout(DB, session, {now}) → Promise<{status: "ok"|"ignored", reason?,
     result `firstChargeOn '2026-12-18'`, `created true`.
   - `fulfil twice`: second call → `created false`, same token; still 1 client, 1 payment, 1 system message,
     1 `ordered` event, `build` todo still open.
+  - (review fixes) the first `INSERT INTO messages` throws → the call rejects; the retry → `created true`, same token,
+    one system message id `welcome:cl_cs_1`, one `ordered`; a third run adds nothing. The `ordered` insert throws once
+    → still one `ordered` after the retries. A racing runner whose check missed the queued email → `created false`, no
+    error, still one message. Onboarding `submitted` + `closeTodos("build:new:cl_cs_1")` → a re-run files no open
+    `build:new:cl_cs_1` and leaves a newer `hot` todo open. Open `escalation:m1`, `call_time:m2`, `call:c1`,
+    `optout-mail:m3` todos stay open (dedupes unchanged) while the `hot` one closes.
   - `weekend metadata`: `weekend "1"`, `amount_total 175000` → `package 'weekend'`, `free_days 90`.
   - `website package`: `mode "payment"`, `package "website"`, no subscription → `monthly_pence 0`, `free_days 0`,
     `stripe_subscription NULL`, `firstChargeOn null`.
@@ -770,11 +790,12 @@ fulfilCheckout(DB, session, {now}) → Promise<{status: "ok"|"ignored", reason?,
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/stripe-fulfil.test.mjs` → `fulfilCheckout is not a function`.
 - [ ] **Step 3: Implement `fulfilCheckout(DB, session, {now})` in `_lib/stripe-events.js`** — the 9 steps of
   Part A in that order: one `DB.batch` for clients/client_links/payments (payments `ON CONFLICT(id) DO UPDATE SET name = excluded.name`),
-  then the onboarding `INSERT OR IGNORE … .run()` whose `meta.changes === 1` sets `created`; the prospect step
+  then the onboarding `INSERT OR IGNORE … .run()` (token and status read back); the prospect step
   (`applyStageEvent(DB, place_id, "paid", now, {email, greet_name: null})`, then clear `next_followup_at`,
   cancel queued follow-ups and `handOffWaiting(DB, place_id, now)`) and `DELETE FROM suppression WHERE kind = 'email' AND value = ?` (lower-cased checkout
-  email) run before the welcome email is queued; email + `ordered` only when `created`; prospect/suppression/todos
-  always (idempotent). Token: 24 bytes from `crypto.getRandomValues`, base64url without padding.
+  email) run before the welcome email is queued; the email (id `welcome:<client_id>`) whenever neither it nor its
+  no-mailbox todo exists, and `ordered` (once per demo) on every run; prospect/suppression always (idempotent);
+  step 8 only while onboarding is `sent`. Token: 24 bytes from `crypto.getRandomValues`, base64url without padding.
 - [ ] **Step 4: Run tests to verify they pass** — same command → PASS.
 - [ ] **Step 5: Commit** — `git add control-room/functions/_lib/stripe-events.js control-room/functions/_lib/todo.js control-room/tests/stripe-fulfil.test.mjs`
   `git commit -m "Order and pay: a paid checkout becomes a client, onboarding row and welcome email, once"`
@@ -848,8 +869,10 @@ Produces nothing new (cases inside `handleEvent`).
     message containing `https://invoice.stripe.com/i/x`. Same invoice again (new event id, `attempt_count 2`) → no
     second message.
   - `card failed, no mailbox`: no mailboxes → todo `setup:client-mail:cl_cs_1:payment-failed:in_3` titled
-    `Send Smith Roofing this email yourself (no mailbox yet)` with the pay URL in its `draft`; no
-    `setup:welcome:` todo is added by this event.
+    `Send Smith Roofing this email yourself (no mailbox yet)` with the pay URL in its `draft` and its `detail`; no
+    `setup:welcome:` todo is added by this event; the `payment:failed:in_3` title has no "emailed a link" (it is the
+    no-mailbox title) and the result is `marked payment failed (no mailbox: Nik sends the email)`, not "client
+    emailed". No email address → the no-address title, result `marked payment failed (no email address)`.
   - `unknown customer`: `customer "cus_zz"` → result `unknown customer`, no todo, no message.
   - `stopped`: `customer.subscription.deleted` `{id: "sub_1", ended_at: <2027-01-15>}` → `cancelled_on '2027-01-15'`;
     todo `payment:stopped:cl_cs_1` titled `Smith Roofing stopped the monthly plan: switch off the extras (their site stays up)`;
@@ -973,8 +996,11 @@ Then run the live checks 3–12 of "Perfect when" in Stripe test mode before sta
   comes back.
 - `todo.js`: `closeLeadTodos(DB, place_id, {exceptKinds})`.
 - `onboarding` row with `status 'sent'` and `token`; link format `{origin}/onboard/{token}`, origin = the host the
-  prospect ordered on (`metadata.origin`). Stage 10 owns `/onboard/:token` and must
-  `closeTodos(DB, "build:new:" + client_id)` when the form is submitted.
+  prospect ordered on (`metadata.origin`). Stage 10 owns `/onboard/:token` and must, in the same step,
+  move `onboarding.status` away from `sent` and `closeTodos(DB, "build:new:" + client_id)` when the form is submitted
+  (fulfilCheckout re-runs on every thanks-page load and Stripe redelivery, and files `build:new:` and closes the
+  lead's sales todos only while the status is `sent`).
+- The welcome email's message id is `welcome:<client_id>`; `demo_events` holds at most one `ordered` per demo.
 - Settings `offer:chatbot_live` and `offer:review_booster_live` (`'1'` = shown on the order page). Stage 10 sets them.
 - `clients.cancelled_on` set on Stripe cancellation: stages 10–11 switch off the chatbot, review booster and monthly
   care for those clients; the site stays up.
