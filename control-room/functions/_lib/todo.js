@@ -85,6 +85,29 @@ export async function closeTodos(DB, dedupePrefix) {
   return meta.changes;
 }
 
+/**
+ * Close every open todo about the lead `place_id` (its place_id, no client_id), except those whose kind is in
+ * `exceptKinds`, freeing each dedupe as closeTodos does (dedupe || '@' || done_at; a todo without one keeps NULL).
+ * Todos that carry a client_id are about the client the lead became (a welcome-email draft, their email handed to
+ * Nik), not the lead, so they stay. Dismissed and done todos are left alone. Stage 9 runs it when a lead pays.
+ * Returns how many were closed. 1 D1 query.
+ */
+export async function closeLeadTodos(DB, place_id, { exceptKinds = [] } = {}) {
+  if (typeof place_id !== "string" || !place_id) throw new TypeError("closeLeadTodos needs the lead's place_id.");
+  if (!Array.isArray(exceptKinds) || !exceptKinds.every((k) => typeof k === "string")) {
+    throw new TypeError('closeLeadTodos: exceptKinds must be a list of todo kinds, e.g. ["build", "payment"].');
+  }
+  const at = doneAt();
+  const { meta } = await DB.prepare(
+    `UPDATE todos SET status = 'done', done_at = ?1, dedupe = dedupe || '@' || ?1
+     WHERE status = 'open' AND place_id = ?2 AND client_id IS NULL
+       AND kind NOT IN (SELECT value FROM json_each(?3))`,
+  )
+    .bind(at, place_id, JSON.stringify(exceptKinds))
+    .run();
+  return meta.changes;
+}
+
 // Milliseconds since 1970, or null for no time (a time that can't be read counts as none, so the item still shows).
 function ms(value) {
   if (value === null || value === undefined || value === "") return null;
