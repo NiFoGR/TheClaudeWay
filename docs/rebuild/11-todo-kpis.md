@@ -422,6 +422,8 @@ Claude never edits templates, grades or anything else. Nik decides.
 - Old routes `#/home`, `#/roadmap`, `#/outreach`, and anything unknown, open Todo.
 - Removed from the UI: Home, What to do, Roadmap, Outreach. `home.js`, `roadmap.js`, `outreach.js`, `_lib/today.js`,
   `api/today.js`, `api/overview.js` and `tests/today.test.mjs` are deleted (copies stay in `legacy/`).
+  Home's interim `calls`, `replies` and `reply_routine` steps (stages 7–8) go with it: the Todo page shows the `call`
+  Todos and Needs you itself. `upcomingCalls` in `_lib/calls-db.js` then has no caller: delete it.
 
 ## Data clean-up (12-month purge)
 
@@ -437,17 +439,23 @@ The privacy notice (stage 0) promises: "If we contacted you and you didn't becom
   (`queued_at` when not researched). A lead with no dated row at all is never touched.
 - **What is deleted:** its `prospects` and `messages` rows, the `style_examples` rows made from its first emails
   (stage 6 saves each first email Nik sent, as id `sent:<message id>`: it holds their greeting, Nik's opener for them
-  and their demo link, and has no `place_id`, so it's found by the message id, before the messages go), and
-  everything its `research` row holds: that row is
+  and their demo link, and has no `place_id`, so it's found by the message id, before the messages go), its `calls`
+  rows (stage 8: their phone and Nik's call note), every Todo with its `place_id` (stage 7's `escalation`,
+  `call_time`, `client-mail`, `optout-mail`, `checkback`, `call` and `call-outcome` Todos hold "They wrote:" plus up to
+  600 characters of their email, Claude's draft, or their name and phone; deleted, not blanked: nothing needs a
+  non-client's Todo after 12 months), and everything its `research` row holds: that row is
   blanked to a data-free `skipped` row (every data column NULL, `too_big = 0`, both dates NULL, notes `Skipped:
   details deleted 12 months after last contact.`), never deleted. Stage 1's research queue treats any `research` row
   as handled, so a deleted row would put the lead back in the queue the next morning: researched again, a new demo,
   and emailed again. With both dates NULL the purge never selects it again. Also processed `inbound_raw` rows older
   than the same 12-month cutoff (their `headers` still hold From and Subject), but always keeping the newest row,
-  because Setup's "Last email received" reads it by rowid.
+  because Setup's "Last email received" reads it by rowid. Stage 8's day lists (`calls-day:<YYYY-MM-DD>` Todos) have
+  a NULL `place_id` but name every lead called that day, so the same Todo delete also removes those created before
+  the cutoff. No other Todo with a NULL `place_id` (`setup`, `kpi`, `health`, …) is ever touched.
 - **What is kept:** `suppression` (so a "no thanks" or bounce is never emailed again), every client's rows, the
   scraped `leads` row (public business listing, owned by the scraper), and the blanked `research` row (no personal
-  data; it only stops the lead being researched, demoed and emailed again). Stage 3's card shows it as "Skipped:
+  data; it only stops the lead being researched, demoed and emailed again), and every Todo with a NULL `place_id`
+  except old `calls-day:` lists. Stage 3's card shows it as "Skipped:
   details deleted 12 months after last contact."; stage 4 keeps it out of Ready and `goodWaiting` doesn't count it.
   "Research is wrong" is the only way to bring the lead back, by Nik's choice (stage 2's route refuses it while the
   lead is on the do-not-contact list or excluded by the scraper).
@@ -492,10 +500,10 @@ failing `purge` step shows in the tick result and the `tick` heartbeat detail li
    - Stage 0's `routine:weekly-kpis` light is green.
 8. **Nav:** the 9 items appear in the exact order. `#/roadmap` and `#/outreach` open Todo; `#/lead/<id>/thread` opens
    that lead's Replies thread. No request goes to `/api/today` or `/api/overview` (DevTools Network tab).
-9. **Purge:** `purge.test` passes: a non-client last contacted 12 months and a day ago loses its `prospects` and
-   `messages` rows, its `research` row is blanked to a data-free `skipped` row, and it keeps its `suppression` row;
+9. **Purge:** `purge.test` passes: a non-client last contacted 12 months and a day ago loses its `prospects`,
+   `messages`, `calls` and Todo rows, its `research` row is blanked to a data-free `skipped` row, and it keeps its `suppression` row;
    the next morning's research queue doesn't take it again; a client and a lead contacted 11 months ago keep
-   everything.
+   everything, calls and Todos included; a `setup` Todo (no lead) survives.
 
 ---
 
@@ -543,8 +551,9 @@ JS, `style.css`.
 
 1. **Week edges.** UK midnight at the BST/GMT change, and ISO week 53 / year end, must put events in the right week.
    Covered by Task 4's `"weeks across the clock change and new year"` and the m0/m5 rows in Task 5.
-2. **Todos without a lead.** `setup`/`kpi` todos have a null `place_id`, and a deleted lead leaves a todo whose join
-   finds nothing. They must render with no links and no crash. Covered by Task 3's `"todos without a lead still show"`.
+2. **Todos without a lead.** `setup`/`kpi` todos have a null `place_id`, and a todo can point at a lead whose `leads`
+   row is gone (the scraper deleted it; the 12-month purge deletes the lead's todos with it, so it never leaves one
+   behind). They must render with no links and no crash. Covered by Task 3's `"todos without a lead still show"`.
 3. **Hostile scraped or inbound text.** Business names, draft replies and Claude's analysis must be escaped. Covered
    by Task 8's `"escapes everything"` and Task 9's `"analysis is text"`.
 4. **Double taps.** Done tapped twice, an unknown id, or a bad status must give an idempotent 200, a 404 and a 400
@@ -807,7 +816,9 @@ JS, `style.css`.
   test("send posts Nik's edited reply and closes the todo", async () => {
     const r = await send("t-esc", { body: "Hi Sam, Tuesday works." }); assert.equal(r.status, 200);
     const m = await DB.prepare("SELECT kind, author, body FROM messages WHERE place_id = 'pn' AND direction = 'out' ORDER BY created_at DESC").first();
-    assert.deepEqual(m, { kind: "reply", author: "nik", body: "Hi Sam, Tuesday works." });
+    // stage 7's sendAsNik adds the signature under Nik's words, like every reply ("\n\n<sender_name>\nAetos Websites")
+    assert.deepEqual([m.kind, m.author], ["reply", "nik"]);
+    assert.ok(m.body.startsWith("Hi Sam, Tuesday works.\n\n"), m.body); assert.ok(m.body.endsWith("Aetos Websites"), m.body);
     assert.equal((await DB.prepare("SELECT status FROM todos WHERE id = 't-esc'").first()).status, "done");
     assert.deepEqual(await (await send("t-pay", { body: "x" })).json(), { error: "Only replies can be sent from here." });
     assert.equal((await send("t-call", { body: "x" })).status, 400);           // kind call: not a reply
@@ -1405,8 +1416,8 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
   - `PURGE_BATCH = 90`
   - `purgeCutoff(now) → ISO string`: UK midnight at the start of the same UK calendar date one year earlier (29 Feb →
     28 Feb).
-  - `purgeOld(DB, now, {maxRounds}) → Promise<{purged, done}>`: each round is 1 select + 1 `DB.batch` of 4
-    statements (3 deletes and the `research` blanking update), 5 queries as countingDB counts them;
+  - `purgeOld(DB, now, {maxRounds}) → Promise<{purged, done}>`: each round is 1 select + 1 `DB.batch` of 6
+    statements (5 deletes and the `research` blanking update), 7 queries as countingDB counts them;
     `done` is true when the last select returned fewer than `PURGE_BATCH` ids.
   - `purgeStep = {name: "purge", everyMinutes: 60, run}`.
 
@@ -1415,13 +1426,17 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
 
   | place | rows | last contact | expected |
   | --- | --- | --- | --- |
-  | old1 | `leads` row (score 60), prospect `lost`, 2 messages (its first email `old1-first`, kind `first`; newest 2025-10-20T09:00Z), research, suppression row for its email, `style_examples` row `sent:old1-first` (source `nik_sent`) | 2025-10-20 | prospect, messages, `sent:old1-first` gone; research blanked (`skipped`, no data, no dates); suppression and lead kept |
+  | old1 | `leads` row (score 60), prospect `lost`, 2 messages (its first email `old1-first`, kind `first`; newest 2025-10-20T09:00Z), research, suppression row for its email, `style_examples` row `sent:old1-first` (source `nik_sent`), a `calls` row `call-old1` (status `done`, phone `07700 900111`, note "wants a quote in spring", created/updated 2025-03-03T10:00Z), Todo `escalation:old1-first` (kind `escalation`, `place_id` old1, detail "They wrote: …", draft set, created 2025-03-03T10:00Z) | 2025-10-20 | prospect, messages, `sent:old1-first`, call and Todo gone; research blanked (`skipped`, no data, no dates); suppression and lead kept |
   | old2 | `leads` row (score 60), research only, `researched_at` 2025-09-01T07:00Z, no prospect | 2025-09-01 | research blanked; lead kept |
-  | recent | prospect, message 2025-11-01T09:00Z, research 2025-09-01 | 2025-11-01 | kept |
-  | client1 | prospect `won`, messages 2025-01-10, `clients` row with this `place_id` | 2025-01-10 | kept |
+  | recent | prospect, message 2025-11-01T09:00Z, research 2025-09-01, `calls` row `call-recent` (created 2025-03-03T10:00Z), Todo `escalation:recent-1` (`place_id` recent, created 2025-03-03T10:00Z) | 2025-11-01 | kept, call and Todo included |
+  | client1 | prospect `won`, messages 2025-01-10, `clients` row with this `place_id`, `calls` row `call-client1` (created 2025-01-10T10:00Z), Todo `escalation:client1-1` (`place_id` client1, created 2025-01-10T10:00Z) | 2025-01-10 | kept, call and Todo included |
   | nodate | research with `researched_at` and `queued_at` NULL | none | kept |
 
   Also a `style_examples` row `nik-1` (source `nik_written`, situation "they ask the price"), tied to no lead: kept.
+  And three Todos with a NULL `place_id`: `setup:mailbox` (kind `setup`, created 2025-01-01T09:00Z): kept;
+  `calls-day:2025-03-03` (kind `call`, title "Today's calls: 11:00 Mark (Old One Roofing)", created
+  2025-03-03T06:00Z): deleted (older than the cutoff); `calls-day:2026-10-20` (kind `call`, created
+  2026-10-20T06:00Z): kept.
 
   ```js
   test("deletes only non-clients last contacted over 12 months ago", async () => {
@@ -1443,6 +1458,11 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
     // Also seeded: a Voice page example `nik-1` (source nik_written, no lead). Old1's first email as a style example
     // goes with its messages; Nik's own examples stay.
     assert.deepEqual((await DB.prepare("SELECT id FROM style_examples ORDER BY id").all()).results.map((x) => x.id), ["nik-1"]);
+    // Stage 8's calls (their phone, Nik's note) and stage 7's Todos (their words, Claude's draft) go with the lead;
+    // a recent lead's and a client's stay. Todos without a lead stay, except a day list older than the cutoff.
+    assert.deepEqual((await DB.prepare("SELECT id FROM calls ORDER BY id").all()).results.map((x) => x.id), ["call-client1", "call-recent"]);
+    assert.deepEqual((await DB.prepare("SELECT dedupe FROM todos ORDER BY dedupe").all()).results.map((x) => x.dedupe),
+      ["calls-day:2026-10-20", "escalation:client1-1", "escalation:recent-1", "setup:mailbox"]);
     assert.deepEqual(await purgeOld(DB, NOW, { maxRounds: 5 }), { purged: 0, done: true });   // never selected again
   });
   test("a purged lead isn't queued for research again", async () => {
@@ -1468,7 +1488,7 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
     assert.equal(await purgeStep.run({ ...ctx, now: new Date("2026-10-30T12:00:00Z") }), "done this month");
     assert.equal(await purgeStep.run({ ...ctx, budget: { left: () => 3 } }), "done this month");
     await setSetting(DB, "purge:month", "2026-09");
-    assert.equal(await purgeStep.run({ ...ctx, budget: { left: () => 5 } }), "deferred");   // floor((5 - 2) / 5) = 0 rounds
+    assert.equal(await purgeStep.run({ ...ctx, budget: { left: () => 8 } }), "deferred");   // floor((8 - 2) / 7) = 0 rounds
   });
   ```
 - [ ] **Step 2: Run it to verify it fails.** `node --test control-room/tests/purge.test.mjs` fails with "Cannot find
@@ -1485,15 +1505,17 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
        AND place_id NOT IN (SELECT place_id FROM clients WHERE place_id IS NOT NULL)
     ORDER BY last LIMIT ?2
     ```
-  - One `DB.batch` of 4 statements, in this order: `DELETE FROM style_examples WHERE id IN (SELECT 'sent:' || id FROM
+  - One `DB.batch` of 6 statements, in this order: `DELETE FROM style_examples WHERE id IN (SELECT 'sent:' || id FROM
     messages WHERE place_id IN (…) AND kind = 'first')` (first: after the messages delete its subquery finds nothing),
     `DELETE FROM prospects WHERE place_id IN (…)`, `DELETE FROM messages WHERE
-    place_id IN (…)` and `UPDATE research SET status = 'skipped', grade = NULL, points = NULL, grade_reason = NULL, angle = NULL, opener = NULL, owner = NULL, best_email = NULL, best_email_why = NULL, emails = NULL, copy = NULL, site_review = NULL, searched = NULL, too_big = 0, notes = 'Skipped: details deleted 12 months after last contact.', queued_at = NULL, researched_at = NULL WHERE place_id IN (…)`. The `research` row is
+    place_id IN (…)`, `DELETE FROM calls WHERE place_id IN (…)`, `DELETE FROM todos WHERE place_id IN (…) OR
+    (place_id IS NULL AND substr(dedupe, 1, 10) = 'calls-day:' AND created_at < ?)` (`?` = the cutoff; any other
+    Todo with a NULL `place_id` is never touched) and `UPDATE research SET status = 'skipped', grade = NULL, points = NULL, grade_reason = NULL, angle = NULL, opener = NULL, owner = NULL, best_email = NULL, best_email_why = NULL, emails = NULL, copy = NULL, site_review = NULL, searched = NULL, too_big = 0, notes = 'Skipped: details deleted 12 months after last contact.', queued_at = NULL, researched_at = NULL WHERE place_id IN (…)`. The `research` row is
     never deleted: stage 1's queue treats any row as handled. Never touch `suppression`, `clients`, `client_links` or
     `leads`.
   - `run(ctx)`: `month = ukDate(now).slice(0, 7)`; if `purge:month` equals it, return "done this month" (1 query).
-    Otherwise `maxRounds = Math.min(5, Math.floor((ctx.budget.left() - 2) / 5))` (a round is 1 select + a batch of
-    4); with 0 rounds return "deferred". Run `purgeOld`;
+    Otherwise `maxRounds = Math.min(5, Math.floor((ctx.budget.left() - 2) / 7))` (a round is 1 select + a batch of
+    6); with 0 rounds return "deferred". Run `purgeOld`;
     when `done`, set `purge:month = month`. Return "nothing to purge", "purged <n> leads" or "purged <n> leads, more
     next tick".
 - [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/purge.test.mjs` passes (4 tests),
@@ -1529,7 +1551,9 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
 - **`_lib/kpis.js`:** `isoWeekOf`, `weekStartOf`, `weekLabel`, `rate`, `computeWeek`, `credit`, `POSITIVE_INTENTS`.
 - **`_lib/kpis-db.js`:** `loadKpiRows`, `kpiPayload`.
 - **`_lib/purge.js`:** `purgeStep` (tick step `purge`, placed after `care` and before `health` in overview §8),
-  `purgeOld`, `purgeCutoff`. Settings key `purge:month`. This is stage 0's promised 12-month retention purge.
+  `purgeOld`, `purgeCutoff`. Settings key `purge:month`. This is stage 0's promised 12-month retention purge. It
+  also deletes the lead's `calls` rows and its Todos (stage 7–8's per-lead data), plus `calls-day:` Todos older than
+  the cutoff; no other Todo with a NULL `place_id` is touched.
   `research` rows are blanked to a data-free `skipped` row, never deleted; stage 1's queue treats any `research` row
   as handled, so a purged lead is never researched or emailed again on its own.
 - **Routes:**
@@ -1580,7 +1604,9 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
   - `messages.intent` set on inbound human mail with the values above plus `not_interested` etc.
   - `sendAsNik(DB, {message_id, body, now}) → Promise<{status, body}>` (`_lib/replies-db.js`): queues Nik's reply in
     the thread of that inbound message (`kind 'reply'`, `author 'nik'`), closes `escalation:<id>`/`call_time:<id>`,
-    and returns plain-English errors in `body.error` (422 for an empty body or no mailbox).
+    and returns plain-English errors in `body.error` (422 for an empty body or no mailbox). The stored body is Nik's
+    text + `"\n\n"` + `signature(business:sender_name)`, i.e. `<sender_name>\nAetos Websites` (just `Aetos Websites`
+    when no sender name is set): the Todo draft should not include a sign-off.
   - `escalation` todos carry `draft`, `place_id` and dedupe `escalation:<message_id>`; `call_time` todos dedupe
     `call_time:<message_id>`. Stage 0's unknown-sender and client escalations use `escalation:unknown:<id>` and
     `escalation:client:<id>` (no draft, no thread); Todo never offers Send for them and KPIs don't count them.
@@ -1590,7 +1616,9 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
 - **Stage 8:**
   - `calls.phone` set on confirmed calls;
   - `call` todos with `place_id` and `due_at = slot_at`;
-  - a booked call is a `calls` row with status `confirmed`/`done`/`no_show`, whose `created_at` is when it was booked.
+  - a booked call is a `calls` row with status `confirmed`/`done`/`no_show`, whose `created_at` is when it was booked
+    (`confirmCall` resets `created_at` when their own offered row becomes the booking, so an offer made on Sunday and
+    confirmed on Monday counts in Monday's week).
 - **Stage 9:**
   - a `clients` row with `place_id` on every paid order (it counts as an order on `paid_on`);
   - an `onboarding` row per client.

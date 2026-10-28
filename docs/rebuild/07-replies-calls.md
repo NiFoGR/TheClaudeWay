@@ -79,8 +79,11 @@ One request returns everything; Claude never reads the database another way. Fie
   - `thread` (every message oldest → newest: id, who, kind, at, subject, text with quoted history removed, 4,000
     characters max each);
   - `calls` {current (their live offered/confirmed call or null), free_slots (next 3: {slot_at, label}),
-    call_time_promise}.
+    call_time_promise (worked out at `send_at`, like the server's `call_time` Todo)}.
 - Conversations whose prospect is `won`, or `lost` because they opted out or bounced, never appear (see Edge cases).
+  "Waiting for Claude" is defined once (`CLAUDE_ANSWERS` in `replies-db.js`): the inbox, `reply_fire` and the Replies
+  light all count only inbound `needs_reply = 1` mail of a prospect that is neither. Reading the inbox also hands any
+  mail still waiting in such a thread to Nik (`handOffWaiting`, a safety net for rows from before a hand-off ran).
 
 ### Intents and what happens
 
@@ -121,10 +124,17 @@ escalate. Checks, with the exact reason text:
 | No "SEO" (any case, dotted or not) | `Don't say "SEO": say "top 3 on Google" or "the front page of Google".` |
 | "guarantee", "promise", "100%", "money back" only inside an exact sentence from `offer.guarantees` | `Promises must use the exact guarantee wording from the offer.` |
 | "90 days free" / "first 90 days" only when `offer.weekend` is true at `send_at` | `The weekend deal isn't on when this goes out: use the weekday offer.` |
+| On a weekday, £1,750 next to the monthly price (£249, "a month", "monthly") without £1,950 | `£1,750 is the Website Only price; the Full Package is £1,950 to build.` |
 | No leftover placeholders (`[link]`, `[time and day]`, `{name}`) | `Fill in or remove the placeholder [link].` |
 | Plain text, no HTML tags | `Plain text only: remove the HTML.` |
 | No sign-off (last line isn't the sender name from Setup, `business:sender_name`, or "Aetos Websites") | `Don't sign off: "Nik" and "Aetos Websites" are added under your reply.` |
 | With `call`, the body names the slot's weekday | `Your reply doesn't mention Tuesday, the day you're offering.` (route check) |
+| `proposes_time` (no booking): the body has `callTimeDue(send_at).promise` | `Your reply must say you'll confirm "by tomorrow evening" (it goes out after 5pm UK).` (route check) |
+
+When the weekend deal starts or ends between now and `send_at` (posted Sunday 23:31, sent Monday 07:00) and the guard
+refuses, the 422 also carries `send_at` and `offer` (`offerFacts(send_at)`), with the extra reason `The offer changes
+before this goes out (it goes out Mon 26 Oct 07:00): rewrite every price and free-days line from \`offer\` in this
+reply.` The prompt tells Claude to rewrite from that `offer`.
 
 Nik's own replies ("Send as me", "Reply as me") are not checked: they're his words.
 
@@ -153,9 +163,15 @@ Nik's own replies ("Send as me", "Reply as me") are not checked: they're his wor
 - **Confirm:** allowed for a free slot or the prospect's own offered slot, at least 30 minutes ahead, even after the
   hold expired if nobody else took the day. Sets `status = 'confirmed'`, `phone` (theirs, else the lead's), stage →
   `call_booked`, adds the `call` Todo due at the slot.
-- **Other times:** Claude replies that Nik will confirm, and the server adds a `call_time` Todo:
-  - before 17:00 UK → due 18:00 UK today; Claude writes "by the end of the day";
-  - from 17:00 UK → due 18:00 UK tomorrow; Claude writes "by tomorrow evening".
+- **Other times:** Claude replies that Nik will confirm, and the server adds a `call_time` Todo. Both are worked out
+  from when the reply goes out (`send_at`: now inside reply hours, else the next 07:00 UK), never from when the inbox
+  was read:
+  - goes out before 17:00 UK → due 18:00 UK that day; Claude writes "by the end of the day" (a reply posted after
+    23:30 goes at 07:00, so it is this one);
+  - goes out from 17:00 UK → due 18:00 UK the next day; Claude writes "by tomorrow evening".
+  - A reply without that phrase is refused 422 `Your reply must say you'll confirm "by tomorrow evening" (it goes out
+    after 5pm UK).` (`before 5pm UK` / `at 7am UK` for the others), so a reply read at 16:58 and posted at 17:02 is
+    rewritten, never sent promising today for tomorrow's Todo.
   - Title: `Confirm a time with Mark (Diamond Kickboxing) by 6pm (they asked for Thu 3pm)`; "by 6pm tomorrow" when
     due tomorrow.
 - **Tick step `calls` (position 9, every 5 minutes):**
@@ -214,13 +230,16 @@ Nik's own replies ("Send as me", "Reply as me") are not checked: they're his wor
 | --- | --- |
 | Two Routine sessions overlap (fire + 07:03 schedule) | The second post for a handled message gets 409 and Claude moves on. One reply per message. |
 | They send two emails before Claude answers | One conversation; Claude answers the latest (`reply_to`) covering both; replying to the older one gets 409 "a newer message is waiting". |
-| Mail at 23:29, Claude posts at 23:32 | Reply queued for 07:00 UK; the guard checks the offer at 07:00 (e.g. weekend deal ends Sunday midnight). |
+| Mail at 23:29, Claude posts at 23:32 | Reply queued for 07:00 UK; the guard checks the offer at 07:00 (e.g. weekend deal ends Sunday midnight), and a refusal then carries the 07:00 `offer`. |
 | BST/GMT change nights | All windows and slots go through `ukTime.js`; tests cover 29 Mar and 25 Oct 2026. |
 | Reply comes from a different address at their firm | Claude answers the address that wrote; `prospects.email` is unchanged. |
 | They give another person's email | Escalated (`other`); nobody new is emailed automatically. |
 | Message tries to instruct Claude ("ignore your rules…") | Treated as data; escalated as `other`. |
 | Prospect is `won` (a paying client) | Not answered by Claude; `needs_reply = 0`; the message gets `client_id` (`clients.id` by `place_id`); `escalation` Todo `Your client Green Leaf Landscapes emailed: read and reply yourself` (no draft). A client's "no thanks" arrives here too: stage 0 treats it as human mail, never as an opt-out. |
 | Prospect opted out or bounced, then writes | Not answered by Claude; `escalation` Todo `Green Leaf Landscapes wrote back after opting out: read and reply yourself`. |
+| A message waits for Claude, then they opt out ("No thanks"), bounce, or pay | Stage 0's inbound step (after the opt_out / bounce event), stage 9's fulfilment (after `paid`) and a refused post (409 for a client's or opted-out thread) call `handOffWaiting`: the waiting mail gets `needs_reply = 0` and the same `optout-mail:` / `client-mail:` Todo, so it never keeps the light red or wakes the Routine. |
+| They opt out (stage 0's classifier or Claude's `opt_out`) with a call booked or offered | The call is cancelled (`cancelOpenCalls`, note `Cancelled by their email: they asked not to be emailed again.`), its Todo closed and the day free; the calls step never lists a call whose prospect opted out. A bounce leaves a booked call alone (it was agreed by phone). |
+| A reply fails to send (SMTP or login error) | Final: nothing retries it, and the email it answered no longer waits. The Replies light goes red (`A reply didn't send: <error>.`) until a later email goes in that thread or 7 days pass; Nik resends with Reply as me. |
 | Prospect said no / not now, or the sequence ended, then writes again | Claude answers as normal; the stage goes back to `replied` (event `reopen`, only when `lost_reason` is `not_now`, `not_interested`, `sequence_done` or `call`; Q-Z). |
 | Human mail that matches no prospect | Not handled here (`needs_reply = 0`); it stays in the Namecheap inbox Nik reads. |
 | Slot taken between inbox and reply | 422 `That day already has a call booked or offered. Offer Wednesday 21 October at 11am instead.` |
@@ -235,6 +254,8 @@ Nik's own replies ("Send as me", "Reply as me") are not checked: they're his wor
 **Replies page** (nav "Replies", `#/replies`)
 - Top line: `Claude replies: On` and the button `Pause Claude's replies` (or `Claude replies: Paused` + `Turn Claude's
   replies back on`). Under it: `3 waiting · median reply time this week: 3 min · reply hours 7am–11:30pm`.
+  The median leaves out the reply drill (`drill:`) and Nik's test lead (`test:`) on purpose, to match file 11's KPIs;
+  the test lead's speed is read on its own thread (Perfect when 3).
 - **Needs you**: open `escalation` and `call_time` Todos as cards.
   - Escalation card: title, their message (text), Claude's draft in an editable box, buttons `Send as me`, `Dismiss`.
   - Call-time card: title, their message, date and time inputs, phone (pre-filled from the lead), an editable message
@@ -251,6 +272,19 @@ Nik's own replies ("Send as me", "Reply as me") are not checked: they're his wor
   `Couldn't save: write something first.`
 
 **Voice page**: built in stage 5–6; this stage only seeds Nik's two examples into it (see Voice above).
+
+**Home, until stage 11's Todo page** (Home's "What to do", `_lib/today.js` + `api/today.js`): the `call`, `calls-day`
+and `call-outcome` Todos have no page to show on before stage 11, so Home's daily steps carry them:
+- `calls`: confirmed calls (no drills, no opted-out prospects: `upcomingCalls` in `_lib/calls-db.js`) from 30 minutes
+  ago to the end of tomorrow (UK), soonest first. Title `Call Mark (Diamond Kickboxing) at 11:00 today` (tomorrow:
+  `Call Sam (Smith Roofing) Thu 11:00`), why `Number: 07969 770905. The script and How did it go? are on the call
+  page.` plus `Next: Thu 11:00 Sam (Smith Roofing) · no number yet.` for a second call; link `#/call/<id>`, button
+  `Open call`, status `todo`. None: ticked, `No calls booked.`
+- `replies`: the Replies page's Needs you count (open `escalation` and `call_time` Todos): `2 replies need you` (`1
+  reply needs you`), link `#/replies`, button `Open Replies`, status `warn`; none: ticked, `Nothing waiting for you.`
+- Setup step `reply_routine`, `Claude answering replies` (Routine `aetos-reply`, `routines/README.md`): ticks itself
+  once the heartbeat `routine:reply` exists (the Test fire posts one).
+Stage 11 deletes Home with these steps; its Todo page shows the call Todos themselves.
 
 **Call page** (`#/call/<id>`)
 - `Call Mark · Diamond Kickboxing`, `Tuesday 20 October at 11am`, the phone as a tap-to-call link, `Open the email
@@ -288,6 +322,11 @@ stage 0's `registerLight(fn)`; it never edits `computeLights`.
     arrival and that morning's 07:00: detail `A reply has waited 21 minutes.`, fix `Check the aetos-reply Routine is
     switched on (routines/README.md) and its URL and token are saved on Setup → Claude.` (stage 0 adds the `health`
     Todo for red lights);
+  - red, at any hour unless paused, when a reply didn't send (outbound `kind = 'reply'`, `status = 'failed'`, created
+    in the last 7 days, not `drill:`/`test:`, not in a thread that opted out or bounced since, and no later outbound
+    `queued`/`sending`/`sent` row in that thread): detail `A reply didn't send: <error>.` (`2 replies didn't send:
+    <newest error>.`), fix `Check the mailbox password on Setup → Mailboxes, then open the thread on the Replies page
+    and send it again with Reply as me. If the error says it may have gone, check the Sent folder first.`;
   - grey outside hours: detail `Replies start again at 7am (1 waiting).`, fix `""`; grey while paused: detail
     `Claude's replies are paused (2 waiting).`, fix `Reply yourself on the Replies page.` Grey never adds a Todo.
 - **Reply Routine fire** failures turn red through stage 0's `routine:reply` light (no change here).
@@ -301,8 +340,10 @@ stage 0's `registerLight(fn)`; it never edits `computeLights`.
    `Last drill: 14/14 right`. Run it again the next day: 14/14 again. Verify in `GET /api/replies/drill`.
 3. **Speed, live:** Nik adds his Gmail as a test lead and sends 5 emails inside reply hours ("How much is it?", "Send me
    more info", "Can we have a call?", "Looks good, how do I get it?", "Not for me thanks"). All 5 replies arrive in
-   Gmail in the same thread; the Replies page shows a median reply time under 5 minutes; Nik confirms each sounds like
-   him.
+   Gmail in the same thread; the thread at `#/replies/test:nik` shows each Claude reply within 5 minutes of the email
+   it answers (median of the 5 under 5 minutes; also checkable from `GET /api/replies/test:nik`: each message's
+   `at` is when theirs arrived and when Claude's was sent). The page's median leaves the test lead out on purpose
+   (file 11's KPIs do too). Nik confirms each sounds like him.
 4. **No night replies:** Nik sends one test email at 23:45 UK. `routine_fires` has no `reply` row between 23:30 and
    07:00; the reply's `sent_at` is between 07:00 and 07:15 UK.
 5. **Call flow, live:** on the test lead, "Can we have a call?" gets the soonest free slot; answering "Yes that works,
@@ -354,8 +395,10 @@ one or are clearly unsure after their questions are answered.
       messages listed in `waiting`.
    b. Choose exactly one intent from the table below.
    c. Do what the table says.
-   d. On 422, read `reasons`, fix your text and post again (at most 2 fixes). Still refused: escalate with intent
-      `other`, reason "my reply kept failing the checks: <reasons>", and your best draft.
+   d. On 422, read `reasons`, fix your text and post again (at most 2 fixes). If the 422 includes `offer`, the offer
+      changes before your reply goes out: rewrite every price and free-days line from that `offer`, not the inbox's.
+      Still refused: escalate with intent `other`, reason "my reply kept failing the checks: <reasons>", and your best
+      draft.
       On 409, it was already handled or a newer message arrived: move on (step 4 picks up anything new).
       Any other error: retry once, then move on and report it in step 5.
 4. `GET` the inbox again. If it has conversations you haven't handled, repeat step 3. Stop after 30 conversations in
@@ -677,7 +720,7 @@ ESCALATE_INTENTS = ["angry","legal","unclear","other"]
 intentEffects(intent) → {event: string|null, lost_reason: string|null, bodyRequired: boolean, todo: "checkback"|"call_time"|null}
 sendTime(now: Date) → Date
 shouldFireReply({waiting, newestAt, lastFireAt, now, paused}) → boolean
-replyLight({waiting, oldestAt, now, paused}) → {name: "replies", level: "green"|"red"|"grey", detail, fix}
+replyLight({waiting, oldestAt, now, paused, failed = 0, failedError = null}) → {name: "replies", level: "green"|"red"|"grey", detail, fix}
 stripQuoted(text) → string                       // ≤ 4000 chars
 reSubject(subject) → string
 signature(senderName) → "<senderName>\nAetos Websites"   // senderName = setting business:sender_name
@@ -822,11 +865,13 @@ moved it). Then `stopFollowups(DB, place_id, "replied", now)` and `last_inbound_
 `getSetting(DB, "replies:paused")`, `registerLight(fn)` and `healthFromDb(DB, env, now) → {lights, gaps}` (stage 0's
 `health.js`), `countingDB(DB) → {DB, used}` (stage 0's `_lib/d1count.js`, test only). Produces:
 ```js
-waitingStats(DB) → Promise<{waiting: number, oldestAt: Date|null, newestAt: Date|null, paused: boolean}>
-  // one statement: the counts plus (SELECT value FROM settings WHERE key='replies:paused') = '1'
+waitingStats(DB, now = new Date()) → Promise<{waiting: number, oldestAt: Date|null, newestAt: Date|null, paused: boolean,
+  failed: number, failedPlaceId: string|null, failedError: string|null}>
+  // one statement: the counts (inbound needs_reply mail of a prospect Claude answers: CLAUDE_ANSWERS) plus
+  // (SELECT value FROM settings WHERE key='replies:paused') = '1' and the replies that didn't send in the 7 days to now
 runReplyFire(ctx: {DB, env, now, fetchImpl?}) → Promise<string>   // "fired (2 waiting)" | "skipped: <why>"
 STEPS entry {name: "reply_fire", everyMinutes: 0, run: runReplyFire} at the position-2 marker (overview §8)
-registerLight(async (DB, env, now) => replyLight({...await waitingStats(DB), now}))   // at module load; 1 statement
+registerLight(async (DB, env, now) => replyLight({...await waitingStats(DB, now), now}))   // at module load; 1 statement
 ```
 The light is one D1 statement, as stage 0 caps every registered light (health runs in its own
 `/api/tick?reason=health` invocation, 01 Tasks 16–17).
@@ -867,7 +912,10 @@ liveCalls(DB, now) → Promise<Row[]>                             // offered (no
 holdSlot(DB, {place_id, slot_at: Date, now}) → Promise<{ok, call?, reason?}>
 confirmCall(DB, {place_id, slot_at: Date, phone, now, byNik = false}) → Promise<{ok, call?, reason?, warning?}>
 updateCall(DB, id, action: "cancel"|"done"|"no_show"|"ordering"|"lost", {note = "", message = "", now}) → Promise<{ok, reason?}>
+cancelOpenCalls(DB, place_id, note, now) → Promise<number>     // every offered/confirmed call ahead → updateCall cancel
 ```
+A confirmed call's `created_at` is when it was booked: when their own offered row becomes the booking, `confirmCall`
+sets `created_at` (and `updated_at`) to now (file 11 counts "calls booked" by it).
 `confirmCall` writes `call` Todo (`call:<id>`, due the slot, link `/#/call/<id>`, title `callTodoTitle`) and fires
 `call_confirmed`. Nik's (`byNik`) calls skip `isSlot` and return `warning: "You already have a call that day."` instead
 of refusing a taken day. `updateCall`: `cancel` → `cancelled` + `call_cancelled`; `no_show` → `no_show` +
@@ -971,6 +1019,9 @@ from them: reply to <id>.` → stage `needs_nik` 409 `Nik is handling this threa
 `INTENTS` or in `ESCALATE_INTENTS` 422 `Use /api/agent/escalate for angry, legal, unclear or other.` → body missing when
 required 422 → guard 422 `{error: "Reply refused", reasons}` → slot day not named 422 → `canHold` 422 (reason + `Offer
 <next free label> instead.`) → `proposes_time` without `asked_time` 422 `Say what time they asked for in asked_time.`
+→ `proposes_time` whose body lacks `callTimeDue(send_at).promise` 422 (see Calls). A client's or an opted-out thread
+is 409 after its waiting mail is handed to Nik (`handOffWaiting`); a guard 422 when the weekend deal starts or ends
+before `send_at` also carries `send_at` and `offer`.
 On success one `DB.batch`: queue the reply (drill: `status 'cancelled'`, `error 'drill: not sent'`), mark waiting
 messages up to `message_id` handled with `intent`, apply `intentEffects`, then call/todo writes.
 
@@ -1030,6 +1081,7 @@ messages up to `message_id` handled with `intent`, apply `intentEffects`, then c
 ```js
 escalateMessage(DB, {message_id, intent, reason, draft, now}) → Promise<{status, body}>   // 404/409/422/200
 sendAsNik(DB, {message_id, body, now}) → Promise<{status, body}>                           // any inbound message
+  // stores body + "\n\n" + signature(business:sender_name), like every reply
 dismissTodo(DB, {todo_id, now}) → Promise<{status, body}>
 ```
 `sendAsNik` is also what file 11's `POST /api/todo/:id/send` calls (message id taken from the Todo's
@@ -1299,10 +1351,12 @@ Then run the Part A "Perfect when" live checks 2–8 with Nik.
 **Produced here (other stages use):**
 - `_lib/offer.js` (stage 0's module): one added export, `offerFacts(at, {chatbot, reviews})` (pounds, built from `PACKAGES`/`offerFor`/`GUARANTEE`); tests in `offer-facts.test.mjs`.
 - `_lib/calls.js`: `CALL_SLOTS`, `OFFER_HOLD_HOURS`, `nextFreeSlots`, `isSlot`, `slotLabel`, `offerExpired`, `takenFrom`, `canHold`, `callTimeDue`, `callTodoTitle`.
-- `_lib/calls-db.js`: `callsFor`, `liveCalls`, `holdSlot`, `confirmCall`, `updateCall`, `runCallsStep` (tick step 9, `calls`).
+- `_lib/calls-db.js`: `callsFor`, `liveCalls`, `holdSlot`, `confirmCall`, `updateCall`, `cancelOpenCalls` (used by
+  `recordReply` and stage 0's inbound opt_out branch), `runCallsStep` (tick step 9, `calls`). A confirmed call's
+  `created_at` is when it was booked (file 11's "calls booked").
 - `_lib/replyGuard.js`: `REPLY_HOSTS`, `replyGuard(body, {offer, hosts, slug, signName})`.
 - `_lib/replies.js`: `REPLY_HOURS`, `INTENTS`, `ESCALATE_INTENTS`, `intentEffects`, `sendTime`, `shouldFireReply`, `replyLight`, `stripQuoted`, `reSubject`, `signature`, `buildReply`, `escalationTitle`, `medianReplyMinutes`.
-- `_lib/replies-db.js`: `REOPEN_REASONS`, `onHumanInbound` (fires `reopen`/`inbound_human` through stage 0's `applyStageEvent`; sets `messages.client_id` for `won` prospects), `waitingStats`, `runReplyFire` (tick step 2), `buildInbox`, `seedVoice`, `recordReply`, `escalateMessage`, `sendAsNik` (also used by file 11's `POST /api/todo/:id/send`), `dismissTodo`.
+- `_lib/replies-db.js`: `REOPEN_REASONS`, `onHumanInbound` (fires `reopen`/`inbound_human` through stage 0's `applyStageEvent`; sets `messages.client_id` for `won` prospects), `waitingStats`, `runReplyFire` (tick step 2), `buildInbox`, `seedVoice`, `recordReply`, `escalateMessage`, `sendAsNik` (also used by file 11's `POST /api/todo/:id/send`; the stored body is Nik's text + `"\n\n"` + `signature(business:sender_name)`), `dismissTodo`, `handOffWaiting(DB, place_id, now) → number` (mail still waiting for Claude in a thread that became `won` or `lost` for opt_out/bounce goes to Nik: `needs_reply = 0`, `client-mail:`/`optout-mail:` Todo; stage 0's inbound opt_out/bounce branches and stage 9's `paid` step call it).
 - `messages.intent` on inbound messages (for KPIs: replies by intent); replies by `author` (`claude` vs `nik`) for "Nik's emails vs Claude's".
 - `lost_reason` values written here: `not_now`, `not_interested`, `opt_out`, `call` (overview vocabulary).
 - Todo dedupe keys: `escalation:<message_id>`, `client-mail:<message_id>`, `optout-mail:<message_id>`, `call_time:<message_id>`, `call:<call_id>`, `calls-day:<YYYY-MM-DD>`, `call-outcome:<call_id>`, `checkback:<place_id>` (kind `pick`).
@@ -1310,6 +1364,16 @@ Then run the Part A "Perfect when" live checks 2–8 with Nik.
 - Pages/links for the Todo board (file 11, which owns routing once it ships and keeps these in `routeFor`): `#/replies`, `#/replies/<place_id>` (escalation and call_time Todos), `#/call/<id>` (call Todos); `renderCallBox(el, place_id)` from `public/js/call.js`, mounted in the drawer's `#d-call`.
 - Health light `{name: "replies", level, detail, fix}`, registered with `registerLight`.
 - Test data: `place_id` prefixes `drill:` and `test:`; KPIs (file 11) and the shortlist must exclude them.
+- **Per-lead personal data for file 11's 12-month purge.** File 11's purge must delete these with that lead's
+  messages (`DELETE FROM calls WHERE place_id IN (…)` and `DELETE FROM todos WHERE place_id IN (…)`, in the same
+  batch):
+  - `calls` rows: their phone and Nik's call note.
+  - Todos with that `place_id` (`escalation`, `call_time`, `client-mail`, `optout-mail`, `checkback`, `call`,
+    `call-outcome`). Their `detail` holds "They wrote:" plus up to 600 characters of their email, `draft` holds
+    Claude's reply, and the call Todo `title` holds their name and phone.
+  - The day lists `calls-day:<YYYY-MM-DD>` have a NULL `place_id` but their title names each lead called that day
+    ("Today's calls: 11:00 Mark (Diamond Kickboxing)"), so the same statement also deletes those created before the
+    12-month cutoff. Every other Todo with a NULL `place_id` (`setup`, `kpi`, `health`, …) is never touched.
 
 **Needed from other stages / the overview:**
 - **Overview §4 / stage 0 schema:** `messages.intent TEXT` and `calls.note TEXT NOT NULL DEFAULT ''` (Task 1 only checks them).
@@ -1325,7 +1389,11 @@ Then run the Part A "Perfect when" live checks 2–8 with Nik.
 - **Stage 3:** `callScript(lead, {sender, offer, guarantee, today})`; this stage passes `offer = {...offerFor(date), guarantee: GUARANTEE}` and `guarantee: offer.guarantee` and `lead.owner_first`; `drawerHtml` renders `<div id="d-call"></div>`, and `leads.js` binds the drawer (Task 16 mounts the call box there).
 - **Stage 4:** a lead can have several `demos` rows; the current one is the newest by `created_at DESC, slug DESC` (`latestDemo(DB, place_id)` from `_lib/demo-db.js`); `demoLink(slug)`, `DEMO_BASE`; order page `${DEMO_BASE}/d/<slug>/order`.
 - **Stage 5–6:** `stopFollowups(DB, placeId, "replied", now)` (called by `onHumanInbound`); `businessName` from `_lib/mail/rules.js`; the Voice page and `GET /api/voice` (`api/voice/index.js`) with `has_price_reply`, `POST /api/voice/examples`, `DELETE /api/voice/examples/:id`.
-- **Stage 9:** settings `offer:chatbot_live` / `offer:review_booster_live` (`'1'` = on) for `offerFacts`'s `included` lines.
+- **Stage 9:** settings `offer:chatbot_live` / `offer:review_booster_live` (`'1'` = on) for `offerFacts`'s `included` lines;
+  the fulfilment's prospect step calls `handOffWaiting(DB, place_id, now)` after the `paid` event (08-order-pay.md
+  Part A step 6), so mail that waited for Claude when they paid goes to Nik.
+- **Stage 0 `_lib/mail/inbound-db.js` (edited by this stage):** the `opt_out` branch calls `cancelOpenCalls` (before the
+  `opt_out` event) and `handOffWaiting` (after it); the `bounce` branch calls `handOffWaiting` after its event.
 
 ## Questions for Nik
 

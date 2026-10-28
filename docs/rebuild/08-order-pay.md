@@ -176,7 +176,9 @@ Ignored unless `payment_status` is `paid` or `no_payment_required` and `metadata
 6. Prospect: `applyStageEvent(DB, place_id, "paid", now, {email, greet_name: null})` (stage 0's `prospects.js`;
    `paid` goes from any stage to `won`, so a `lost` prospect becomes `won`). No prospect row → the `{email,
    greet_name}` option inserts one in `won` with the checkout email. Then `next_followup_at = NULL` and queued
-   `followup` messages for the lead → `cancelled`.
+   `followup` messages for the lead → `cancelled`, and `await handOffWaiting(DB, place_id, now)` (stage 7's
+   `_lib/replies-db.js`): any of their mail still waiting for Claude's reply is handed to Nik (`needs_reply = 0`,
+   `client_id` set, a `client-mail:<message_id>` Todo), because Claude never answers a client.
 7. Suppression: delete the `suppression` row (kind `email`) for the lower-cased checkout email, so a past "no
    thanks" can't block client mail.
 8. `closeLeadTodos(DB, place_id, {exceptKinds: ["build", "payment"]})`, then the `build` Todo.
@@ -761,14 +763,16 @@ fulfilCheckout(DB, session, {now}) → Promise<{status: "ok"|"ignored", reason?,
     `nextStage("lost", "paid") === "won"`).
   - `opt-out lifted on payment`: `suppress(DB, "mark@smithroofing.co.uk", "email", "opt_out", now)` before the call →
     afterwards `isSuppressed(DB, "mark@smithroofing.co.uk") === null` and the welcome `messages` row is `queued`.
+  - `waiting mail handed to Nik`: an inbound `messages` row `m1` for `p1` with `needs_reply = 1` before the call →
+    afterwards `needs_reply = 0`, its `client_id` is the new client's id, and an open todo `client-mail:m1` exists.
   - `paid twice`: an existing client `cl_other` for `p1` → todo `payment:double:p1:cs_1`.
   - `no mailbox`: no mailboxes → no `messages` row; todo `setup:welcome:cl_cs_1`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/stripe-fulfil.test.mjs` → `fulfilCheckout is not a function`.
 - [ ] **Step 3: Implement `fulfilCheckout(DB, session, {now})` in `_lib/stripe-events.js`** — the 9 steps of
   Part A in that order: one `DB.batch` for clients/client_links/payments (payments `ON CONFLICT(id) DO UPDATE SET name = excluded.name`),
   then the onboarding `INSERT OR IGNORE … .run()` whose `meta.changes === 1` sets `created`; the prospect step
-  (`applyStageEvent(DB, place_id, "paid", now, {email, greet_name: null})`, then clear `next_followup_at` and
-  cancel queued follow-ups) and `DELETE FROM suppression WHERE kind = 'email' AND value = ?` (lower-cased checkout
+  (`applyStageEvent(DB, place_id, "paid", now, {email, greet_name: null})`, then clear `next_followup_at`,
+  cancel queued follow-ups and `handOffWaiting(DB, place_id, now)`) and `DELETE FROM suppression WHERE kind = 'email' AND value = ?` (lower-cased checkout
   email) run before the welcome email is queued; email + `ordered` only when `created`; prospect/suppression/todos
   always (idempotent). Token: 24 bytes from `crypto.getRandomValues`, base64url without padding.
 - [ ] **Step 4: Run tests to verify they pass** — same command → PASS.
@@ -1001,7 +1005,9 @@ Then run the live checks 3–12 of "Perfect when" in Stripe test mode before sta
   `EVENT_KINDS` including `order_page`, `order_click`, `ordered`, and the expired-preview renderer. The demo's
   "Order this site" button links to `/d/:slug/order`.
 - Stage 7: mail from `won` prospects or known client addresses goes to Nik, never a sales reply; `onHumanInbound`
-  sets `messages.client_id` for `won` prospects.
+  sets `messages.client_id` for `won` prospects. `handOffWaiting(DB, place_id, now) → number` (`_lib/replies-db.js`)
+  hands mail that was already waiting for Claude when they paid to Nik (`client-mail:<message_id>` Todo); the
+  fulfilment's prospect step (Part A step 6) calls it after `paid`.
 
 ## Questions for Nik
 
