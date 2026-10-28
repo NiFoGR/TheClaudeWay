@@ -34,7 +34,8 @@ const hashFor = (query) => {
 export async function leadsPage(params) {
   clearTimeout(searchTimer);
   state.leadsQuery = parseLeadsQuery(params);
-  view.innerHTML = `${pageHead("Leads", "Pick today's first emails. Best first.")}<div id="leads-body"><p class="muted">Loading your leads…</p></div>`;
+  // The Demo page has no nav item (Part A "Nav"): it is linked from here and from Setup, always.
+  view.innerHTML = `${pageHead("Leads", "Pick today's first emails. Best first.", `<a class="btn secondary sm" href="#/demo">Demo sites</a>`)}<div id="leads-body"><p class="muted">Loading your leads…</p></div>`;
   await loadList();
 }
 

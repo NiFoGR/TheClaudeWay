@@ -456,6 +456,7 @@ async function render() {
     : (setup.checks || []).every((c) => c.ok) ? "Everything is set up." : "Fix anything marked red, then refresh this page.";
   const s = current;
   view.innerHTML = `${pageHead("Setup", esc(sub))}
+    <p class="hint"><a href="#/demo">Demo page</a>: approve each look and see every demo site and its views.</p>
     ${healthHtml(health)}
     ${connectionsHtml(setup.checks, setup.note)}
     ${s ? [mailboxesHtml(s, now, notes), dnsSections(s, now, notes), receivingHtml(s.receiving, now), claudeHtml(s, now, notes), businessHtml(s.business, notes)].join("")

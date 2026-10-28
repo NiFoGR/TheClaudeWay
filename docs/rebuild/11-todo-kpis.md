@@ -92,7 +92,9 @@ What each row shows. All text comes from the todo row, enriched by the API.
   `dedupe`, so the same item is never re-added.
 - **Send:** `POST /api/todo/:id/send {body}`. It sends through stage 7's `sendAsNik` (the inbound message id comes
   from the todo's `dedupe`). On success the toast says "Sent. It's in the email thread." and the row disappears (the
-  todo is done). On failure the toast shows stage 7's plain-English error.
+  todo is done). On failure the toast shows stage 7's plain-English error. A todo that's already done or dismissed
+  (Nik answered elsewhere while this page was stale) is refused with 409 "That's already been dealt with, so nothing
+  was sent. Refresh the page." and nothing is sent.
 - Empty: "Nothing for you right now. New things show up here the moment they need you."
 
 ### 3. Pipeline
@@ -854,8 +856,11 @@ JS, `style.css`.
   - **Due:** `counts.due = overdue + today`; `counts.red` = the number of red lights.
   - **PATCH:** sets `status`, `done_at = iso(now)`. A missing id gives 404 with the message above.
   - **Items:** each gets `can_send` (Interfaces above).
-  - **Send:** allowed only for kinds `escalation`/`call_time` whose `messageIdFromDedupe(dedupe)` gives an id, else
-    400 "Only replies can be sent from here.". Call `sendAsNik(DB, {message_id, body, now})` and return its `status`
+  - **Send:** a todo whose `status` isn't `open` (done or dismissed, e.g. Nik already answered on the Replies page or
+    his phone and this page is stale) gives 409 "That's already been dealt with, so nothing was sent. Refresh the
+    page." before anything else, and nothing is sent (`sendAsNik` sends to any inbound message, as the thread's
+    "Reply as me"). Otherwise allowed only for kinds `escalation`/`call_time` whose `messageIdFromDedupe(dedupe)` gives
+    an id, else 400 "Only replies can be sent from here.". Call `sendAsNik(DB, {message_id, body, now})` and return its `status`
     and `body` as given (stage 7 checks the body and the mailbox, and closes `escalation:<id>`/`call_time:<id>`).
     On 200, also set this todo `done` if it's still open.
 - [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/todo-api.test.mjs` passes (7 tests).
@@ -927,8 +932,12 @@ JS, `style.css`.
       grades: {[place_id]: grade},
       research: [{place_id, status, best_email, too_big, researched_at, notes}],
       escalations: [{place_id, created_at}],
+      calibration?: [{grade, first_ms, viewed, replied, won}],
     }
     ```
+    `calibration` (from `loadKpiRows`, worked out in SQL over all time, one row per graded lead with a sent first
+    email) replaces `grades` for grade calibration when present: `loadKpiRows` reads only the weeks shown (Task 6), so
+    the raw rows can't give "counted up to now". Without it, calibration comes from the rows and `grades`.
   - Output shape:
     ```
     Numbers = {
@@ -999,11 +1008,20 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
   - Tasks 4–5;
   - `requireAgent(request, env, DB)`, `addTodo`, `ukToUtc`, `addUkDays` (stage 0); `iso` from `_lib/util.js`.
 - Produces:
-  - `loadKpiRows(DB) → Promise<rows>`. It reads all lead-linked `messages` (including `intent`, a stage 0 column
-    set by stage 7), `demo_events` views, `calls`, clients with a `place_id` as orders, `research` grades and rows,
-    and `escalation` todos whose dedupe starts `escalation:` but not `escalation:unknown:` or `escalation:client:`.
-    Every table skips
-    `place_id LIKE 'drill:%' OR place_id LIKE 'test:%'`.
+  - `loadKpiRows(DB, {bodies = true, from = null, bodiesFrom = null}) → Promise<rows>`. It reads lead-linked
+    `messages` (including `intent`, a stage 0 column set by stage 7), `demo_events` views, `calls`, clients with a
+    `place_id` as orders, `research` rows, `escalation` todos whose dedupe starts `escalation:` but not
+    `escalation:unknown:` or `escalation:client:`, and `calibration` (grade calibration in one SQL query over all
+    time: per graded lead with a sent first email, `first_ms` and whether it ever viewed, sent a human reply or
+    ordered). Every table skips `place_id LIKE 'drill:%' OR place_id LIKE 'test:%'`.
+    - `from` (a UK Monday, `kpiFrom(week)` = the start of the oldest of the 4 trend weeks) bounds what's read, so the
+      cost follows the weeks shown, not the whole history (the free plan's 10 ms of CPU): sent mail, views, calls,
+      orders (`paid_on`) and escalations from the UK day before `from`; inbound from 8 days before (reply speed looks
+      back to the human mail before a Claude reply); research rows researched from then or with a `[Nik ` line. The
+      shown weeks' numbers are the same as reading everything (tested on a year of sending).
+    - `bodiesFrom` (the reviewed week's Monday, agent route only) reads sample bodies only for that week's sent mail
+      and the inbound from 8 days before it.
+  - `kpiFrom(week) → "YYYY-MM-DD"`; `kpiPayload`, `saveAnalysis` and `GET /api/agent/kpis` load with it.
   - `kpiPayload(DB, week, now) → Promise<{week, label, start, prev, next, still_counting, numbers, trend, analysis:
     {text, created_at}|null}>`
   - `saveSnapshot(DB, week, numbers, now)`
@@ -1060,7 +1078,9 @@ No health light here: stage 0's `routine:weekly-kpis` light (192 h cadence) alre
     cut to 300 characters.
   - `still_counting = now < ukToUtc(addUkDays(start, 14), "00:00")`.
   - Suggestions are the lines matching `/^\s*\d+[.)]\s/` after the `## Suggestions` heading, up to the next `## `.
-  - `anonymise` copies the email/phone regexes from `_lib/outreach-report.js`.
+  - `anonymise` copies the email/phone regexes from `_lib/outreach-report.js`. The email pattern's quantifiers are
+    capped at the RFC limits, `/[\w.+-]{1,64}@[\w.-]{1,255}/g` (in both files): uncapped, a prospect's long unbroken
+    word costs quadratic time (2,400 letters ≈ 7 ms of the 10 ms budget).
 - [ ] **Step 4: Run tests to verify they pass.** `node --test control-room/tests/kpis-api.test.mjs` passes (3
   tests).
 - [ ] **Step 5: Commit.** `git add control-room/functions/_lib/kpis.js control-room/functions/_lib/kpis-db.js

@@ -105,7 +105,7 @@ def sitrep(d1, now: datetime | None = None) -> str:
     stats = {
         "leads": n("SELECT COUNT(*) AS n FROM leads WHERE excluded = 0"),
         "new_leads": n("SELECT COUNT(*) AS n FROM leads WHERE first_seen_at > ? AND excluded = 0", [day]),
-        # Claude's research lives in its own table (stage 2), read as api/today.js does: leads.audit.ai_research is
+        # Claude's research lives in its own table (stage 2), read as the Todo and Health research light do: leads.audit.ai_research is
         # no longer written, so reading it would say "researched: 0" and "Claude isn't researching" for ever.
         "researched": n("SELECT COUNT(*) AS n FROM research WHERE status = 'done' AND researched_at > ?", [day]),
         "waiting_claude": n("SELECT COUNT(*) AS n FROM research WHERE status = 'queued'"),
@@ -153,13 +153,15 @@ def sitrep(d1, now: datetime | None = None) -> str:
             done = json.loads(rows[0]["value"]) or {}
         except (ValueError, TypeError):
             done = {}
-    if not done.get("mailboxes"):
+    # A cold mailbox on Setup is the real answer (Home's tick and api/today.js are gone); the old flag is a fallback.
+    has_cold = n("SELECT COUNT(*) AS n FROM mailboxes WHERE role = 'cold'") > 0
+    if not (has_cold or done.get("mailboxes")):
         needs.append("**#1 priority: buy the mailboxes** (Namecheap Private Email on aetoswebsites.com). Nothing can be "
-                     "emailed until they exist, so no money comes in. Tick it on Home when done; Claude then connects them.")
+                     "emailed until they exist, so no money comes in. Add them on Setup → Mailboxes when bought.")
     last_ai = _one(d1, "SELECT MAX(researched_at) AS at FROM research", key="at")
     if stats["waiting_claude"] and (not last_ai or last_ai < _iso(now - timedelta(days=2))):
         needs.append("**Claude isn't researching leads** (last run: " + (str(last_ai)[:10] if last_ai else "never")
-                     + "). See 'What to do' on the Control Room's Home page.")
+                     + "). See the Todo page and Setup → Health (research light).")
     if stats["picks"]:  # a fact, no page: the Outreach page is gone until sending is rebuilt
         needs.append(f"**{stats['picks']} lead{'s' if stats['picks'] != 1 else ''} ready for outreach** "
                      "(sending is being rebuilt; nothing to approve yet)")
@@ -171,5 +173,5 @@ def sitrep(d1, now: datetime | None = None) -> str:
           f"- **Tomorrow's search:** " + (f"paused: {stats['picks']} leads are ready, enough for about {stats['picks'] // 12} days of emails"
                                           if paused and t.get("on") else f"{t['trade']} in {upcoming}")
           + ("" if t.get("on") else " (automatic search is OFF: Lead Scraper page)"),
-          "- Full to-do list: 'What to do' on the Control Room's Home page.", ""]
+          "- Full to-do list: the Control Room's Todo page.", ""]
     return "\n".join(L)

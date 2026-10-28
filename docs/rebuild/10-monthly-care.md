@@ -1271,7 +1271,8 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
 `client/<id>` and `client/settings`; no `NAV` item), `control-room/tests/nav.test.mjs`, `control-room/public/js/app.js`
 (page `client` → `clientRoute`), `control-room/public/style.css`, `control-room/functions/_lib/care.js` (add
 `careRankText`), file 11's `control-room/functions/_lib/board.js` (`clientCards`) and
-`control-room/functions/_lib/todo.js` (`loadBoard`), `control-room/tests/board.test.mjs`,
+`control-room/functions/_lib/todo.js` (`loadBoard`; its `CLIENTS_SQL` CTE is `next_task`, so the table `care`
+can be LEFT JOINed in the same statement), `control-room/tests/board.test.mjs`,
 `control-room/tests/todo-api.test.mjs`; Test `control-room/tests/care-ui.test.mjs`.
 
 **Interfaces:**

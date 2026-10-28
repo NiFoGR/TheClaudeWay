@@ -391,8 +391,8 @@ const decodePart = (s) => { try { return decodeURIComponent(s); } catch { return
 
 /**
  * The hash route → {page, params, leadId}. `page` is the first segment for any route ("home" when there's none) and
- * "leads" for #/lead/<place_id>; it holds no page list, so routes added by later stages reach app.js unchanged (app.js
- * sends an unknown page home). `params` is the query after "?"; `leadId` the decoded place_id of #/lead/<id>, else null.
+ * "leads" for #/lead/<place_id>; it holds no page list. app.js now routes with nav.js routeFor (an unknown page opens
+ * Todo); this stays for its own tests. `params` is the query after "?"; `leadId` the decoded place_id of #/lead/<id>, else null.
  */
 export function parseRoute(hash) {
   const raw = String(hash ?? "").replace(/^#\/?/, "");

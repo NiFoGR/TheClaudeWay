@@ -4,7 +4,7 @@ import { replyClass } from "./outreach-db.js";
 
 const pct = (a, b) => (b ? `${((100 * a) / b).toFixed(1)}%` : "–");
 // strip anything identifying from reply text before Claude sees it
-const anonymise = (t) => String(t || "").replace(/[\w.+-]+@[\w.-]+/g, "[email]").replace(/(\+44|0)[\d\s]{9,13}/g, "[phone]").slice(0, 600);
+const anonymise = (t) => String(t || "").replace(/[\w.+-]{1,64}@[\w.-]{1,255}/g, "[email]").replace(/(\+44|0)[\d\s]{9,13}/g, "[phone]").slice(0, 600);
 
 export function report(data, breakdown) {
   const name = (id) => data.versions.find((v) => v.id === id)?.name || id;

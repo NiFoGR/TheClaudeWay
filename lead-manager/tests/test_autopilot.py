@@ -55,7 +55,8 @@ def test_sitrep_never_points_at_the_removed_outreach_or_roadmap_pages():
     md = autopilot.sitrep(d1, datetime(2026, 10, 19, 7, 0, tzinfo=timezone.utc))
     assert "**1 lead ready for outreach**" in md
     assert "Outreach page" not in md and "Roadmap" not in md
-    assert "Full to-do list: 'What to do' on the Control Room's Home page." in md
+    # Stage 11 deleted Home and 'What to do' (#/home now opens Todo), so the SITREP names the Todo page.
+    assert "Home" not in md and "What to do" not in md and "Todo page" in md
 
 
 def test_sitrep_says_a_search_is_still_running():
@@ -82,6 +83,29 @@ def test_sitrep_puts_the_mailboxes_first_until_ticked():
     assert "#1 priority: buy the mailboxes" in md
     d1.query("INSERT INTO settings (key, value) VALUES ('setup_done', ?)", [json.dumps({"mailboxes": True})])
     assert "buy the mailboxes" not in autopilot.sitrep(d1, datetime(2026, 10, 19, 7, 0, tzinfo=timezone.utc))
+
+
+def test_sitrep_knows_the_mailboxes_exist_from_the_mailboxes_table():
+    # Stage 11 deleted Home's tick (api/today.js was the only writer of setup_done), so a cold mailbox added on
+    # Setup is what clears the line; a system-only mailbox can't send cold email, so it still shows.
+    now = datetime(2026, 10, 19, 7, 0, tzinfo=timezone.utc)
+    d1 = FakeD1()
+    d1.query("INSERT INTO mailboxes (id, address, display_name, role, started_on, created_at) "
+             "VALUES ('m0', 'hello@aetoswebsites.com', 'Nik', 'system', '2026-10-01', 'x')")
+    md = autopilot.sitrep(d1, now)
+    assert "#1 priority: buy the mailboxes" in md
+    assert "Add them on Setup → Mailboxes when bought." in md and "Tick it on Home" not in md
+    d1.query("INSERT INTO mailboxes (id, address, display_name, role, started_on, created_at) "
+             "VALUES ('m1', 'nik@aetoswebsites.com', 'Nik', 'cold', '2026-10-01', 'x')")
+    assert "buy the mailboxes" not in autopilot.sitrep(d1, now)
+
+
+def test_sitrep_sends_a_stalled_research_queue_to_todo_and_health():
+    d1 = FakeD1()
+    d1.query("INSERT INTO research (place_id, status, queued_at) VALUES ('p1', 'queued', '2026-10-10T06:00:00Z')")
+    md = autopilot.sitrep(d1, datetime(2026, 10, 19, 7, 0, tzinfo=timezone.utc))
+    assert "**Claude isn't researching leads** (last run: never). See the Todo page and Setup → Health (research light)." in md
+    assert "Home" not in md
 
 
 def _research(d1, place_id, status, researched_at):
