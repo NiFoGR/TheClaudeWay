@@ -633,8 +633,8 @@ test("a reply read on a tick that doesn't run the followups step: their follow-u
   // Three leads emailed on Thu 22 Oct, each with follow-up 1 booked for Fri 23 Oct 08:15Z. On that tick the followups
   // step queues all three and the send step sends two (2 a tick). The third lead replies a minute later. The relay's
   // inbound tick runs the inbound step (lead → replied) and the send step, but not the followups step, which ran a
-  // minute ago (every 5 minutes). Their waiting follow-up must not go: the outbox holds it, and the next followups run
-  // cancels it.
+  // minute ago (every 5 minutes). Their waiting follow-up must not go: stage 7's onHumanInbound (in the inbound step)
+  // cancels it at once, and the outbox would hold it if it hadn't.
   const DB = await world();
   const leads = [["p1", "owner@p1.example.com"], ["p2", "owner@p2.example.com"], ["p3", "owner@p3.example.com"]];
   for (const [id, email] of leads) await readyLead(DB, id, { name: `Oak Tree ${id} Landscapes`, email });
@@ -656,17 +656,20 @@ test("a reply read on a tick that doesn't run the followups step: their follow-u
   const who = left[0].place_id;
   const address = leads.find(([id]) => id === who)[1];
 
-  // A minute later their reply comes in: the inbound tick's inbound step reads it, then its send step runs.
+  // A minute later their reply comes in: the inbound tick's inbound step reads it, then its send step runs. Stage 7's
+  // hook (onHumanInbound) stops their follow-ups in the inbound step itself, so the queued one is already cancelled.
   const t2 = new Date(t1.getTime() + MIN);
   const thread = firsts.filter((s) => s.place_id === who);
   assert.deepEqual(await receive(DB, replyTo("gmail-reply.eml", thread, `Owner <${address}>`), t2), { human: 1 });
   assert.equal((await getProspect(DB, who)).stage, "replied");
-  assert.deepEqual(await dispatchDue(DB, {}, t2, { limit: 2, send }), { sent: 0, failed: 0, held: 1 });
+  assert.deepEqual(await all(DB, "SELECT status, error FROM messages WHERE place_id = ? AND kind = 'followup'", who),
+    [{ status: "cancelled", error: "Stopped: replied" }]);
+  assert.deepEqual(await dispatchDue(DB, {}, t2, { limit: 2, send }), { sent: 0, failed: 0, held: 0 });
   assert.ok(!out.includes(address), `a follow-up went to ${address} after they replied`);
 
-  // The next cron tick's followups step cancels it; nothing more goes.
+  // The next cron tick's followups step finds nothing left to stop; nothing more goes.
   const t3 = new Date(t1.getTime() + 5 * MIN);
-  assert.match(await followupsStep({ DB, env: {}, now: t3 }, { demoReady: okDemo }), /stopped 1/);
+  assert.doesNotMatch(await followupsStep({ DB, env: {}, now: t3 }, { demoReady: okDemo }), /queued [1-9]/);
   assert.deepEqual(await all(DB, "SELECT step, status FROM messages WHERE place_id = ? AND kind = 'followup'", who),
     [{ step: 1, status: "cancelled" }]);
   assert.deepEqual(await dispatchDue(DB, {}, t3, { limit: 2, send }), { sent: 0, failed: 0, held: 0 });

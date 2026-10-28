@@ -6,6 +6,8 @@
 // Inbound text is untrusted: it's stored as plain text, and whatever shows it escapes it.
 import { countingDB } from "../d1count.js";
 import { applyStageEvent, suppress } from "../prospects.js";
+import { cancelOpenCalls } from "../calls-db.js";
+import { handOffWaiting, onHumanInbound } from "../replies-db.js";
 import { getSetting } from "../settings.js";
 import { addTodo } from "../todo.js";
 import { bounceInfo, classifyInbound, extractText, parseHeaders } from "./inbound.js";
@@ -19,6 +21,8 @@ const STEP_MAX_QUERIES = 30; // the inbound step's share of the tick's 50
 // email or many small ones. The first row read always starts, so the queue always moves.
 const STEP_MAX_RAW = 100000;
 const DETAIL_CHARS = 300; // body characters in an escalation todo
+// The note on a call their opt-out cancels (the same as stage 7's recordReply writes for an opt_out reply).
+const OPT_OUT_CALL_NOTE = "Cancelled by their email: they asked not to be emailed again.";
 const ERROR_CHARS = 300;
 const DAY_MS = 24 * 60 * 60 * 1000;
 // An address suppress() takes (prospects.js's own rule). Anything else (a bounce naming "nobody", a From of just
@@ -229,7 +233,11 @@ async function storeAndApply(DB, row, { headers, text, cls: readAs, from, report
     const bounced = report.recipient ?? link.thread_to ?? null;
     // Even for an email we can't find, the address that bounced is never written to again.
     if (bounced && ADDRESS.test(bounced)) await suppress(DB, bounced, "email", "bounce", at);
-    if (prospect) await applyStageEvent(DB, prospect.place_id, "bounce", at); // a won prospect stays won
+    if (prospect) {
+      await applyStageEvent(DB, prospect.place_id, "bounce", at); // a won prospect stays won
+      // Stage 7: their mail still waiting for Claude is Nik's now (Claude never writes to a bounced address).
+      await handOffWaiting(DB, prospect.place_id, now);
+    }
     // Only a bounce of mail we really sent counts towards a pause: backscatter for forged mail links to no mailbox.
     if (msg.mailbox_id) await pauseOnBounces(DB, msg.mailbox_id, bounced, now);
   } else if (cls === "opt_out") {
@@ -239,7 +247,12 @@ async function storeAndApply(DB, row, { headers, text, cls: readAs, from, report
       // is never written to again either (the privacy notice's do-not-contact promise).
       const wroteTo = lowerAddress(link.prospect_email);
       if (wroteTo && wroteTo !== from && ADDRESS.test(wroteTo)) await suppress(DB, wroteTo, "email", "opt_out", at);
+      // Stage 8: a call they had booked or been offered is off, so Nik never rings someone who asked not to be
+      // contacted (call_booked → replied, then opt_out → lost).
+      await cancelOpenCalls(DB, prospect.place_id, OPT_OUT_CALL_NOTE, now);
       await applyStageEvent(DB, prospect.place_id, "opt_out", at);
+      // Stage 7: their mail still waiting for Claude ("Who is this?", then "No thanks") is Nik's now.
+      await handOffWaiting(DB, prospect.place_id, now);
     }
   } else if (cls === "human") {
     if (outcome === "human") {
@@ -249,12 +262,14 @@ async function storeAndApply(DB, row, { headers, text, cls: readAs, from, report
          WHERE place_id = ? AND (last_inbound_at IS NULL OR last_inbound_at < ?)`,
       ).bind(msg.received_at, at, prospect.place_id, msg.received_at).run();
       await applyStageEvent(DB, prospect.place_id, "inbound_human", at);
-      // Stage 7 hooks in here: `await onHumanInbound(DB, msg, now)`, only for mail linked to a prospect (outcome
-      // "human"; `now` is a Date, `msg` holds the message's columns). Client-only and unknown-sender mail is fully
-      // handled by the escalation:client: and escalation:unknown: todos below: for it onHumanInbound would only return
-      // "unmatched", or (a client writing from another address, whose place_id is a won prospect) file a second,
-      // client-mail todo for the same email. A second try of a cut-off row runs the hook again for the same message,
-      // so like everything above it must be safe to repeat.
+      // Stage 7's hook, only for mail linked to a prospect (outcome "human"; `now` is a Date, `msg` holds the
+      // message's columns): a won prospect's or an opted-out one's email goes to Nik, a lead that said not now is
+      // reopened, and the follow-ups stop. Client-only and unknown-sender mail is fully handled by the
+      // escalation:client: and escalation:unknown: todos below: for it onHumanInbound would only return "unmatched",
+      // or (a client writing from another address, whose place_id is a won prospect) file a second, client-mail todo
+      // for the same email. A second try of a cut-off row runs the hook again for the same message, so like
+      // everything above it is safe to repeat.
+      await onHumanInbound(DB, msg, now);
     } else {
       const kind = outcome === "client" ? "client" : "unknown";
       const subject = `Subject: ${msg.subject ?? "(no subject)"}`;
