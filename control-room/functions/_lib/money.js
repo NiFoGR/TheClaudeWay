@@ -1,9 +1,9 @@
-// Money maths for the Money and Home pages. Pure functions on rows from D1; all amounts in pence.
+// Money maths for the Money page. Pure functions on rows from D1; all amounts in pence.
 //
 // Income  = build fees (on the day paid) + retainers (monthly, starting once the free days end, until cancelled)
 //           + any other money in. Costs = Google API (estimated from logged calls) + costs you add.
 // Forecast months only count what is already committed: active clients, monthly costs, average Google spend.
-import { PACKAGES } from "./offer.js";
+import { formatPounds, PACKAGES } from "./offer.js";
 
 // Google Places API (New) list prices, USD per 1,000 calls, and the free calls each SKU gets every month.
 // SKUs match lead-manager/aetos_leads/usage.py. Check https://developers.google.com/maps/billing-and-pricing/pricing
@@ -18,6 +18,13 @@ export const USD_TO_GBP = 0.75; // approximate; Google bills in your account's c
 
 // Prices live only in offer.js; re-exported here for the modules that already import them from money.js.
 export { PACKAGES } from "./offer.js";
+/** One line under a package's name: "£1,950 + £249/mo, first 60 days free" or "£1,750 one-off, no monthly". */
+export function packageNote(p) {
+  return p.monthly
+    ? `${formatPounds(p.build)} + ${formatPounds(p.monthly)}/mo, first ${p.freeDays} days free`
+    : `${formatPounds(p.build)} one-off, no monthly`;
+}
+
 export const COST_CATEGORIES = ["Mailboxes", "Domains", "Tools & software", "Ads", "Other"];
 export const DEFAULT_GOAL = 500000; // £5,000 a month recurring
 const PAST_MONTHS = 5;
@@ -200,7 +207,8 @@ export async function loadMoney(DB, today = new Date().toISOString().slice(0, 10
                 ORDER BY clients.paid_on DESC, clients.created_at DESC`),
     DB.prepare("SELECT * FROM money ORDER BY on_date DESC, created_at DESC"),
     DB.prepare("SELECT substr(created_at, 1, 7) AS month, sku, SUM(calls) AS calls FROM api_usage GROUP BY month, sku"),
-    DB.prepare("SELECT SUM(status = 'call booked') AS callsBooked, SUM(status = 'replied') AS replied FROM leads WHERE excluded = 0"),
+    // the pipeline is prospects (stage 5 on), never the old leads.status; drill and test rows never count
+    DB.prepare("SELECT SUM(stage = 'call_booked') AS callsBooked, SUM(stage IN ('replied','needs_nik')) AS replied FROM prospects WHERE place_id NOT LIKE 'drill:%' AND place_id NOT LIKE 'test:%'"),
     DB.prepare("SELECT value FROM settings WHERE key = 'mrr_goal_pence'"),
     // name from the client where we know it (an invoice can arrive before the checkout that creates the client)
     DB.prepare(`SELECT payments.*, COALESCE(c.name, payments.name) AS name FROM payments

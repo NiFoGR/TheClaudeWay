@@ -2,7 +2,24 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { addMonths, googleCosts, ledger, summarise, toPence } from "../functions/_lib/money.js";
+import { addMonths, googleCosts, ledger, loadMoney, packageNote, PACKAGES, summarise, toPence } from "../functions/_lib/money.js";
+import { formatPounds, MONTHLY_PENCE } from "../functions/_lib/offer.js";
+import * as offerRoute from "../functions/api/offer.js";
+import { fakeD1 as makeD1 } from "./helpers/fakeD1.mjs";
+
+// 2 prospects call_booked, 1 replied, 1 needs_nik (plus drill/test rows and other stages, which never count).
+async function fakeD1() {
+  const DB = makeD1();
+  const at = "2026-10-20T09:00:00Z";
+  const rows = [
+    ["p1", "call_booked"], ["p2", "call_booked"], ["p3", "replied"], ["p4", "needs_nik"], ["p5", "emailed"], ["p6", "won"],
+    ["drill:r1", "call_booked"], ["test:t1", "replied"], ["test:t2", "needs_nik"],
+  ];
+  await DB.batch(rows.map(([id, stage]) => DB.prepare(
+    "INSERT INTO prospects (place_id, stage, stage_at, email, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).bind(id, stage, at, `${id.replace(":", "-")}@example.com`, at, at)));
+  return DB;
+}
 
 const smith = { id: "a", name: "Smith Roofing", package: "full", build_fee_pence: 195000, monthly_pence: 24900, free_days: 60, paid_on: "2026-07-10" };
 
@@ -60,6 +77,31 @@ test("Money and Setup pages: no payment links, no browser copy of the prices", (
   assert.doesNotMatch(money, /const PACKAGES|build: 1950|build: 1750/);
   assert.match(money, /summary\?\.packages/);
   assert.ok(money.includes("To take an order, send them their order page (their demo → Order this site)."));
+});
+
+test("package notes use offer.js", () => {
+  assert.equal(packageNote(PACKAGES.full), `${formatPounds(PACKAGES.full.build)} + ${formatPounds(MONTHLY_PENCE)}/mo, first 60 days free`);
+  assert.equal(packageNote(PACKAGES.full), "£1,950 + £249/mo, first 60 days free");
+  assert.equal(packageNote(PACKAGES.website), "£1,750 one-off, no monthly");
+});
+
+test("pipeline counts prospects", async () => {
+  const DB = await fakeD1();  // 2 prospects call_booked, 1 replied, 1 needs_nik
+  const { summary } = await loadMoney(DB, "2026-10-22");
+  assert.deepEqual([summary.pipeline.callsBooked, summary.pipeline.replied, summary.pipeline.value], [2, 2, 2 * PACKAGES.full.build]);
+});
+
+test("pipeline on a database with no prospects is all 0, never null", async () => {
+  const { summary } = await loadMoney(makeD1(), "2026-10-22");
+  assert.deepEqual(summary.pipeline, { callsBooked: 0, replied: 0, value: 0, monthlyValue: 0 });
+});
+
+test("the weekend deal's note shows its own build price and free days", () => {
+  assert.equal(packageNote(PACKAGES.weekend), "£1,750 + £249/mo, first 90 days free");
+});
+
+test("/api/offer serves the packages", async () => {
+  assert.deepEqual(await (await offerRoute.onRequestGet({})).json(), { packages: PACKAGES });
 });
 
 test("amounts typed in pounds become pence", () => {

@@ -25,6 +25,17 @@ export async function api(path, options = {}) {
   return data;
 }
 
+// The prices (functions/_lib/offer.js, served by GET /api/offer), fetched once per page load and shared. The Money
+// page doesn't use it: it reads the same packages from /api/money's summary.packages.
+let offerPromise = null;
+export function getOffer() {
+  offerPromise ||= api("/api/offer").catch((err) => {
+    offerPromise = null; // a failed fetch is tried again next time
+    throw err;
+  });
+  return offerPromise;
+}
+
 export function ago(iso) {
   const s = Math.max(0, (Date.now() - Date.parse(iso)) / 1000);
   if (s < 60) return "just now";

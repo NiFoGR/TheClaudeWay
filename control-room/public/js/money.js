@@ -75,7 +75,7 @@ function goalCard(s) {
   const pct = Math.min(100, (100 * s.mrr) / s.goal);
   const soonPct = Math.min(100 - pct, (100 * s.mrrSoon) / s.goal);
   const gap = Math.max(0, s.goal - s.mrr - s.mrrSoon);
-  const monthly = s.packages?.full?.monthly || 24900;
+  const monthly = s.packages.full.monthly; // offer.js, via the server
   const more = Math.ceil(gap / monthly);
   const milestones = [
     ["First client", s.totalClients >= 1],
@@ -130,7 +130,7 @@ function pipelineCard(s) {
       <div><div class="kpi-label">Calls booked</div><div class="kpi-value">${p.callsBooked}</div></div>
       <div><div class="kpi-label">Replied</div><div class="kpi-value">${p.replied}</div></div>
     </div>
-    <p class="hint" style="margin-top:12px">${p.callsBooked ? `If every booked call closes on the Full Package: <b style="color:var(--gold)">${money(p.value)}</b> now + ${money(p.monthlyValue)}/mo.` : "Mark leads as “call booked” to see what they're worth here."}</p>
+    <p class="hint" style="margin-top:12px">${p.callsBooked ? `If every booked call closes on the Full Package: <b style="color:var(--gold)">${money(p.value)}</b> now + ${money(p.monthlyValue)}/mo.` : "Booked calls show here with what they're worth."}</p>
   </div>`;
 }
 
