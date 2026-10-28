@@ -53,9 +53,14 @@ const voice = async (env, now) => {
 const add = (env, body) => addExample(ctx(env, "/api/voice/examples", { method: "POST", body }));
 const remove = (env, id) => deleteExample(ctx(env, `/api/voice/examples/${encodeURIComponent(id)}`, { method: "DELETE", params: { id } }));
 
-/** fakeD1 with the open "Approve your 9 follow-up emails" todo, as the followups tick step adds it. */
+/**
+ * fakeD1 with the open "Approve your 9 follow-up emails" todo, as the followups tick step adds it. Stage 7's two voice
+ * seeds are marked done (voice:seeded), as if Nik had deleted them, so these tests see only their own examples; the
+ * seeds are tested in voice-seed.test.mjs.
+ */
 async function voiceEnv() {
   const DB = fakeD1();
+  DB.raw.prepare("INSERT INTO settings (key, value) VALUES ('voice:seeded', '2026-10-01T09:00:00Z')").run();
   await addTodo(DB, { kind: "setup", title: "Approve your 9 follow-up emails", link: "/#/voice", dedupe: "setup:followups" });
   return { env: { DB } };
 }
@@ -277,11 +282,11 @@ test("has_price_reply: only an example reply for 'they ask the price' counts, in
   assert.equal((await voice(env)).has_price_reply, true);
 });
 
-test("GET costs 4 D1 statements", async () => {
+test("GET costs 5 D1 statements", async () => {
   const { env } = await voiceEnv();
   const c = countingDB(env.DB);
   await getVoice(ctx({ DB: c.DB }, "/api/voice"));
-  assert.equal(c.used(), 4);
+  assert.equal(c.used(), 5); // stage 7 added seedVoice's check (voice:seeded) to stage 5-6's 4
 });
 
 // ---------------------------------------------------------------- PUT /api/voice/followups/:step

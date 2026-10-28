@@ -8,20 +8,23 @@
 // The preview is the body only: the cold footer goes after it when a follow-up is queued, as on the first email.
 // Then Nik's own examples and rules (source nik_written, newest first) followed by the first emails he sent (nik_sent,
 // newest first), which the reply Routine reads (stage 7), and has_price_reply: whether he has written his own reply for
-// "they ask the price" (decision D-3), which hides the Voice page's "How much is it?" card.
-// Stage 7 adds its seedVoice(DB, now) call after ensureTemplates and widens only hasPriceReply's match (situation or
-// body /price|how much|cost/i); it keeps the source and kind filters, so a sent first email ("costing you jobs") never
-// counts. Nothing else changes.
+// when they ask the price (decision D-3), which hides the Voice page's "How much is it?" card.
+// Stage 7 (docs/rebuild/07-replies-calls.md Task 14): seedVoice(DB, now) after ensureTemplates adds Nik's two example
+// replies once (setting voice:seeded; one he deletes stays deleted), and hasPriceReply matches the situation or the
+// text (/price|how much|cost/i); it keeps the source and kind filters, so a sent first email ("costing you jobs")
+// never counts. Tested in control-room/tests/voice-seed.test.mjs.
 //
 // The other Voice routes share what's here: the step in a route (stepOf), a template as the page shows it
 // (templateView, with the preview lead from previewRead + previewFrom), and the text limit (tooLong).
 // ./followups/[step]/index.js saves a template (PUT), ./followups/[step]/approve.js approves one,
 // ./examples/index.js adds an example or rule, ./examples/[id].js deletes one. Behind the login (_middleware.js).
-// D1: the schema check on an isolate's first request, then 4 statements: ensureTemplates (1) and one batch of 3 reads
-// (the templates, the examples, the preview lead). Tested in control-room/tests/voice.test.mjs.
+// D1: the schema check on an isolate's first request, then 5 statements: ensureTemplates (1), seedVoice's check (1; the
+// first time ever, a batch of 3 writes as well) and one batch of 3 reads (the templates, the examples, the preview
+// lead). Tested in control-room/tests/voice.test.mjs.
 import { demoLink } from "../../_lib/demo-db.js";
 import { checkFollowup, ensureTemplates, FOLLOWUP_DAYS, renderFollowup } from "../../_lib/followups.js";
 import { businessName, greetingFor } from "../../_lib/mail/rules.js";
+import { seedVoice } from "../../_lib/replies-db.js";
 import { db, iso, json } from "../../_lib/util.js";
 
 /** Part A §A7's preview, for when no prospect has a live demo. */
@@ -131,16 +134,18 @@ export const exampleView = (row) => ({
   id: row.id, kind: row.kind, situation: row.situation, body: row.body, source: row.source, created_at: row.created_at,
 });
 
-/** "  They ask  the PRICE " → "they ask the price". */
-const situationKey = (situation) => String(situation ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+/** What makes an example about the price, in its situation or its text (stage 7, Part A "Voice"). */
+const PRICE_WORDS = /price|how much|cost/i;
 
 /**
  * Whether Nik has written his own price answer (decision D-3): an example reply he wrote on the Voice page (source
- * nik_written; a rule isn't one, nor is a first email he sent, nik_sent) for "they ask the price", in any case or
- * spacing. Until then the page shows the "How much is it?" card and Claude answers from the price list.
+ * nik_written; a rule isn't one, nor is a first email he sent, nik_sent, however much it says "costing you jobs")
+ * whose situation or text is about the price (PRICE_WORDS, any case). Until then the page shows the "How much is it?"
+ * card and Claude answers from the price list.
  */
 export const hasPriceReply = (examples) =>
-  examples.some((e) => e.source === "nik_written" && e.kind === "example" && situationKey(e.situation) === PRICE_SITUATION);
+  examples.some((e) => e.source === "nik_written" && e.kind === "example"
+    && (PRICE_WORDS.test(String(e.situation ?? "")) || PRICE_WORDS.test(String(e.body ?? ""))));
 
 const TEMPLATES_SQL = `SELECT step, day_offset, body, status, approved_at FROM followup_templates
   WHERE step BETWEEN 1 AND ${FOLLOWUP_DAYS.length} ORDER BY step`;
@@ -152,6 +157,7 @@ export async function onRequestGet({ env, now }) {
   const DB = await db(env);
   const at = now ?? new Date();
   await ensureTemplates(DB);
+  await seedVoice(DB, at);
   const [templates, examples, lead] = await DB.batch([
     DB.prepare(TEMPLATES_SQL),
     DB.prepare(EXAMPLES_SQL),

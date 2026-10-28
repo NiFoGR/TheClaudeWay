@@ -241,6 +241,8 @@ const getAnswer = async (env) => (await getVoice(ctx(env, "/api/voice"))).json()
 
 test("GET /api/voice's answer: 9 draft cards with the sample preview, paused, the price card", async () => {
   const env = { DB: fakeD1() };
+  // Stage 7's two voice seeds marked done, as if Nik had deleted them, so the empty list shows (voice-seed.test.mjs)
+  env.DB.raw.prepare("INSERT INTO settings (key, value) VALUES ('voice:seeded', '2026-10-01T09:00:00Z')").run();
   const data = await getAnswer(env);
   const html = voiceBodyHtml(data, { now: NOW });
   const text = plain(html);
