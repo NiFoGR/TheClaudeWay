@@ -220,6 +220,20 @@ function showDrawer(r, id, detail, capacity, ask) {
   const slot = r.querySelector("#d-research");
   if (slot) wireResearch(slot, id, { research: detail.research ?? null, waiting: detail.research_waiting });
   loadDemoCard(r, id, ask);
+  loadCallBox(r, id, ask);
+}
+
+// Stage 8's call box in the #d-call slot (call.js renderCallBox: Booked + Cancel, or Book a call), loaded on first
+// use and drawn only if this panel is still the one open. renderCallBox shows its own request's errors.
+function loadCallBox(r, id, ask) {
+  import("./call.js")
+    .then((m) => {
+      const slot = r.querySelector("#d-call");
+      if (ask === drawerAsk && slot?.isConnected) return m.renderCallBox(slot, id);
+    })
+    .catch((err) => {
+      if (ask === drawerAsk) toast(`Couldn't load the call box (${reasonOf(err)}). Close this lead and open it again.`);
+    });
 }
 
 // Stage 4's Demo site card in the #d-demo slot: its own request (GET /api/demo/lead/:id: the link, views, expiry, or
