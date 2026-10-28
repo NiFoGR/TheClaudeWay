@@ -707,8 +707,9 @@ test("app.js routes through parseRoute and PAGES; #/lead/<id> opens the Leads pa
   assert.ok(app.indexOf("closeDrawer();") < app.indexOf("await page.render(params)"));
   assert.doesNotMatch(app, /function currentPage/);
   const routes = [...app.matchAll(/route: "([^"]*)"/g)].map((m) => m[1]);
-  // stage 4's Demo page is routed (#/demo) but not in the nav; stage 5–6's Voice page sits after Money
-  assert.deepEqual(routes, ["home", "leads", "scraper", "maprank", "money", "voice", "demo", "setup"]);
+  // stage 4's Demo page is routed (#/demo) but not in the nav; stage 5–6's Voice page sits after Money, stage 7's
+  // Replies page after Voice, stage 8's Call page (#/call/<id>) routed after Demo, not in the nav
+  assert.deepEqual(routes, ["home", "leads", "scraper", "maprank", "money", "voice", "replies", "demo", "call", "setup"]);
   assert.match(app, /\{ route: "demo", [^}]*nav: false \}/);
 });
 

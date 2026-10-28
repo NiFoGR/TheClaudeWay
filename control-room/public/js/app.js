@@ -1,4 +1,5 @@
 // Aetos Control Room: navigation and routing. Each page lives in its own file next to this one, and PAGES lists them.
+import { callIdFrom, callPage } from "./call.js";
 import { demoPage } from "./demo.js";
 import { homePage } from "./home.js";
 import { closeDrawer, leadsPage, openLeadDrawer } from "./leads.js";
@@ -6,6 +7,7 @@ import { parseRoute } from "./leadview.js";
 import { api, esc, icon, pageHead, state, view } from "./lib.js";
 import { mapRankRoute } from "./maprank.js";
 import { moneyPage } from "./money.js";
+import { repliesPage, threadIdFrom, threadPage } from "./replies.js";
 import { scraperRoute } from "./scraper.js";
 import { setupPage } from "./setup.js";
 import { voicePage } from "./voice.js";
@@ -27,8 +29,12 @@ export const PAGES = [
   { route: "money", label: "Money", icon: "pound", render: () => moneyPage() },
   // Stage 5–6: the 9 follow-up emails to approve, and Nik's own replies and rules for Claude.
   { route: "voice", label: "Voice", icon: "mail", render: () => voicePage() },
+  // Stage 7: every reply, what needs Nik, and the pause switch; #/replies/<place_id> is one conversation.
+  { route: "replies", label: "Replies", icon: "send", render: () => { const id = threadIdFrom(location.hash); return id ? threadPage(id) : repliesPage(); } },
   // Stage 4: reached from the "Approve the … look" todo and the lead panel's "Demo page" link, not the nav.
   { route: "demo", label: "Demo", icon: "layout", render: () => demoPage(), nav: false },
+  // Stage 8: one call (#/call/<id>), linked from every call Todo; the script, Cancel call, and How did it go?
+  { route: "call", nav: false, label: "Call", icon: "phone", render: () => callPage(callIdFrom(location.hash)) },
   { route: "setup", label: "Setup", icon: "sliders", render: (params) => setupPage(params), nav: "bottom" },
 ];
 
