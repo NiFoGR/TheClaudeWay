@@ -1,49 +1,27 @@
 // Money page: profit, monthly recurring income, clients, costs (Google API tracked automatically), forecast.
-import { api, confetti, esc, fmtDate, icon, kpi, modal, money, monthName, pageHead, safeUrl, state, toast, today, view } from "./lib.js";
+import { api, confetti, esc, fmtDate, icon, kpi, modal, money, monthName, pageHead, state, toast, today, view } from "./lib.js";
 
-const PACKAGES = {
-  full: { label: "Full Package", build: 1950, monthly: 249, freeDays: 60, note: "£1,950 + £249/mo, first 60 days free" },
-  weekend: { label: "Weekend deal", build: 1750, monthly: 249, freeDays: 90, note: "£1,750 + £249/mo, first 90 days free" },
-  website: { label: "Website Only", build: 1750, monthly: 0, freeDays: 0, note: "£1,750 one-off, no monthly" },
-};
 const COST_CATEGORIES = ["Mailboxes", "Domains", "Tools & software", "Ads", "Other"];
 const SERIES = { in: "var(--series-in)", out: "var(--series-out)", profit: "var(--series-profit)" };
 
-// ---------------------------------------------------------------- Stripe payment links (also shown on Setup)
+// ---------------------------------------------------------------- packages and orders
 
-export function paymentLinks(links) {
-  return `<div class="cost-rows">${Object.entries(PACKAGES).filter(([k]) => links?.[k]).map(([k, p]) => `
-    <div class="link-row"><div><b>${esc(p.label)}</b><div class="sub-line">${esc(p.note)}</div></div>
-      <div class="actions"><button class="btn secondary sm" data-copy="${esc(links[k].url)}">Copy link</button>
-        <a class="icon-btn" href="${esc(safeUrl(links[k].url))}" target="_blank" rel="noopener noreferrer" aria-label="Open">${icon("external")}</a></div></div>`).join("")}</div>`;
-}
+// Prices come from the server (summary.packages, a serialisation of functions/_lib/offer.js), in pence.
+const packages = () => state.money?.summary?.packages || {};
+const packageNote = (p) => (p.monthly
+  ? `${money(p.build)} + ${money(p.monthly)}/mo, first ${p.freeDays} days free`
+  : `${money(p.build)} one-off, no monthly`);
 
-export function bindCopy(root) {
-  root.querySelectorAll("[data-copy]").forEach((b) => b.onclick = async () => {
-    try {
-      await navigator.clipboard.writeText(b.dataset.copy);
-      toast("Link copied. Paste it to the client.");
-    } catch {
-      prompt("Copy this link:", b.dataset.copy);
-    }
-  });
-}
-
-function linksCard(stripe) {
-  if (!stripe?.ready) {
-    return `<div class="card"><div class="card-head"><h2>Get paid by card</h2></div>
-      <p class="muted" style="margin:0">Connect Stripe on <a href="#/setup">Setup</a>: clients pay through a link and appear here by themselves.</p></div>`;
-  }
-  return `<div class="card"><div class="card-head"><h2>Payment links</h2>${stripe.mode === "live" ? "" : `<span class="badge warn">Test mode</span>`}</div>
-    ${paymentLinks(stripe.links)}<p class="hint">Send after the call. When they pay, they're added as a client automatically.</p></div>`;
+function ordersCard() {
+  return `<div class="card"><div class="card-head"><h2>Get paid by card</h2></div>
+    <p class="muted" style="margin:0">To take an order, send them their order page (their demo → Order this site).</p></div>`;
 }
 
 // ---------------------------------------------------------------- page
 
 export async function moneyPage(fresh = true) {
   if (fresh || !state.money) {
-    const [m, stripe] = await Promise.all([api("/api/money"), api("/api/stripe/setup").catch(() => null)]);
-    state.money = { ...m, stripe };
+    state.money = await api("/api/money");
   }
   const { summary: s, entries } = state.money;
   const m = s.thisMonth;
@@ -83,13 +61,12 @@ export async function moneyPage(fresh = true) {
     </div>
     <div class="grid-main" style="margin-top:16px">
       ${clientsCard(s)}
-      <div class="stack">${linksCard(state.money.stripe)}${pipelineCard(s)}${costsCard(s, entries)}</div>
+      <div class="stack">${ordersCard()}${pipelineCard(s)}${costsCard(s, entries)}</div>
     </div>
     ${paymentsCard(state.money.payments || [])}
     ${entriesCard(entries)}`;
 
   drawChart(view.querySelector("#chart"), s.months);
-  bindCopy(view);
   countUp(view.querySelector("#hero-value"));
   bindMoney();
 }
@@ -98,7 +75,8 @@ function goalCard(s) {
   const pct = Math.min(100, (100 * s.mrr) / s.goal);
   const soonPct = Math.min(100 - pct, (100 * s.mrrSoon) / s.goal);
   const gap = Math.max(0, s.goal - s.mrr - s.mrrSoon);
-  const more = Math.ceil(gap / 24900);
+  const monthly = s.packages?.full?.monthly || 24900;
+  const more = Math.ceil(gap / monthly);
   const milestones = [
     ["First client", s.totalClients >= 1],
     ["£1k a month", s.mrr >= 100000],
@@ -111,7 +89,7 @@ function goalCard(s) {
     <div class="goal-line">
       <div><div class="muted small" style="font-weight:550">Goal: monthly recurring income</div>
         <div class="big">${money(s.mrr)} <span class="faint" style="font-size:15px;font-weight:500">of ${money(s.goal)} a month</span></div></div>
-      <div class="actions" style="align-items:center"><span class="muted small">${gap ? `${more} more client${more === 1 ? "" : "s"} on £249/mo to hit it` : "Goal hit. Raise it."}</span>
+      <div class="actions" style="align-items:center"><span class="muted small">${gap ? `${more} more client${more === 1 ? "" : "s"} on ${money(monthly)}/mo to hit it` : "Goal hit. Raise it."}</span>
         <button class="btn ghost sm" id="edit-goal">Change goal</button></div>
     </div>
     <div class="goal-bar" title="${Math.round(pct)}% paying now${soonPct ? `, ${Math.round(soonPct)}% more once free periods end` : ""}">
@@ -129,7 +107,7 @@ function clientsCard(s) {
       "one-off": () => `<span class="badge plain">One-off</span>`,
     }[c.key]() + (c.failed_on && c.key === "paying" ? ` <span class="badge bad">Payment failed ${esc(fmtDate(c.failed_on))}</span>` : "") + (c.stripe_customer ? ` <span class="badge plain">Card</span>` : "");
     return `<tr>
-      <td><div class="client-name">${esc(c.name)}</div><div class="sub-line">${esc(PACKAGES[c.package]?.label || c.package)} · paid ${esc(fmtDate(c.paid_on, true))}</div></td>
+      <td><div class="client-name">${esc(c.name)}</div><div class="sub-line">${esc(s.packages?.[c.package]?.label || c.package)} · paid ${esc(fmtDate(c.paid_on, true))}</div></td>
       <td class="r num">${money(c.build_fee_pence)}</td>
       <td class="r num">${c.monthly_pence ? `${money(c.monthly_pence)}<span class="faint">/mo</span>` : "–"}</td>
       <td>${status}</td>
@@ -171,13 +149,18 @@ function costsCard(s, entries) {
   </div>`;
 }
 
-function paymentsCard(payments) {
+// Stripe payments, and refunds (category "Refunds", a negative amount): a refund is a "−£249" line, not money in.
+export function paymentsCard(payments) {
   if (!payments.length) return "";
-  const rows = payments.map((p) => `<tr>
+  const rows = payments.map((p) => {
+    const neg = p.amount_pence < 0;
+    return `<tr>
     <td class="num" style="white-space:nowrap">${esc(fmtDate(p.paid_on, true))}</td>
     <td><div class="client-name">${esc(p.name)}</div><div class="sub-line">${esc(p.category)}${p.fee_pence ? ` · Stripe fee ${money(p.fee_pence, { exact: true })}` : ""}</div></td>
-    <td class="r num amount-in">+${money(p.amount_pence, { exact: p.amount_pence % 100 !== 0 })}</td></tr>`).join("");
-  return `<div class="section-title"><h2>Card payments received</h2><span class="muted small">from Stripe, automatically</span></div>
+    <td class="r num${neg ? "" : " amount-in"}">${neg ? "" : "+"}${money(p.amount_pence, { exact: p.amount_pence % 100 !== 0 })}</td></tr>`;
+  }).join("");
+  const title = payments.some((p) => p.amount_pence < 0) ? "Card payments and refunds" : "Card payments received";
+  return `<div class="section-title"><h2>${title}</h2><span class="muted small">from Stripe, automatically</span></div>
     <div class="table-card"><div class="table-wrap"><table class="entries-table"><thead><tr><th>Date</th><th>From</th><th class="r">Amount</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
 
@@ -385,8 +368,8 @@ async function addClient() {
       <div><label for="c-name">Business</label><input id="c-name" list="c-leads" required minlength="2" maxlength="120" placeholder="Start typing a lead's name…" autocomplete="off">
         <datalist id="c-leads"></datalist>
         <p class="hint" id="c-lead-note">If they're one of your leads, that lead is marked as won.</p></div>
-      <div><label>Package</label><div class="pkg-options">${Object.entries(PACKAGES).map(([k, p], i) => `
-        <label class="pkg"><input type="radio" name="pkg" value="${k}" ${i === 0 ? "checked" : ""}><span><b>${p.label}</b><small>${p.note}</small></span></label>`).join("")}</div></div>
+      <div><label>Package</label><div class="pkg-options">${Object.entries(packages()).map(([k, p], i) => `
+        <label class="pkg"><input type="radio" name="pkg" value="${esc(k)}" ${i === 0 ? "checked" : ""}><span><b>${esc(p.label)}</b><small>${esc(packageNote(p))}</small></span></label>`).join("")}</div></div>
       <div class="field-row">
         <div><label for="c-build">Build fee (£)</label><input id="c-build" inputmode="decimal" required></div>
         <div><label for="c-monthly">Monthly (£)</label><input id="c-monthly" inputmode="decimal" required></div>
@@ -396,9 +379,10 @@ async function addClient() {
       <p class="error" hidden></p>
     </div>${foot("Add client")}</form>`);
   const fill = () => {
-    const p = PACKAGES[d.querySelector("input[name=pkg]:checked").value];
-    d.querySelector("#c-build").value = p.build;
-    d.querySelector("#c-monthly").value = p.monthly;
+    const p = packages()[d.querySelector("input[name=pkg]:checked")?.value];
+    if (!p) return;
+    d.querySelector("#c-build").value = p.build / 100;
+    d.querySelector("#c-monthly").value = p.monthly / 100;
     d.querySelector("#c-free").value = p.freeDays;
   };
   d.querySelectorAll("input[name=pkg]").forEach((r) => r.onchange = fill);

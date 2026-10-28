@@ -1,5 +1,6 @@
 // Money page maths. Run: node --test control-room/tests/money.test.mjs
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { addMonths, googleCosts, ledger, summarise, toPence } from "../functions/_lib/money.js";
 
@@ -43,6 +44,22 @@ test("summary: profit to date, MRR vs free period, forecast and pipeline", () =>
   assert.equal(s.months.length, 12);
   assert.equal(s.upcoming[0].date, "2026-10-08");
   assert.equal(s.pipeline.value, 390000);
+});
+
+test("summary carries packages", () => {
+  assert.equal(summarise({ today: "2026-10-19" }).packages.full.build, 195000);
+});
+
+test("Money and Setup pages: no payment links, no browser copy of the prices", () => {
+  const read = (f) => readFileSync(new URL(`../public/js/${f}`, import.meta.url), "utf8");
+  const money = read("money.js");
+  const setup = read("setup.js");
+  assert.doesNotMatch(money, /paymentLinks|linksCard|\/api\/stripe\/setup/);
+  // Setup's Payments (Stripe) card (Task 11) reads /api/stripe/setup for Connect Stripe; the old links card is gone.
+  assert.doesNotMatch(setup, /paymentLinks|linksCard|Set up Stripe|stripeCard/);
+  assert.doesNotMatch(money, /const PACKAGES|build: 1950|build: 1750/);
+  assert.match(money, /summary\?\.packages/);
+  assert.ok(money.includes("To take an order, send them their order page (their demo → Order this site)."));
 });
 
 test("amounts typed in pounds become pence", () => {

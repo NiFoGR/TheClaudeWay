@@ -187,6 +187,8 @@ export function summarise({ clients = [], entries = [], payments = [], usage = [
       value: (pipeline.callsBooked || 0) * PACKAGES.full.build,
       monthlyValue: (pipeline.callsBooked || 0) * PACKAGES.full.monthly,
     },
+    // the Money page's prices (Add client, package labels): offer.js, never a copy in the browser
+    packages: PACKAGES,
   };
 }
 

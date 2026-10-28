@@ -1,11 +1,11 @@
-// Setup page, top to bottom: the health lights, the connections (Database, GitHub, Stripe), mailboxes (Test login and
+// Setup page, top to bottom: the health lights, the connections (Database, GitHub), mailboxes (Test login and
 // Send test email, the SMTP proof), the email DNS records, receiving replies (D-1), Claude's access key and Routines,
-// and the business details (D-7). Every value from the server (addresses, names, errors, DNS records) goes through
-// esc() before it touches the page; secrets are never sent here, only "saved ✓".
+// the business details (D-7) and Payments (Stripe: Connect Stripe). Every value from the server (addresses, names,
+// errors, DNS records, Stripe's messages) goes through esc() before it touches the page; secrets are never sent here,
+// only "saved ✓".
 // The renderers (…Html, sendOutcome, loginText) are pure and exported, so tests/shell.test.mjs checks them without a
 // browser. The DOM work happens inside setupPage() and the handlers it binds.
 import { api, esc, fmtDate, icon, modal, pageHead, safeUrl, toast, view } from "./lib.js";
-import { bindCopy, paymentLinks } from "./money.js";
 
 const REPO = "https://github.com/NiFoGR/TheClaudeWay/blob/claude/confident-hawking-vi0lgk";
 const LEVELS = ["green", "amber", "red", "grey"];
@@ -82,7 +82,7 @@ export function healthHtml(health) {
   return section("health", "Health", `<div class="card light-list">${list}</div>${todo}`);
 }
 
-// ---------------------------------------------------------------- 2. Connections (the checks and the Stripe card, as before)
+// ---------------------------------------------------------------- 2. Connections (the checks)
 
 function connectionsHtml(checks, noteText) {
   return section("connections", "Connections", `
@@ -90,55 +90,7 @@ function connectionsHtml(checks, noteText) {
       <div class="check"><span class="dot ${c.ok ? "ok" : "no"}">${c.ok ? "✓" : "✕"}</span>
         <div><b>${esc(c.name)}</b><div class="muted small">${esc(c.ok ? c.detail : c.fix)}</div></div></div>`).join("")}
     </div>
-    <p class="hint">${esc(noteText)} Full step-by-step guide: <code>control-room/README.md</code> in the repo.</p>
-    <div id="stripe-card"></div>`);
-}
-
-async function stripeCard() {
-  const el = view.querySelector("#stripe-card");
-  if (!el) return;
-  let s;
-  try {
-    s = await api("/api/stripe/setup");
-  } catch (err) {
-    el.innerHTML = `<div class="card" style="margin-top:16px"><div class="card-head"><h2>Stripe</h2></div><p class="error" style="margin:0">${esc(`Couldn't check Stripe: ${err.message}`)}</p></div>`;
-    return;
-  }
-  const mode = s.mode === "live" ? `<span class="badge good">Live: real payments</span>` : `<span class="badge warn">Test mode: no real money</span>`;
-  if (s.ready) {
-    el.innerHTML = `<div class="card" style="margin-top:16px"><div class="card-head"><h2>Stripe payment links</h2>${mode}</div>
-      <p class="muted" style="margin-top:0">Send one after the call. When they pay, they appear on the Money page as a client by themselves.</p>
-      ${paymentLinks(s.links)}
-      ${s.mode === "test" ? `<p class="hint">Try one now with card <code>4242 4242 4242 4242</code>, any future date, any CVC. Happy? Replace <code>STRIPE_SECRET_KEY</code> in Cloudflare with your live key (<code>sk_live_…</code>), retry the deployment, and press Set up Stripe again for real links.</p>` : ""}
-      <p class="hint">In Stripe → Settings → Billing → Subscriptions and emails: turn on <b>Send reminders before trials end</b> and <b>Smart Retries</b>. That's the day-61 reminder and failed-payment chasing, done by Stripe.</p></div>`;
-    bindCopy(el);
-    return;
-  }
-  el.innerHTML = `<div class="card" style="margin-top:16px"><div class="card-head"><h2>Connect Stripe</h2>${s.hasKey ? mode : ""}</div>
-    <ol class="steps">
-      <li><b>Stripe</b> → Developers → API keys → copy the <b>Secret key</b> (starts <code>sk_test_</code> to try it first, <code>sk_live_</code> for real money).</li>
-      <li><b>Cloudflare</b> → your Pages project → Settings → Variables and Secrets → Add: name <code>STRIPE_SECRET_KEY</code>, type <b>Secret</b>, paste the key.</li>
-      <li>Deployments → <b>Retry deployment</b> so the key takes effect, then come back here.</li>
-      <li>Press <b>Set up Stripe</b>: it creates your three packages, a payment link for each, and connects payments to the Money page.</li>
-    </ol>
-    <p style="margin-bottom:0"><button class="btn" id="stripe-go" ${s.hasKey ? "" : "disabled"}>Set up Stripe</button>
-      ${s.hasKey ? "" : `<span class="hint" style="margin-left:8px">Waiting for the key (steps 1–3).</span>`}</p>
-    <p class="error" id="stripe-error" hidden></p></div>`;
-  const go = el.querySelector("#stripe-go");
-  go.onclick = async () => {
-    go.disabled = true;
-    go.textContent = "Setting up…";
-    try {
-      await api("/api/stripe/setup", { method: "POST" });
-      toast("Stripe is set up.");
-      await setupPage();
-    } catch (e) {
-      el.querySelector("#stripe-error").textContent = e.message;
-      el.querySelector("#stripe-error").hidden = false;
-      go.disabled = false;
-      go.textContent = "Set up Stripe";
-    }
-  };
+    <p class="hint">${esc(noteText)} Full step-by-step guide: <code>control-room/README.md</code> in the repo.</p>`);
 }
 
 // ---------------------------------------------------------------- 3. Mailboxes
@@ -382,9 +334,70 @@ export function businessHtml(business, notes = {}) {
     </form>`);
 }
 
+// ---------------------------------------------------------------- 8. Payments (Stripe)
+
+// "just now", "5 minutes ago", "2 hours ago", "3 days ago" (rounded down), or null for no time.
+function longAgo(iso, now = new Date()) {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return null;
+  const min = Math.floor(Math.max(0, now.getTime() - ms) / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${plural(min, "minute")} ago`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${plural(h, "hour")} ago`;
+  return `${plural(Math.floor(h / 24), "day")} ago`;
+}
+
+// The Stripe account settings Nik sets once (Part A), as [where, what] pairs; the parts in <b> are static text.
+const STRIPE_CHECKLIST = [
+  `${esc("Settings → Public details:")} business name <code>Aetos Websites</code>, statement descriptor <code>AETOS WEBSITES</code>, ${esc("support email, your name and service address (trading-name rule).")}`,
+  `${esc("Settings → Customer emails:")} <b>Successful payments</b> and <b>Refunds</b> on. ${esc("Billing → Invoices: email finalised invoices to customers on.")}`,
+  `${esc("Billing → Revenue recovery → Retries: Smart Retries on;")} <b>if all retries fail: cancel the subscription</b>.`,
+  `${esc("Payment links (old system) → archive all three.")}`,
+];
+const STRIPE_HELP = [
+  "Test mode first: pay with card 4242 4242 4242 4242, any future date, any 3 digits. When Stripe approves your account, paste the live key and press Connect Stripe again.",
+  "To refund: Stripe → Payments → the payment → Refund. It shows on the Money page by itself.",
+  "To stop someone's monthly: Money → their row → Stopped paying. This cancels it in Stripe too.",
+];
+
+/** The Payments (Stripe) card from /api/stripe/setup (stripeStatus, or {error}): never a key, only whether it's set. */
+export function stripeHtml(stripe, now = new Date(), notes = {}) {
+  const st = stripe && typeof stripe === "object" ? stripe : {};
+  const row = (label, value, cls = "") => `<div class="check"><span class="dot ${cls === "ok" ? "ok" : "no"}">${cls === "ok" ? "✓" : "✕"}</span><div>${label}${value}</div></div>`;
+  let rows;
+  if (st.error) {
+    rows = `<p class="error" style="margin:0">${esc(`Couldn't check Stripe: ${st.error}`)}</p>`;
+  } else {
+    const mode = st.mode === "live" ? "Live (real payments)" : "Test mode (no real money)";
+    const key = st.key
+      ? row(esc("Secret key: "), `<span class="ok-text">${esc(`saved ✓ · ${mode}`)}</span>${st.key_source === "cloudflare"
+        ? `<div class="muted small">${esc("It's the one in Cloudflare (STRIPE_SECRET_KEY): press Connect Stripe with the field empty to use it, or paste it below to keep it here.")}</div>` : ""}`, "ok")
+      : row(esc("Secret key: "), `<span class="bad-text">${esc("not added")}</span>`);
+    const hook = st.webhook_current
+      ? row(esc("Stripe messages (webhook): "), `<span class="ok-text">${esc("connected ✓")}</span>`, "ok")
+      : row(esc("Stripe messages (webhook): "), `<span class="bad-text">${esc(st.webhook ? "needs updating: press Connect Stripe again" : "not connected: press Connect Stripe")}</span>`);
+    const e = st.last_event;
+    const when = e ? `${longAgo(e.at, now) || "earlier"} (${e.type})` : "none yet";
+    const last = `<div class="check"><span class="dot${e ? " ok" : " muted"}">${e ? "✓" : "–"}</span><div>${esc(`Last message from Stripe: ${when}`)}${e?.result ? `<div class="muted small">${esc(e.result)}</div>` : ""}</div></div>`;
+    const problem = st.last_error ? `<p class="error" style="margin:8px 0 0">${esc(st.last_error)}</p>` : "";
+    rows = `<div class="checks">${key}${hook}${last}</div>${problem}`;
+  }
+  const n = notes.stripe;
+  return section("stripe", "Payments (Stripe)", `<div class="card">${rows}</div>
+    <form class="card setup-form" id="stripe-form" autocomplete="off" style="margin-top:16px">
+      <div><label for="stripe-key">Stripe secret key</label><input id="stripe-key" name="key" type="password" autocomplete="new-password" spellcheck="false" placeholder="${esc("sk_test_… or rk_test_…")}"></div>
+      <p class="error" hidden></p>
+      <div class="actions" style="align-items:center"><button class="btn" type="submit">Connect Stripe</button>${n ? note(n) : ""}</div>
+      ${STRIPE_HELP.map((t) => `<p class="hint">${esc(t)}</p>`).join("")}
+    </form>
+    <details class="card how" style="margin-top:16px"><summary>${esc("Stripe account settings to set once")}</summary>
+      <ol class="steps">${STRIPE_CHECKLIST.map((t) => `<li>${t}</li>`).join("")}</ol></details>`);
+}
+
 // ---------------------------------------------------------------- the page
 
-const notes = {}; // results shown under rows and forms ("mb:<id>", "rt:<name>", "dns:<domain>", "site"), kept across redraws
+const notes = {}; // results shown under rows and forms ("mb:<id>", "rt:<name>", "dns:<domain>", "site", "stripe"), kept across redraws
 let current = null; // the last /api/setup status
 
 const head = (title) => `<div class="modal-head"><h2>${esc(title)}</h2><button type="button" class="icon-btn" data-close aria-label="Close">${icon("x")}</button></div>`;
@@ -429,9 +442,10 @@ export async function setupPage(params) {
 }
 
 async function render() {
-  const [setup, health] = await Promise.all([
+  const [setup, health, stripe] = await Promise.all([
     api("/api/setup"),
     api("/api/health").catch((err) => ({ error: err.message })),
+    api("/api/stripe/setup").catch((err) => ({ error: err.message })),
   ]);
   current = setup.status || null;
   const now = new Date();
@@ -446,9 +460,10 @@ async function render() {
     ${connectionsHtml(setup.checks, setup.note)}
     ${s ? [mailboxesHtml(s, now, notes), dnsSections(s, now, notes), receivingHtml(s.receiving, now), claudeHtml(s, now, notes), businessHtml(s.business, notes)].join("")
       : section("status", "Mailboxes, DNS, Receiving replies, Claude and Business details", `<div class="card"><p class="error" style="margin:0">${esc(setup.status_error || "Couldn't read the setup status.")}</p>
-        <p class="hint">Fix the Database check above, then refresh this page.</p></div>`)}`;
+        <p class="hint">Fix the Database check above, then refresh this page.</p></div>`)}
+    ${stripeHtml(stripe, now, notes)}`;
   if (s) bindStatus(s);
-  await stripeCard();
+  on("#stripe-form", "submit", (form, e) => { e.preventDefault(); connectStripe(form); });
 }
 
 // Redraw in place after an action (no "Checking…" flash, the scroll position stays).
@@ -708,4 +723,22 @@ async function siteCheck(button) {
     notes.site = { ok: false, text: err.message };
   }
   await refresh();
+}
+
+// Connect Stripe: the key goes to the server once (never kept in the page); the answer is the new status.
+async function connectStripe(form) {
+  const input = form.elements.namedItem("key");
+  const key = input.value.trim();
+  showError(form, "");
+  try {
+    const st = await busy(form.querySelector("button[type=submit]"), "Connecting…",
+      () => api("/api/stripe/setup", { method: "POST", body: JSON.stringify({ key }) }));
+    input.value = "";
+    const mode = st.mode === "live" ? "live mode (real payments)" : "test mode";
+    notes.stripe = { ok: true, text: `Connected in ${mode}. Stripe's payment messages now come here.` };
+    toast("Stripe connected.");
+    await refresh();
+  } catch (err) {
+    showError(form, err.message);
+  }
 }

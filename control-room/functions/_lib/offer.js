@@ -28,6 +28,9 @@ export const GUARANTEE = freeze({
 
 export const BUILD_GUARANTEE = "Website live in 7 days, GUARANTEED.";
 
+// Stage 9 (order page, welcome email): printed after BUILD_GUARANTEE with a space between them.
+export const BUILD_GUARANTEE_NOTE = "(clock starts when your onboarding form is complete)";
+
 export const WEEKEND_BANNER = "Weekend price — ends Sunday midnight";
 
 export const NO_CONTRACT = "No contract. No cancellation fees. If we're not making you money, we don't want your money.";
