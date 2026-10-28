@@ -121,3 +121,38 @@ its heartbeat); leads queued in between wait for the run that's going or the nex
 If it stops: Setup → Health's research light goes red after 26 hours without research while leads are waiting. Open
 claude.ai/code/routines, check `aetos-research` is on and its last run finished, then press Run now. If it's gone,
 make it again from this section and paste the new URL and token on Setup (section 6).
+
+### reply (`aetos-reply`)
+
+Answers prospects' replies to your cold emails, as you, within a few minutes between 7am and 11:30pm: one job per
+reply, getting them to look at their demo and press Order. It offers your next free 11am call slot when they ask for
+a call and books it when they say yes. Angry, legal, unclear and odd replies are never answered: they come to you as
+a Todo with Claude's draft. Every reply is checked by the Control Room before it goes (prices, links, length, no
+"SEO"). Prompt: `routines/reply.md` (written in stages 7–8, `docs/rebuild/07-replies-calls.md`).
+
+1. Make the shared "Aetos" environment first if it doesn't exist yet (section 1): its `AETOS_AGENT` network secret
+   and `CONTROL_ROOM_URL` environment variable are all this Routine needs, nothing extra.
+2. claude.ai/code/routines → New task → Set up manually (section 2):
+   - **Name:** `aetos-reply`.
+   - **Repository:** `NiFoGR/TheClaudeWay`.
+   - **Model:** Sonnet.
+   - **Environment:** "Aetos".
+   - **Prompt:** the whole contents of `routines/reply.md`, pasted as it is (nothing to replace).
+   - **Schedule:** daily at 07:03, Europe/London (UK time): it catches up on anything that came in overnight.
+3. Add the API trigger (section 3): Edit → Add trigger → API → Generate token (in the Trigger row press +; the token is
+   shown once: copy it straight away), then copy the trigger's Fire URL (it ends in `/fire`).
+4. In the Control Room: Setup → Claude → Replies → paste the URL and the token → Save → Test fire. Within a few
+   minutes the row says "Last ran just now". A test only posts the heartbeat: nothing is answered.
+5. Check it: Replies → Run the reply drill. It gives Claude 14 practice emails, one of each kind (nothing is emailed
+   to anyone). After about 10 minutes press Check the result: it should say `Last drill: 14/14 right`. Then add your
+   own email as a test lead on the same page and email your Aetos mailbox from it to see real replies arrive.
+
+What starts it: the Control Room fires it when a human reply is waiting (`reply waiting: <n> message(s)`), at most
+once every 2 minutes, only between 7am and 11:30pm and never while you've paused Claude's replies on the Replies
+page; and the 07:03 schedule. Overnight mail is answered from 7am.
+
+If it stops: the Replies light on Setup → Health goes red when a reply has waited over 20 minutes inside reply hours,
+and the Replies Routine's own light goes red after a failed fire or 26 hours without a heartbeat. Open
+claude.ai/code/routines, check `aetos-reply` is on and its last run finished, then press Run now. If it's gone, make
+it again from this section and paste the new URL and token on Setup (section 6). Meanwhile, answer from the Replies
+page yourself.

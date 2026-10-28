@@ -7,6 +7,8 @@ have gone out; the first ~250 sends replace them with real ones.
 
 - **Finding leads: done and automatic.** 287 landscapers ready around Warrington, Claude researching the best 15 a day.
 - **Selling: built, but switched off.** Demos, order page, payments, email copy and the test engine all exist.
+- **Replies and calls: built (28 Oct).** Claude answers replies as Nik within minutes (7am–11:30pm) and books 11am
+  calls; Nik makes the `aetos-reply` Routine once (`routines/README.md`) and runs the reply drill (14/14).
 - **The one blocker: nothing can be emailed until the mailboxes exist.** £0 comes in until then. Everything below
   waits on that, so it's step 1.
 
