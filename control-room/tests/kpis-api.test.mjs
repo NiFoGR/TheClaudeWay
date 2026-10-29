@@ -248,6 +248,28 @@ test("anonymise stays fast on a long unbroken word, with or without an @ (a pros
   assert.equal(anonymise(`write to ${"j".repeat(64)}@wren.example today`), "write to [email] today");
 });
 
+test("a body cut by the loader never leaves part of a phone number in the samples", () => {
+  // loadKpiRows reads 2,400 characters; long addresses before the cut shrink to "[email]", pulling the cut into view.
+  const addr = `${"j".repeat(64)}@${"w".repeat(250)}.com`;
+  let body = `${addr} `.repeat(4);
+  body += "x ".repeat(Math.floor((2392 - body.length) / 2)).padEnd(2392 - body.length, "y");
+  const cut = `${body}07700 900123 please call`.slice(0, 2400);
+  assert.match(cut, /07700 90$/);
+  const at = (t) => `2026-10-19T${t}:00Z`;
+  const msgs = [
+    { id: "a", place_id: "p", direction: "out", kind: "first", author: "nik", status: "sent", sent_at: at("08:00"), subject: "Hi", body: cut },
+    { id: "b", place_id: "p", direction: "in", kind: "inbound", author: "them", status: "received", class: "human", intent: "question", received_at: at("09:00"), body: cut },
+    { id: "c", place_id: "p", direction: "out", kind: "reply", author: "claude", status: "sent", sent_at: at("09:05"), subject: "Re: Hi", body: cut },
+  ];
+  const s = kpiSamples({ messages: msgs, views: [], calls: [], orders: [], research: [], escalations: [], grades: {} }, "2026-10-19");
+  const text = JSON.stringify(s);
+  assert.ok(!/07\d{3}|\b90\b|@/.test(text), text.slice(-80));
+  assert.match(s.claude_replies[0].they_wrote, /\[email\] \[email\] \[email\] \[email\] x x/);
+  // A shorter body (not cut) keeps its last word.
+  const short = kpiSamples({ messages: [{ ...msgs[0], body: "Ring 07700 900123 today" }], views: [], calls: [], orders: [], research: [], escalations: [], grades: {} }, "2026-10-19");
+  assert.equal(short.first_emails[0].body, "Ring [phone] today");
+});
+
 // ---------------------------------------------------------------- a year of sending: what's read depends on the weeks shown
 
 // About 12 months of sending: 2 first emails a day (3 mailboxes' worth at the planned pace, cut to keep the test quick),

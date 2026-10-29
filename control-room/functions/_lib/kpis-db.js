@@ -24,9 +24,10 @@ const WEEK_RE = /^\d{4}-W\d{2}$/;
 // Test and drill leads (stage 7) never count, in any table.
 const REAL = (col) => `${col} NOT LIKE 'drill:%' AND ${col} NOT LIKE 'test:%'`;
 // The samples quote only Nik's first emails, Claude's replies and the human mail before them, each cut to
-// SAMPLE_BODY_MAX after anonymising: so only those bodies are read, and only their start (twice the cut, so a
-// shortened "[email]" never pulls in text past what was read). A year of follow-up bodies would otherwise be parsed on
-// every Sunday run, on the free plan's 10 ms of CPU. ?3 and ?4 bound them to the reviewed week (see bodiesFrom).
+// SAMPLE_BODY_MAX after anonymising: so only those bodies are read, and only their start (twice the cut, room for
+// addresses that shrink to "[email]"; kpis.js' uncut drops a phone number the cut may have split). A year of follow-up
+// bodies would otherwise be parsed on every Sunday run, on the free plan's 10 ms of CPU. ?3 and ?4 bound them to the
+// reviewed week (see bodiesFrom).
 const SAMPLE_BODY_SQL = `CASE WHEN ((kind = 'first' AND author = 'nik') OR (kind = 'reply' AND author = 'claude')
       OR (direction = 'in' AND class = 'human'))
     AND (CASE WHEN direction = 'in' THEN received_at >= ?4 ELSE sent_at >= ?3 END)
