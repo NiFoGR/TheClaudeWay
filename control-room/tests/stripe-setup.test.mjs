@@ -101,18 +101,34 @@ test("reconnect replaces the old endpoint", async () => {
   assert.equal(await getSecret(DB, "stripe_webhook"), "whsec_new");
 });
 
-test("reconnect: an old endpoint already deleted in Stripe (404) is fine; a different key's endpoint is left alone", async () => {
+test("reconnect: an old endpoint already deleted in Stripe (404) is fine; a different key's endpoint is tried quietly", async () => {
   const DB = fakeD1();
   await connected(DB);
   const gone = fakeStripe({ "DELETE webhook_endpoints/we_0": { status: 404, error: "No such webhook endpoint: 'we_0'" }, "POST webhook_endpoints": HOOK });
   await connectStripe(DB, {}, { key: KEY, origin: "https://x.test" }, { fetchImpl: gone.fetchImpl });
   assert.deepEqual(gone.calls.map((c) => c.method), ["DELETE", "POST"]);
 
-  const other = fakeD1();
-  await connected(other); // saved for KEY
-  const { fetchImpl, calls } = fakeStripe({ "POST webhook_endpoints": HOOK });
-  await connectStripe(other, {}, { key: "rk_test_otheraccount99", origin: "https://x.test" }, { fetchImpl });
-  assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), ["POST webhook_endpoints"]);
+  // Another account: the old id isn't there (404, or any other refusal), and connecting carries on.
+  for (const answer of [{ status: 404, error: "No such webhook endpoint: 'we_0'" }, { status: 403, error: "no permission" }]) {
+    const other = fakeD1();
+    await connected(other); // saved for KEY
+    const { fetchImpl, calls } = fakeStripe({ "DELETE webhook_endpoints/we_0": answer, "POST webhook_endpoints": HOOK });
+    await connectStripe(other, {}, { key: "rk_test_otheraccount99", origin: "https://x.test" }, { fetchImpl });
+    assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), ["DELETE webhook_endpoints/we_0", "POST webhook_endpoints"]);
+    assert.equal(JSON.parse(await getSetting(other, "stripe:webhook")).id, "we_1");
+  }
+});
+
+test("reconnect: the old setup's endpoint made with Cloudflare's sk_test_ key goes when an rk_test_ key of the same account is pasted", async () => {
+  // Left in place it would keep sending messages signed with a secret we no longer use (each one a failed delivery).
+  const DB = fakeD1();
+  const cloudflare = "sk_test_fromcloudflare1";
+  await setSetting(DB, "stripe", JSON.stringify({ mode: "test", key: await keyId(cloudflare), links: {}, webhook: { id: "we_old", secret: "whsec_old", url: "u" } }));
+  const { fetchImpl, calls } = fakeStripe({ "DELETE webhook_endpoints/we_old": { id: "we_old", deleted: true }, "POST webhook_endpoints": HOOK });
+  await connectStripe(DB, { STRIPE_SECRET_KEY: cloudflare }, { key: KEY, origin: "https://x.test" }, { fetchImpl });
+  assert.deepEqual(calls.map((c) => `${c.method} ${c.path}`), ["DELETE webhook_endpoints/we_old", "POST webhook_endpoints"]);
+  assert.ok(calls.every((c) => c.headers.authorization === `Bearer ${KEY}`), "the pasted key does the tidying");
+  assert.equal(await getSecret(DB, "stripe_webhook"), "whsec_new");
 });
 
 test("reconnect: the old payment-link setup's webhook (same key) is deleted too", async () => {
