@@ -8,18 +8,21 @@ import { normaliseHost } from "./hosts.js";
 
 const CONTEXT = "https://schema.org";
 
-// Section 7's trade → schema.org type list, first match wins (so "car dealer" never reads as a garage).
+// Section 7's trade → schema.org type list, first match wins. A few look-alike words are kept out so a business is
+// never typed as something it isn't: "damp proofing" / "waterproofing" aren't roofers, rubbish/waste/tree/pest
+// removal isn't a moving company, "mechanical services" and "garage doors" aren't car repairs, and "mma" must be the
+// word (not "Emma" or "hammam"). They fall through to the next match or LocalBusiness.
 const TYPES = [
-  [/roof/, "RoofingContractor"],
+  [/(?<!p)roof/, "RoofingContractor"],
   [/plumb/, "Plumber"],
   [/heat|gas|boiler/, "HVACBusiness"],
   [/electric/, "Electrician"],
   [/locksmith/, "Locksmith"],
-  [/removal/, "MovingCompany"],
-  [/mechanic|garage/, "AutoRepair"],
+  [/(?<!\b(?:rubbish|waste|junk|clearance|tree|stump|pest|wasp|nest|asbestos|graffiti|snow|hair|tattoo|stain|odour)\s)removal/, "MovingCompany"],
+  [/mechanic(?!al)|garage(?!\s*doors?)/, "AutoRepair"],
   [/car dealer|car sales/, "AutoDealer"],
   [/landscap|garden|fenc|paving/, "HomeAndConstructionBusiness"],
-  [/gym|boxing|martial|kickbox|muay|mma/, "ExerciseGym"],
+  [/gym|boxing|martial|kickbox|muay|\bmma\b/, "ExerciseGym"],
 ];
 
 /** The schema.org type for a trade ("roofer" → "RoofingContractor"); "LocalBusiness" for anything else. */

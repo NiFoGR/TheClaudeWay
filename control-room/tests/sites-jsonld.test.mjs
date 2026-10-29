@@ -53,6 +53,26 @@ test("schemaType maps trades to schema.org types", () => {
   assert.equal(schemaType(undefined), "LocalBusiness");
 });
 
+test("schemaType keeps look-alike trades out of the wrong type", () => {
+  assert.equal(schemaType("damp proofing"), "LocalBusiness");
+  assert.equal(schemaType("waterproofing"), "LocalBusiness");
+  assert.equal(schemaType("flat roofing"), "RoofingContractor");
+  assert.equal(schemaType("rubbish removal"), "LocalBusiness");
+  assert.equal(schemaType("waste removal"), "LocalBusiness");
+  assert.equal(schemaType("tree removal"), "LocalBusiness");
+  assert.equal(schemaType("wasp nest removal"), "LocalBusiness");
+  assert.equal(schemaType("house removals"), "MovingCompany");
+  assert.equal(schemaType("removal company"), "MovingCompany");
+  assert.equal(schemaType("mechanical services"), "LocalBusiness");
+  assert.equal(schemaType("mobile mechanic"), "AutoRepair");
+  assert.equal(schemaType("garage doors"), "LocalBusiness");
+  assert.equal(schemaType("garage door installer"), "LocalBusiness");
+  assert.equal(schemaType("garage services"), "AutoRepair");
+  assert.equal(schemaType("hammam"), "LocalBusiness");
+  assert.equal(schemaType("MMA gym"), "ExerciseGym");
+  assert.equal(schemaType("mma"), "ExerciseGym");
+});
+
 test("toE164UK", () => {
   assert.equal(toE164UK("01793 123456"), "+441793123456");
   assert.equal(toE164UK("07700 900123"), "+447700900123");
