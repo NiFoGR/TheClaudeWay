@@ -225,6 +225,40 @@ test("copyPhotos fetches at most 12 for 20 photos", async () => {
   assert.ok(warnings.every((w) => /at most 12/.test(w)), warnings[0]);
 });
 
+test("copyPhotos: 12 photos and a logo are 13 images: the logo takes a fetch slot first, the 12th photo waits", async () => {
+  const DB = await seed();
+  const { fetchImpl, calls } = fakeFetch();
+  const photos = Array.from({ length: 12 }, (_, i) => ph(`/p${i}.jpg`));
+  const input = content(photos, { theme: { main: "#1e4f86", logo: "https://old.site/logo.png" } });
+  const { content: out, warnings } = await copyPhotos(DB, "c1", input, { fetchImpl, now: AT });
+  assert.equal(calls.length, 12);
+  assert.ok(calls.some((c) => c.url === "https://old.site/logo.png"), "the logo was fetched");
+  assert.match(out.theme.logo, FILE);
+  assert.equal(out.photos.length, 11);
+  assert.deepEqual(warnings, ["Photo https://old.site/p11.jpg wasn't copied: at most 12 photos are copied each time. Add it on the Site page."]);
+  // The next post copies the one left over (the 12 copied before are reused, not fetched again).
+  const again = await copyPhotos(DB, "c1", input, { fetchImpl, now: AT });
+  assert.equal(calls.length, 13);
+  assert.deepEqual(again.warnings, []);
+  assert.equal(again.content.photos.length, 12);
+});
+
+test("copyPhotos: a body with no Content-Length that runs past 2 MB stops being read and says \"over 2 MB\"", async () => {
+  const DB = await seed();
+  let pulled = 0;
+  const fetchImpl = async () => new Response(new ReadableStream({
+    pull(controller) {
+      pulled += 100_000;
+      controller.enqueue(new Uint8Array(100_000));
+      if (pulled >= 50_000_000) controller.close();
+    },
+  }), { status: 200, headers: { "content-type": "image/jpeg" } });
+  const { content: out, warnings } = await copyPhotos(DB, "c1", content([ph("/huge.jpg")]), { fetchImpl, now: AT });
+  assert.equal(out.photos.length, 0);
+  assert.deepEqual(warnings, ["Photo https://old.site/huge.jpg was over 2 MB (limit 400 KB): add a smaller copy on the Site page."]);
+  assert.ok(pulled < 3_000_000, `${pulled} bytes read`);
+});
+
 test("copyPhotos: already-/s/f/ URLs aren't fetched and get their size from the stored file; a URL copied before is reused", async () => {
   const DB = await seed();
   const { fetchImpl, calls } = fakeFetch();

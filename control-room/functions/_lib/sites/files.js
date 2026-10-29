@@ -32,7 +32,7 @@ const FILE_URL = /^\/s\/f\/([0-9a-f]{32})$/;
 const ID = /^[0-9a-f]{32}$/;
 const MAX_SIDE = 20_000; // sitedata.js prints sizes up to this
 const PARALLEL = 4;
-const COUNT_CAP = 20_000_000; // past the limit, bytes are only counted (for the warning), up to this
+const COUNT_CAP = 2_000_000; // past the limit, bytes are only counted (for the warning), up to this; then "over 2 MB"
 const ALT_MAX = 200;
 const DEFAULT_ORIGIN = "https://aetoswebsites.com";
 // The scraper's browser user-agent (lead-manager/aetos_leads/audit.py), so a site that found these photos for the
@@ -218,7 +218,7 @@ async function readCapped(res) {
     else chunks.length = 0;
     if (total > COUNT_CAP) {
       await reader.cancel().catch(() => {});
-      break;
+      return { over: total, capped: true };
     }
   }
   if (total > MAX_PHOTO_BYTES) return { over: total };
@@ -264,7 +264,11 @@ async function fetchImage(url, fetchImpl) {
     const timeout = err?.name === "TimeoutError" || err?.name === "AbortError";
     return { ok: false, why: timeout ? "didn't answer within 8 seconds: add a copy on the Site page." : `couldn't be read (${errText(err)}): add a copy on the Site page.` };
   }
-  if (body.over) return { ok: false, why: `was ${sizeText(body.over)} (limit 400 KB): add a smaller copy on the Site page.` };
+  if (body.over) {
+    // Not read to the end past COUNT_CAP, so only "over" it is known to be true.
+    const was = body.capped ? `over ${sizeText(COUNT_CAP)}` : sizeText(body.over);
+    return { ok: false, why: `was ${was} (limit 400 KB): add a smaller copy on the Site page.` };
+  }
   const size = imageSize(body.bytes, mime);
   if (!size) return { ok: false, why: `couldn't be read as a ${mime.slice(6).toUpperCase()} image: add a copy on the Site page.` };
   return { ok: true, mime, bytes: body.bytes, size };
@@ -322,7 +326,9 @@ export async function copyPhotos(DB, client_id, content, { fetchImpl = fetch, no
   // What each image becomes: {id, w, h} or {why}.
   const fetches = new Map(); // https URL → index into toFetch (fetched once even when used twice)
   const toFetch = [];
-  for (const item of items) {
+  // The logo takes its fetch slot first: 12 photos (the most validateContent allows) and a logo are 13 images, and a
+  // site without its logo is worse off than one with 11 photos.
+  for (const item of [...items.filter((i) => i.kind === "logo"), ...items.filter((i) => i.kind !== "logo")]) {
     const file = typeof item.url === "string" ? FILE_URL.exec(item.url.trim()) : null;
     if (file) {
       const row = byId.get(file[1]);
