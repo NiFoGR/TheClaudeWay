@@ -9,8 +9,13 @@ const RED_HOURS = 48;
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+// Everything is stored in UTC. A timestamp written without a zone ("2026-10-31 22:30:00", SQLite's datetime()) is
+// read as UTC too: Date.parse would read it as the machine's local time, which differs between Workers and laptops.
+const NO_ZONE = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+
 function toMs(value, what) {
-  const ms = value instanceof Date ? value.getTime() : Date.parse(String(value));
+  const str = String(value).trim();
+  const ms = value instanceof Date ? value.getTime() : Date.parse(NO_ZONE.test(str) ? `${str.replace(" ", "T")}Z` : str);
   if (!Number.isFinite(ms)) throw new Error(`The ${what} isn't a valid date: ${JSON.stringify(String(value))}`);
   return ms;
 }

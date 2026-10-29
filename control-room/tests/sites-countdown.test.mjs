@@ -58,3 +58,10 @@ test("live exactly at the due moment is on time; a past-due site's hoursLeft is 
   assert.equal(countdown(due, null, new Date("2026-11-02T23:00:00Z")).level, "red");
   assert.equal(countdown(due, null, "2026-10-25T10:00:00Z").hoursLeft, 156.5);
 });
+
+test("a timestamp without a zone is read as UTC, whatever the machine's time zone", () => {
+  assert.equal(dueFrom("2026-10-24 22:30:00"), "2026-10-31T22:30:00Z");
+  assert.equal(dueFrom("2026-10-24T22:30:00"), "2026-10-31T22:30:00Z");
+  assert.equal(countdown("2026-10-31 22:30:00", null, new Date("2026-10-25T10:00:00Z")).hoursLeft, 156.5);
+  assert.throws(() => countdown("", null, new Date()), /due date/);
+});
