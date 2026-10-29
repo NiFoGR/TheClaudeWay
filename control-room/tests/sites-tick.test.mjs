@@ -548,6 +548,64 @@ test("chat leads: the site's own email when the form has none; a lead over 30 da
   assert.equal((await one(DB, "SELECT notified_at FROM site_leads WHERE id = 'old'")).notified_at, null);
 });
 
+test("a stuck todo Nik closed himself doesn't block the next fire's; one closed for this fire isn't filed again", async () => {
+  const fire = (DB, at) =>
+    insert(DB, "routine_fires", { id: `f-${at.getTime()}`, routine: "build", reason: "build: client c1", http_status: 200, error: null, at: iso(at) });
+  const closed = (DB, created, status = "done") =>
+    insert(DB, "todos", {
+      id: `old-${status}`, kind: "build", client_id: "c1", title: "old", dedupe: "build:c1:stuck", status,
+      created_at: iso(created), done_at: iso(later(MIN, created)),
+    });
+  const draft = { status: "draft", content: null, content_at: null, host: null };
+
+  // Ticked done (dedupe kept) for an earlier fire; Build pressed again 3 h 1 min ago and still nothing → a new todo.
+  const DB = await setup({ site: draft });
+  await closed(DB, ago(10 * HOUR));
+  await fire(DB, ago(3 * HOUR + MIN));
+  assert.match(await run(DB, NOW, doh({})), /stuck 1/);
+  const open = await openTodo(DB, "build:c1:stuck");
+  assert.equal(open.title, "Claude hasn't built Smith Roofing's site yet: press Build again on the Site page");
+  assert.equal((await one(DB, "SELECT status FROM todos WHERE id = 'old-done'")).status, "done");
+  assert.match(await run(DB, later(5 * MIN), doh({})), /stuck 0/);
+
+  // Dismissed after this fire → left dismissed, not filed again.
+  const DB2 = await setup({ site: draft });
+  await fire(DB2, ago(4 * HOUR));
+  await closed(DB2, ago(HOUR), "dismissed");
+  assert.match(await run(DB2, NOW, doh({})), /stuck 0/);
+  assert.equal(await openTodo(DB2, "build:c1:stuck"), null);
+});
+
+test("approved sites waiting to go live are checked before sites still being built", async () => {
+  const DB = await setup({ site: { host_check: JSON.stringify({ at: iso(ago(20 * MIN)), ok: false, detail: "x", fails: 1 }) } });
+  for (let i = 2; i <= 6; i++) await addClient(DB, `c${i}`, `Client ${i}`, { site: { host: `www.site${i}.co.uk`, status: "review" } });
+  const dns = doh({});
+  assert.match(await run(DB, NOW, dns), /^checked 5,/);
+  assert.equal(dns.hosts()[0], HOST);
+  assert.equal(dns.hosts().length, 5);
+});
+
+test("chat leads with nowhere to send them don't hold up other clients' leads", async () => {
+  const DB = await setup({ site: { live_at: "2026-10-26T10:00:00Z" } });
+  const blank = { ...FORM, business: { ...FORM.business, leads_email: "", email: "" } };
+  await addClient(DB, "c2", "No Email Ltd", {
+    site: { host: "www.noemail.co.uk", live_at: "2026-10-26T10:00:00Z", content: JSON.stringify({ ...CONTENT, business: { ...CONTENT.business, email: "" } }) },
+    onboarding: { form: JSON.stringify(blank) },
+  });
+  for (let i = 1; i <= 4; i++) {
+    await insert(DB, "site_leads", {
+      id: `n${i}`, client_id: "c2", source: "chat", name: "X", phone: "07700 900000", message: "Visitor: 07700 900000",
+      session: `n${i}`.padEnd(16, "n"), created_at: iso(ago(2 * HOUR)), updated_at: iso(ago(HOUR + i * MIN)),
+    });
+  }
+  await insert(DB, "site_leads", {
+    id: "l1", client_id: "c1", source: "chat", name: "Dave", phone: "07700 900123", message: "Visitor: 07700 900123",
+    session: "s".repeat(16), created_at: iso(ago(30 * MIN)), updated_at: iso(ago(20 * MIN)),
+  });
+  assert.match(await run(DB, NOW, doh(OURS)), /leads 1/);
+  assert.deepEqual((await all(DB, "SELECT id FROM messages")).map((m) => m.id), ["enquiry:l1"]);
+});
+
 test("STEPS: sites runs every 5 minutes, after calls and before purge", () => {
   const names = STEPS.map((s) => s.name);
   assert.equal(names.indexOf("sites"), names.indexOf("calls") + 1);

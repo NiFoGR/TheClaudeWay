@@ -16,11 +16,12 @@
 //    when that changes); content not posted 3 h after the build Routine accepted a fire → build:<client_id>:stuck.
 // 4. Chat leads: a chat with contact details, quiet for 10 minutes and not yet emailed, goes to the business through
 //    notifyLead (no todo when there's no mailbox: it stays on the Site page and goes once a mailbox exists, if that's
-//    within 30 days of the chat).
+//    within 30 days of the chat). At most 3 are emailed a run, from the 12 oldest, so a lead with no address to go
+//    to (it stays un-emailed) can't hold up the others.
 // 5. pruneHits: rate_hits windows older than 48 h.
 //
 // D1 budget: 1 select for the DNS candidates, then per site 1 write (+ 2 for ns_wait, + 8 to go live), 1 select for
-// the todos (+ 1 each), 1 select for chat leads (+ 6 each), 1 prune. With ctx.budget, nothing is started that
+// the todos (+ 1 each, + 1 to set aside a stuck todo Nik closed before the latest fire), 1 select for chat leads (+ 6 each), 1 prune. With ctx.budget, nothing is started that
 // would leave fewer than 2 queries for the tick's own closing writes; what's left waits for the next run.
 // Tested in control-room/tests/sites-tick.test.mjs.
 import { sendClientMail } from "../client-mail.js";
@@ -47,6 +48,7 @@ const DUE_SOON_HOURS = 48;
 const STUCK_MS = 3 * HOUR_MS;
 const CHAT_QUIET_MS = 10 * MIN_MS;
 const LEADS_PER_RUN = 3;
+const LEADS_LOOKED_AT = 12; // read per run, so leads with nowhere to go (no address) can't hold up the rest
 const TODOS_PER_RUN = 6;
 const RESERVE = 2; // left for the tick's closing writes (last runs + beat)
 const FIRES_LOOKED_AT = 1000; // newest routine_fires rows read for the stuck rule (as sites/health.js does)
@@ -95,12 +97,14 @@ const siteSelect = (where) => `WITH s AS (
   ${where}`;
 
 // Also an approved site whose last check passed and that has just been opened (seen_at): it goes live on this run
-// from that check, without waiting up to 15 minutes for the next one (no DNS lookup for it). Those come first.
+// from that check, without waiting up to 15 minutes for the next one (no DNS lookup for it). Those come first, then
+// approved sites still waiting to go live (the guarantee clock is on them), then the rest, oldest check first.
 const READY_SQL = `(s.status = 'live' AND s.live_at IS NULL AND s.seen_at IS NOT NULL
     AND json_valid(s.host_check) AND json_extract(s.host_check, '$.ok') = 1)`;
 const DUE_CHECKS_SQL = siteSelect(`WHERE s.status <> 'off' AND s.host IS NOT NULL
     AND (s.checked_at IS NULL OR s.checked_at <= CASE WHEN s.live_at IS NULL THEN ?1 ELSE ?2 END OR ${READY_SQL})
-  ORDER BY NOT ${READY_SQL}, s.checked_at IS NOT NULL, s.checked_at, s.client_id
+  ORDER BY NOT ${READY_SQL}, NOT (s.status = 'live' AND s.live_at IS NULL), s.checked_at IS NOT NULL, s.checked_at,
+    s.client_id
   LIMIT ?3`);
 const ONE_SITE_SQL = siteSelect("WHERE s.client_id = ?1");
 
@@ -220,7 +224,8 @@ const TODO_FACTS_SQL = `WITH fires AS MATERIALIZED (
        WHERE f.reason IN ('build: client ' || cs.client_id, 'changes: client ' || cs.client_id)) AS fired_at,
     (SELECT t.title FROM todos t WHERE t.dedupe = 'build:' || cs.client_id || ':due') AS due_title,
     (SELECT t.status FROM todos t WHERE t.dedupe = 'build:' || cs.client_id || ':due') AS due_status,
-    EXISTS (SELECT 1 FROM todos t WHERE t.dedupe = 'build:' || cs.client_id || ':stuck') AS stuck_filed
+    (SELECT t.status FROM todos t WHERE t.dedupe = 'build:' || cs.client_id || ':stuck') AS stuck_status,
+    (SELECT t.created_at FROM todos t WHERE t.dedupe = 'build:' || cs.client_id || ':stuck') AS stuck_created
   FROM client_sites cs
   LEFT JOIN clients c ON c.id = cs.client_id
   LEFT JOIN onboarding o ON o.client_id = cs.client_id
@@ -268,12 +273,21 @@ async function todosFor(DB, at, budget) {
       }
     }
 
-    // Stuck: the Routine accepted a build or changes fire 3 h ago and no content has come since.
+    // Stuck: the Routine accepted a build or changes fire 3 h ago and no content has come since. One todo per fire:
+    // an open one, or one Nik closed after this fire, stands; one he ticked or dismissed before it (Done and Dismiss
+    // keep the dedupe) is set aside, or it would hold the dedupe and no later fire would ever get a todo.
     const fired = ms(site.fired_at);
     const contentAt = ms(site.content_at);
-    if (fired !== null && at.getTime() - fired >= STUCK_MS && (contentAt === null || contentAt < fired) && Number(site.stuck_filed) !== 1) {
-      if (written >= TODOS_PER_RUN || !room(budget, COST.todo)) break;
+    const stale = site.stuck_status != null && site.stuck_status !== "open" && (ms(site.stuck_created) ?? 0) < (fired ?? 0);
+    if (fired !== null && at.getTime() - fired >= STUCK_MS && (contentAt === null || contentAt < fired)
+      && (site.stuck_status == null || stale)) {
+      if (written >= TODOS_PER_RUN || !room(budget, COST.todo + (stale ? 1 : 0))) break;
       written++;
+      if (stale) {
+        await DB.prepare(
+          `UPDATE todos SET dedupe = dedupe || '@' || COALESCE(done_at, created_at) WHERE dedupe = ? AND status <> 'open'`,
+        ).bind(`build:${id}:stuck`).run();
+      }
       const built = Number(site.has_content) === 1;
       const title = built
         ? `Claude hasn't made the changes to ${name}'s site yet: press Ask Claude for changes again on the Site page`
@@ -294,7 +308,7 @@ async function todosFor(DB, at, budget) {
 // Only the content's business name and email are read (notifyLead's fallbacks), never the whole content (up to
 // 600 KB of JSON to parse on a 10 ms CPU budget). Leads are read per site through site_leads_client (client_id,
 // created_at): the CROSS JOIN keeps client_sites as the outer table, so a run reads only the last 30 days' leads, not
-// every enquiry ever. ?1 = quiet since, ?2 = created since, ?3 = the limit.
+// every enquiry ever. ?1 = quiet since, ?2 = created since, ?3 = how many to read.
 const CHAT_LEADS_SQL = `SELECT sl.*, cs.place_id AS site_place_id, c.name AS client_name, o.form AS form,
     CASE WHEN json_valid(cs.content) THEN json_extract(cs.content, '$.business.name') END AS content_name,
     CASE WHEN json_valid(cs.content) THEN json_extract(cs.content, '$.business.email') END AS content_email,
@@ -310,11 +324,11 @@ const LEADS_KEPT_MS = 30 * 24 * HOUR_MS; // an un-emailed chat lead older than t
 
 async function chatLeads(DB, at, budget) {
   const { results } = await DB.prepare(CHAT_LEADS_SQL)
-    .bind(iso(new Date(at.getTime() - CHAT_QUIET_MS)), iso(new Date(at.getTime() - LEADS_KEPT_MS)), LEADS_PER_RUN)
+    .bind(iso(new Date(at.getTime() - CHAT_QUIET_MS)), iso(new Date(at.getTime() - LEADS_KEPT_MS)), LEADS_LOOKED_AT)
     .all();
   let sent = 0;
   for (const row of results ?? []) {
-    if (Number(row.has_mailbox) !== 1) break;
+    if (Number(row.has_mailbox) !== 1 || sent >= LEADS_PER_RUN) break;
     if (!room(budget, COST.lead)) break;
     const { site_place_id, content_name, content_email, client_name, form, has_mailbox, ...lead } = row;
     const site = {
