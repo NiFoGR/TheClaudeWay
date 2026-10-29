@@ -10,8 +10,8 @@
 //
 // The slug is the only key to either link (db.js makes it unguessable). An unknown slug, a site with no content, or a
 // /w/ link for a site that isn't live is a plain noindex 404 that names nobody. A trailing slash (not the home page)
-// is a 301 without it. Every response carries nosniff, the referrer policy, `x-robots-tag: noindex`, and on HTML the
-// client-site CSP; none sets a cookie.
+// is a 301 without it. Every response carries nosniff, the referrer policy, `x-robots-tag: noindex`, and on HTML a
+// CSP (the client-site one on /w/, a no-script one on /c/: PREVIEW_CSP); none sets a cookie.
 //
 // D1: one read for the site (the row with the client's name and package, the onboarding form and the lead joined),
 // plus listFiles (sizes the content lacks) when a page is drawn. The contact POST does its own (contact.js).
@@ -70,16 +70,22 @@ async function siteForSlug(DB, slug) {
   };
 }
 
+// Nik's preview is drawn on the Control Room's own origin (where his login cookie lives) from text Claude wrote, and
+// has no form and no chat, so it needs no script at all: script-src 'none' (the JSON-LD block is data, never run) and
+// it can't be framed. The temporary link keeps the client-site policy, since its contact form's fill timer is inline.
+export const PREVIEW_CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'none'; "
+  + "frame-src https://maps.google.com https://www.google.com; form-action 'self'; base-uri 'none'; frame-ancestors 'none'";
+
 // The headers every preview and temporary-link response carries (the handler's own are kept), no cookie, no body
 // for HEAD.
-function finish(request, res) {
+function finishWith(request, res, csp = CLIENT_CSP) {
   const out = new Response(request.method === "HEAD" ? null : res.body, res);
   out.headers.delete("set-cookie");
   out.headers.set("x-content-type-options", "nosniff");
   out.headers.set("referrer-policy", "strict-origin-when-cross-origin");
   out.headers.set("x-robots-tag", "noindex");
   if ((out.headers.get("content-type") ?? "").startsWith("text/html") && !out.headers.has("content-security-policy")) {
-    out.headers.set("content-security-policy", CLIENT_CSP);
+    out.headers.set("content-security-policy", csp);
   }
   return out;
 }
@@ -126,7 +132,7 @@ export async function servePreview(context, kind, now = new Date()) {
   } catch (err) {
     const path = new URL(context.request.url).pathname.slice(0, 200);
     console.error(`${path} couldn't be served: ${String(err?.message ?? err).split("\n")[0].slice(0, 300)}`);
-    return finish(context.request, htmlResponse(plainPage(TRY_AGAIN), 500, "no-store"));
+    return finishWith(context.request, htmlResponse(plainPage(TRY_AGAIN), 500, "no-store"));
   }
 }
 
@@ -138,6 +144,7 @@ async function draw(context, kind, now) {
   const url = new URL(request.url);
   const parts = splitPath(url.pathname, prefix);
   const cache = preview ? "no-store" : TEMP_CACHE;
+  const finish = (req, res) => finishWith(req, res, preview ? PREVIEW_CSP : CLIENT_CSP);
   const gone = (sentence) => finish(request, htmlResponse(plainPage(sentence, { back: preview }), 404, "no-store"));
   if (!parts) return gone(preview ? NO_SITE : NOT_LIVE);
 

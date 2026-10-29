@@ -10,6 +10,8 @@ import test from "node:test";
 import { onRequest as middleware } from "../functions/_middleware.js";
 import * as previewRoute from "../functions/c/[slug]/[[path]].js";
 import * as tempRoute from "../functions/w/[slug]/[[path]].js";
+import { PREVIEW_CSP } from "../functions/_lib/sites/preview.js";
+import { CLIENT_CSP } from "../functions/_lib/sites/serve.js";
 import { fakeD1 } from "./helpers/fakeD1.mjs";
 
 const HOST = "www.smithroofing.co.uk";
@@ -306,4 +308,32 @@ test("/w/<slug>/ that can't be drawn → a plain 500 that names nobody and shows
   assert.ok(!html.includes("Broken Ltd"));
   assert.ok(!html.includes("SiteContent"));
   assert.equal(errors.length, 1);
+});
+
+test("the preview runs no script on the Control Room's origin; the temporary link keeps the client-site policy", async () => {
+  const { call } = server(await setup());
+  const res = await call(`https://goldbarwebsites.pages.dev/c/${SLUG}/`, logged);
+  assert.equal(res.status, 200);
+  const csp = res.headers.get("content-security-policy");
+  assert.equal(csp, PREVIEW_CSP);
+  assert.ok(csp.includes("script-src 'none'"));
+  assert.ok(csp.includes("frame-ancestors 'none'"));
+  assert.ok(!/script-src[^;]*unsafe-inline/.test(csp));
+  // Nothing on the preview page needs a script: no inline one besides the JSON-LD data block.
+  const html = await res.text();
+  for (const [tag] of html.matchAll(/<script\b[^>]*>/g)) assert.equal(tag, '<script type="application/ld+json">');
+  const missing = await call(`https://goldbarwebsites.pages.dev/c/${SLUG}/nope`, logged);
+  assert.equal(missing.headers.get("content-security-policy"), PREVIEW_CSP);
+
+  const { call: live } = server(await setup({ status: "live" }));
+  const temp = await live(`https://aetoswebsites.com/w/${SLUG}/contact`);
+  assert.equal(temp.headers.get("content-security-policy"), CLIENT_CSP);
+});
+
+test("opening the temporary link never stamps seen_at (only the client's own host does, which starts the go-live)", async () => {
+  const DB = await setup({ status: "live" });
+  const { call } = server(DB);
+  assert.equal((await call(`https://aetoswebsites.com/w/${SLUG}/`)).status, 200);
+  const row = await DB.prepare("SELECT seen_at FROM client_sites WHERE client_id = ?").bind("c1").first();
+  assert.equal(row.seen_at, null);
 });
