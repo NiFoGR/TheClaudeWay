@@ -7,7 +7,7 @@
 // and runs fulfilCheckout itself, so the onboarding link shows even when the webhook is late.
 // Tested in control-room/tests/checkout.test.mjs (params), checkout-route.test.mjs and thanks.test.mjs (the rest).
 import { renderExpired, renderNotFound } from "./demo/render.js";
-import { demoBySlug, recordEvent } from "./demo-db.js";
+import { demoBySlug } from "./demo-db.js";
 import { checkoutWeekend, offerFor, termsFor } from "./offer.js";
 import { renderOrder, renderThanks } from "./order-page.js";
 import { beat } from "./routines.js";
@@ -71,7 +71,9 @@ export function checkoutParams({ pkg, weekend, lead, slug, email, origin }) {
     ...common,
     mode: "payment",
     customer_creation: "always",
-    invoice_creation: { enabled: true },
+    // The build invoice is tagged, so invoice.paid records it as the build fee (build:<customer>) and any later
+    // one-off invoice for the same customer as money of its own (stripe-events.js's invoicePaid).
+    invoice_creation: { enabled: true, invoice_data: { metadata: { aetos_build: "1" } } },
     line_items: [build],
     payment_intent_data: { metadata: { place_id, package: "website" } },
   };
@@ -84,13 +86,16 @@ export const CHECKOUT_LIMIT = 5;
 const LIMIT_WINDOW_MS = 60 * 60_000;
 const PACKAGE_NAMES = new Set(["full", "website"]);
 
-// The slug's order_click events in the window. place_id first, so it reads through demo_events_place.
-const CLICKS_SQL = `SELECT COUNT(*) AS n FROM demo_events
-  WHERE place_id = ? AND kind = 'order_click' AND slug = ? AND at > ?`;
 const CLIENT_SQL = "SELECT 1 AS yes FROM clients WHERE place_id = ? AND cancelled_on IS NULL LIMIT 1";
-// recordEvent stores nothing once a demo's expires_at has passed, but a won prospect's demo never ends (demoBySlug), so
-// a client who stopped paying can order again from it: their order_click is written here instead, so the limit holds.
-const CLICK_SQL = "INSERT INTO demo_events (slug, place_id, kind, at) VALUES (?, ?, 'order_click', ?)";
+// The limit check and the order_click in one statement (stage 4's recordEvent, made conditional): stored only while the
+// slug has fewer than ?5 order_clicks after ?4 (60 minutes ago), so a burst of POSTs arriving together can't all read
+// "4 so far" and each open a checkout. place_id first, so the count reads through demo_events_place. It is written here
+// rather than by recordEvent also because recordEvent stores nothing once a demo's expires_at has passed, while a won
+// prospect's demo never ends (demoBySlug): a client who stopped paying can order again from it, and the limit holds.
+// ?1 slug, ?2 place_id, ?3 at, ?4 window start, ?5 CHECKOUT_LIMIT.
+const CLICK_SQL = `INSERT INTO demo_events (slug, place_id, kind, at) SELECT ?1, ?2, 'order_click', ?3
+  WHERE (SELECT COUNT(*) FROM demo_events
+    WHERE place_id = ?2 AND kind = 'order_click' AND slug = ?1 AND at > ?4) < ?5`;
 
 function clock(now, fn) {
   const at = now instanceof Date ? now : new Date(now ?? NaN);
@@ -139,9 +144,10 @@ const orderHtml = (order, notice, now) => renderOrder({
   lead: order.lead, slug: order.demo.slug, offer: offerFor(now), extras: order.extras, notice, trader: order.trader,
 });
 
-// The "preview ended" page: 404 never says whose; 410 names who it was made for and, like the demo page's, gives their
-// thread's mailbox address when there is one.
-const notFound = () => ({ status: 404, html: renderExpired() });
+// Stage 4's pages, as GET /d/:slug sends them (05-demo.md Part A): an unknown slug is the 404 "This page doesn't
+// exist." page, which never says whose; an ended demo the 410 "This preview has ended" page, naming who it was made
+// for and, like the demo page's, giving their thread's mailbox address when there is one.
+const notFound = () => ({ status: 404, html: renderNotFound() });
 const ended = (read) => ({ status: 410, html: renderExpired({ name: read.order.lead.name, contact_email: read.contact_email }) });
 
 /**
@@ -166,8 +172,9 @@ const refusal = (err) => String(err?.message ?? err ?? "").split("\n")[0].replac
  * POST /d/:slug/checkout → {redirect: Stripe Checkout's URL} or {status, html} (the order page with a notice).
  * In this order: a package other than full/website → 400 `failed`; unknown slug → 404; ended demo → 410; Stripe not
  * connected → 503 `not_connected` + todo setup:stripe; a client already → 409 `already_client`; CHECKOUT_LIMIT
- * order_clicks for the slug in the last 60 minutes → 429 `busy`. Then the order_click is recorded (failed attempts
- * count) and the Checkout Session made: weekend price when checkoutWeekend(now, seen === "weekend"), the prospect's
+ * order_clicks for the slug in the last 60 minutes → 429 `busy` (checked by the statement that records this
+ * order_click, so racing POSTs can't get past it; a refused 6th isn't recorded). Then, with the order_click recorded
+ * (failed attempts count), the Checkout Session is made: weekend price when checkoutWeekend(now, seen === "weekend"), the prospect's
  * email prefilled. Stripe refusing (or unreachable) → 502 `failed`, todo payment:checkout:<place_id> and a failed
  * `stripe` heartbeat (the red Payments light). Never a Stripe call before every check has passed.
  */
@@ -176,7 +183,8 @@ export async function startCheckout(DB, env, { slug, pkg, seen, origin, now, fet
   const read = await readOrder(DB, env, slug, at);
   const order = read?.order ?? null;
   if (!PACKAGE_NAMES.has(pkg)) {
-    return { status: 400, html: order && !order.expired ? orderHtml(order, "failed", at) : renderExpired() };
+    const html = !order ? renderNotFound() : order.expired ? ended(read).html : orderHtml(order, "failed", at);
+    return { status: 400, html };
   }
   if (!order) return notFound();
   if (order.expired) return ended(read);
@@ -190,12 +198,9 @@ export async function startCheckout(DB, env, { slug, pkg, seen, origin, now, fet
   }
   if (order.alreadyClient) return { status: 409, html: orderHtml(order, "already_client", at) };
   const since = iso(at.getTime() - LIMIT_WINDOW_MS);
-  const clicks = await DB.prepare(CLICKS_SQL).bind(lead.place_id, demo.slug, since).first();
-  if (Number(clicks?.n ?? 0) >= CHECKOUT_LIMIT) return { status: 429, html: orderHtml(order, "busy", at) };
+  const { meta } = await DB.prepare(CLICK_SQL).bind(demo.slug, demo.place_id, iso(at), since, CHECKOUT_LIMIT).run();
+  if (!(meta?.changes > 0)) return { status: 429, html: orderHtml(order, "busy", at) };
 
-  if (!(await recordEvent(DB, demo, "order_click", at))) {
-    await DB.prepare(CLICK_SQL).bind(demo.slug, demo.place_id, iso(at)).run();
-  }
   const params = checkoutParams({
     pkg, weekend: checkoutWeekend(at, seen === "weekend"), lead, slug: demo.slug,
     email: order.prospect?.email ?? null, origin,
@@ -219,13 +224,14 @@ export async function startCheckout(DB, env, { slug, pkg, seen, origin, now, fet
 // ---------------------------------------------------------------- the thanks page (Task 10)
 
 // A Checkout Session id as Stripe makes them (cs_test_… / cs_live_…, about 66 characters). Anything else never
-// reaches Stripe: it goes into the request path.
-const SESSION_ID_RE = /^cs_[A-Za-z0-9_]{1,250}$/;
+// reaches Stripe: it goes into the request path. (Exported for d/[slug]/thanks.js's fallback page.)
+export const SESSION_ID_RE = /^cs_[A-Za-z0-9_]{1,250}$/;
 const PAID = new Set(["paid", "no_payment_required"]);
 const SLUG_RE = /^[a-z0-9-]{3,60}$/;
 
 /**
- * GET /d/:slug/thanks?session_id=… → {status, html}. Fetches the Checkout Session from Stripe; it must be paid (or need
+ * GET /d/:slug/thanks?session_id=… → {status, html}. Fetches the Checkout Session from Stripe (its subscription
+ * expanded, for the first charge date: Stripe's trial_end); it must be paid (or need
  * no payment) and its client_reference_id (and metadata.place_id, when set) must be this demo's lead. Then it runs
  * fulfilCheckout (idempotent, so the webhook arriving before or after changes nothing) and shows "you're all set" with
  * the onboarding link, origin + "/onboard/" + token (origin = the host they came back to).
@@ -252,7 +258,8 @@ export async function thanksPage(DB, env, { slug, sessionId, origin, now, fetchI
   let session;
   try {
     const key = await stripeKey(env, DB);
-    session = await stripeApi(key?.key ?? null, "GET", `checkout/sessions/${sessionId}`, null, fetchImpl);
+    // the subscription expanded: its trial_end is the day Stripe takes the first monthly payment
+    session = await stripeApi(key?.key ?? null, "GET", `checkout/sessions/${sessionId}?expand[]=subscription`, null, fetchImpl);
   } catch (err) {
     // 404: Stripe has no such session (a made-up or other-mode id). Anything else: we can't tell yet.
     return err?.status === 404 ? notFound() : pending();

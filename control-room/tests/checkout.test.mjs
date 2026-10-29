@@ -89,7 +89,8 @@ test("exactly the Part A object (website)", () => {
     cancel_url: "https://x.test/d/smith-roofing/order?back=1",
     mode: "payment",
     customer_creation: "always",
-    invoice_creation: { enabled: true },
+    // the build invoice is tagged, so invoice.paid knows it from any later one-off invoice for the same customer
+    invoice_creation: { enabled: true, invoice_data: { metadata: { aetos_build: "1" } } },
     line_items: [
       { quantity: 1, price_data: { currency: "gbp", unit_amount: 175000, product_data: { name: "Website build: Smith Roofing" } } },
     ],
@@ -106,6 +107,7 @@ test("website", () => {
   has(s, "mode=payment");
   has(s, "customer_creation=always");
   has(s, "invoice_creation[enabled]=true");
+  has(s, "invoice_creation[invoice_data][metadata][aetos_build]=1");
   has(s, "line_items[0][price_data][unit_amount]=175000");
   assert.ok(!s.includes("line_items[1]"), "one line item only");
   assert.ok(!s.includes("subscription_data"), "no subscription_data");
