@@ -17,7 +17,8 @@
 //
 // D1 budget per request: one read for the site (the row with the client, onboarding form, lead and research owner
 // joined), plus one settings read (SELECT key, value FROM settings WHERE key IN (…)) only where the chat switch
-// matters: pages, the 404 page, /privacy and /s/chat.js. The contact form and the chat endpoint do their own reads
+// matters: pages, the 404 page, /privacy and /s/chat.js. A photo (/s/f/<id>) reads only the row's routing columns
+// (never the content JSON), then its bytes on a Cache API miss. The contact form and the chat endpoint do their own reads
 // (contact.js, chatHandler.js). /api/* never does the lookup: client sites have no /api/ paths, and the tick
 // (/api/tick, on whatever host the relay calls) keeps its whole 50-query budget. Tested in
 // control-room/tests/sites-serve.test.mjs.
@@ -58,6 +59,10 @@ const SITE_SQL = `SELECT cs.*, c.name AS name, c.package AS package, c.cancelled
   LEFT JOIN leads l ON l.place_id = cs.place_id
   LEFT JOIN research r ON r.place_id = cs.place_id
   WHERE cs.host IN (?, ?) ORDER BY cs.host = ? DESC LIMIT 1`;
+// A photo or logo (/s/f/<id>) needs only the row's routing columns: a page loads several, and each would otherwise
+// fetch and parse the whole content JSON (up to 600 KB) and the form, CPU the free plan's 10 ms can't spare (§15).
+const FILE_SITE_SQL = `SELECT cs.client_id, cs.host, cs.status, cs.seen_at, cs.content IS NOT NULL AS has_content
+  FROM client_sites cs WHERE cs.host IN (?, ?) ORDER BY cs.host = ? DESC LIMIT 1`;
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const objectOf = (v) => {
@@ -67,9 +72,10 @@ const objectOf = (v) => {
 const why = (err) => String(err?.message ?? err).split("\n")[0].slice(0, 300);
 
 /** The client_sites row for a request host, with its JSON parsed (db.js's shape plus form, lead and owner); or null. */
-async function siteFor(DB, host) {
-  const row = await DB.prepare(SITE_SQL).bind(host, wwwTwin(host), host).first();
+async function siteFor(DB, host, { file = false } = {}) {
+  const row = await DB.prepare(file ? FILE_SITE_SQL : SITE_SQL).bind(host, wwwTwin(host), host).first();
   if (!row) return null;
+  if (file) return { ...row, content: null, has_content: Number(row.has_content) === 1 };
   const lead = row.lead_place_id
     ? { rating: row.lead_rating, review_count: row.lead_review_count, maps_url: row.lead_maps_url, trade: row.lead_trade }
     : null;
@@ -122,10 +128,12 @@ const moved = (location) => new Response(null, { status: 301, headers: { locatio
 const notAllowed = (allow) => textResponse("This address can't take that kind of request.", "text/plain; charset=utf-8", 405, "no-store", { allow });
 
 // The old-site redirect for a path: exact first, then ignoring case (old sites often did).
-function redirectFor(content, path) {
+// The target must be one of the site's pages (validateContent already insists): never "//x" or "/\x", which browsers
+// read as another site.
+function redirectFor(content, path, pagePaths) {
   const list = Array.isArray(content?.redirects) ? content.redirects.filter((r) => isObj(r) && typeof r.from === "string" && typeof r.to === "string") : [];
   const hit = list.find((r) => r.from === path) ?? list.find((r) => r.from.toLowerCase() === path.toLowerCase());
-  return hit && /^\/(?!\/)/.test(hit.to) ? hit.to : null;
+  return hit && pagePaths.has(hit.to) && /^\/(?![/\\])/.test(hit.to) ? hit.to : null;
 }
 
 // /contact?sent=1: the contact page with the thanks line in place of the form (the visitor's name isn't carried
@@ -157,7 +165,7 @@ export async function serveClientHost(context = {}, now = new Date()) {
   if (!DB) return null;
   let site;
   try {
-    site = await siteFor(DB, host);
+    site = await siteFor(DB, host, { file: FILE_PATH.test(url.pathname) });
   } catch (err) {
     // Not a client site as far as we can tell (e.g. the table isn't made yet): the Control Room's routing carries on.
     console.error(`Couldn't look up ${host} in client_sites, so it gets the Control Room's routing: ${why(err)}`);
@@ -182,7 +190,7 @@ async function route(request, env, site, host, url, now, waitUntil) {
   const method = request.method;
   const read = method === "GET" || method === "HEAD";
 
-  if (site.status !== "live" || !site.content) return finish(request, htmlResponse(renderNotSetUp(), 404, "no-store"), { html: true });
+  if (site.status !== "live" || !(site.content || site.has_content)) return finish(request, htmlResponse(renderNotSetUp(), 404, "no-store"), { html: true });
   if (url.protocol === "http:") return finish(request, moved(`https://${host}${path}${search}`));
   if (site.host !== host) return finish(request, moved(`https://${site.host}${path}${search}`));
   if (path.length > 1 && path.endsWith("/")) {
@@ -199,12 +207,6 @@ async function route(request, env, site, host, url, now, waitUntil) {
     else await stamp;
   }
 
-  const content = site.content;
-  const pagePaths = new Set((Array.isArray(content.pages) ? content.pages : []).map((p) => p?.path));
-
-  // The endpoints that don't draw a page (and don't need the settings read).
-  if (path === "/s/contact") return finish(request, await handleContact(request, env, site, now, { waitUntil }));
-  if (path === "/s/chat") return finish(request, await handleChat(request, env, site, null, now));
   const file = FILE_PATH.exec(path);
   if (file) {
     if (!read) return finish(request, notAllowed("GET, HEAD"));
@@ -213,6 +215,13 @@ async function route(request, env, site, host, url, now, waitUntil) {
     });
     return finish(request, res);
   }
+
+  const content = site.content;
+  const pagePaths = new Set((Array.isArray(content.pages) ? content.pages : []).map((p) => p?.path));
+
+  // The endpoints that don't draw a page (and don't need the settings read).
+  if (path === "/s/contact") return finish(request, await handleContact(request, env, site, now, { waitUntil }));
+  if (path === "/s/chat") return finish(request, await handleChat(request, env, site, null, now));
   if (path === "/robots.txt" && read) {
     return finish(request, textResponse(renderRobots(host, Number(site.is_test) === 1), "text/plain; charset=utf-8"));
   }
@@ -232,7 +241,7 @@ async function route(request, env, site, host, url, now, waitUntil) {
       return finish(request, htmlResponse(html), { html: true });
     }
   } else if (!pagePaths.has(path) && path !== "/privacy" && path !== "/s/chat.js") {
-    const to = redirectFor(content, path);
+    const to = redirectFor(content, path, pagePaths);
     if (to) return finish(request, moved(to));
   }
 

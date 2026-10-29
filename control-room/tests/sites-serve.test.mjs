@@ -541,3 +541,54 @@ test("/s/f/<id> goes through the Cache API keyed on the canonical host: a hit co
     else delete globalThis.caches;
   }
 });
+
+// ---- Second review (Task 22): redirect targets, the photo path's light read.
+
+test("a redirect whose target isn't one of the site's pages is never followed (no //host or /\\host redirect)", async () => {
+  const DB = await setup({ seen_at: AT });
+  const bad = {
+    ...CONTENT,
+    redirects: [{ from: "/old-a", to: "/\\evil.example" }, { from: "/old-b", to: "//evil.example" }, { from: "/old-c", to: "/gone" }],
+  };
+  await DB.prepare("UPDATE client_sites SET content = ? WHERE client_id = 'c1'").bind(JSON.stringify(bad)).run();
+  const { call } = client(DB);
+  for (const path of ["/old-a", "/old-b", "/old-c"]) {
+    const res = await call(`https://${HOST}${path}`);
+    assert.equal(res.status, 404, path);
+    assert.equal(res.headers.get("location"), null, path);
+  }
+});
+
+test("/s/f/<id> reads only the site's routing columns (never the content JSON or the form)", async () => {
+  const DB = await setup({ seen_at: AT });
+  const png = Uint8Array.from(readFileSync(new URL("./fixtures/img/3x2.png", import.meta.url)));
+  const id = "d".repeat(32);
+  await insert(DB, "site_files", { id, client_id: "c1", kind: "photo", mime: "image/png", bytes: png, size: png.length, width: 3, height: 2, created_at: AT });
+  const sqls = [];
+  const spy = { prepare: (sql) => { sqls.push(sql); return DB.prepare(sql); }, batch: (s) => DB.batch(s) };
+  const { call } = client(spy);
+  const res = await call(`https://${HOST}/s/f/${id}`);
+  assert.equal(res.status, 200);
+  assert.deepEqual(new Uint8Array(await res.arrayBuffer()), png);
+  assert.equal(sqls.length, 2);
+  assert.ok(!/cs\.\*|cs\.content\s*(,|\s+FROM)|o\.form|JOIN/i.test(sqls[0]), sqls[0]);
+  // A page still reads the whole row.
+  sqls.length = 0;
+  assert.equal((await call(`https://${HOST}/`)).status, 200);
+  assert.match(sqls[0], /cs\.\*/);
+});
+
+test("/s/f/<id> on a site that isn't live, or live with no content, is the 'isn't set up yet' page", async () => {
+  const DB = await setup({ seen_at: AT });
+  const id = "e".repeat(32);
+  const png = Uint8Array.from(readFileSync(new URL("./fixtures/img/3x2.png", import.meta.url)));
+  await insert(DB, "site_files", { id, client_id: "c2", kind: "photo", mime: "image/png", bytes: png, size: png.length, width: 3, height: 2, created_at: AT });
+  const { call } = client(DB);
+  const review = await call(`https://www.other.co.uk/s/f/${id}`);
+  assert.equal(review.status, 404);
+  assert.ok((await review.text()).includes("This website isn't set up yet."));
+  await DB.prepare("UPDATE client_sites SET status = 'live', content = NULL WHERE client_id = 'c2'").run();
+  const empty = await call(`https://www.other.co.uk/s/f/${id}`);
+  assert.equal(empty.status, 404);
+  assert.ok((await empty.text()).includes("This website isn't set up yet."));
+});
