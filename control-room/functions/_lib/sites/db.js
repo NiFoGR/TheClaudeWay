@@ -17,6 +17,13 @@ import { slugFor } from "../demo/text.js";
 import { iso, parseJson } from "../util.js";
 import { TEST_SITE_HOST, canonicalHost, isOurHost, normaliseHost, underOurDomain, wwwTwin } from "./hosts.js";
 
+/**
+ * SQL that is true for every client but Setup's test client (api/sites/test-client.js makes it: notes 'TEST' and an id
+ * starting "cl_test_", which only that route makes; substr, not LIKE, so "_" isn't a wildcard). `a` is the clients
+ * table's alias. The Todo board and Money skip it; the Sites page keeps showing it.
+ */
+export const NOT_TEST_CLIENT = (a) => `NOT (COALESCE(${a}.notes, '') = 'TEST' AND substr(${a}.id, 1, 8) = 'cl_test_')`;
+
 /** client_sites.status words (section 3). */
 export const SITE_STATUSES = ["draft", "review", "live", "off"];
 /** Per-site switches in client_sites.features: a missing key means on. */

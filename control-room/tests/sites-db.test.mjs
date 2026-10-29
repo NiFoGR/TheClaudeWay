@@ -346,3 +346,36 @@ test("setHost stores a bare host only, and never one of Aetos's own hosts", asyn
   assert.equal((await getSite(DB, "c1")).host, "www.xn--bcher-kva.de");
   assert.equal((await siteByHost(DB, "bücher.de")).client_id, "c1");
 });
+
+test("two ensureSite calls at once make one row, and both get the same slug", async () => {
+  const DB = await seed();
+  const [a, b] = await Promise.all([
+    ensureSite(DB, "c1", { name: "Smith Roofing", place_id: "p-c1" }, AT),
+    ensureSite(DB, "c1", { name: "Smith Roofing", place_id: "p-c1" }, AT),
+  ]);
+  assert.equal(a.slug, b.slug);
+  assert.match(a.slug, SLUG);
+  assert.equal(Number(one(DB, "SELECT COUNT(*) AS n FROM client_sites").n), 1);
+});
+
+test("markLive called twice at once is true exactly once", async () => {
+  const DB = await seed();
+  await ensureSite(DB, "c1", { name: "Smith Roofing", place_id: "p-c1" }, AT);
+  await setHost(DB, "c1", "www.smithroofing.co.uk", AT);
+  await saveContent(DB, "c1", CONTENT, AT);
+  await setSiteStatus(DB, "c1", "live", AT, { approved: true });
+  const results = await Promise.all([markLive(DB, "c1", LATER), markLive(DB, "c1", LATER)]);
+  assert.deepEqual(results.sort(), [false, true]);
+  // The other client's onboarding row is untouched.
+  const c2 = one(DB, "SELECT status, live_at, site_url FROM onboarding WHERE client_id = 'c2'");
+  assert.deepEqual({ ...c2 }, { status: "building", live_at: null, site_url: null });
+});
+
+test("listSites's 30 days include a lead exactly 30 days old and not one a second older", async () => {
+  const DB = await seed();
+  await ensureSite(DB, "c1", { name: "Smith Roofing", place_id: "p-c1" }, AT);
+  await leadRow(DB, "l1", "c1", "2026-09-28T10:00:00Z"); // exactly 30 days before AT
+  await leadRow(DB, "l2", "c1", "2026-09-28T09:59:59Z");
+  const [row] = await listSites(DB, AT);
+  assert.equal(row.enquiries_30d, 1);
+});
