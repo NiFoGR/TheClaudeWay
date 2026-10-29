@@ -100,6 +100,13 @@ test("sites: 40 live www domains is amber at 80 of ~100 client domains (www + ap
   assert.equal(lightsOf({ sites: many(39), liveDomains: many(39).map((s) => s.host) }).sites.level, "green");
   // Without liveDomains it counts the live sites' hosts itself.
   assert.equal(lightsOf({ sites: many(40) }).sites.detail, sites.detail);
+  // 40 live sites is amber even when one is the test site's single subdomain (79 domains).
+  const mixed = [...many(39), site({ client_id: "t", name: "Test", host: "site-test.aetoswebsites.com" })];
+  const m = lightsOf({ sites: mixed }).sites;
+  assert.equal(m.level, "amber");
+  assert.equal(m.detail, "You're at 79 of ~100 client domains on this Pages project: time to plan the next one.");
+  // Sites not live yet don't count.
+  assert.equal(lightsOf({ sites: [...many(39), site({ client_id: "d", status: "review", live_at: null, due_live_at: at(120 * HOUR), host: "www.d.co.uk" })] }).sites.level, "green");
 });
 
 test("sites: no client sites is grey; chat: no chat-on site is grey", () => {
@@ -247,6 +254,20 @@ test("after importing the module, healthFromDb's lights contain one sites and on
   assert.ok(lights.findIndex((l) => l.name === "sites") >= 10, "after stage 0's 10");
   const names = lights.map((l) => l.name);
   for (const a of names) for (const b of names) if (a !== b) assert.ok(!b.startsWith(a), `${a} is a prefix of ${b}`);
+});
+
+test("siteLightsFromDb: today's chat is the UK day (after 11 pm UTC in summer it's already tomorrow)", async () => {
+  const DB = fakeD1();
+  await seed(DB);
+  await insert(DB, "settings", { key: "secret:cf_ai:account_id", value: "acc" });
+  await insert(DB, "settings", { key: "secret:cf_ai:token", value: "tok" });
+  await insert(DB, "settings", { key: "offer:chatbot_live", value: "1" });
+  await insert(DB, "chat_usage", { client_id: "c1", day: "2026-07-02", messages: 20, ai_errors: 11 });
+  await insert(DB, "chat_usage", { client_id: "c1", day: "2026-07-01", messages: 20, ai_errors: 0 });
+  const [, chat] = await siteLightsFromDb(DB, new Date("2026-07-01T23:30:00Z"));
+  assert.equal(chat.level, "amber", chat.detail);
+  const [, before] = await siteLightsFromDb(DB, new Date("2026-07-01T22:30:00Z"));
+  assert.equal(before.level, "green", before.detail);
 });
 
 test("healthFromDb: the sites and chat lights share one query; rows read stay bounded as the logs grow", async () => {

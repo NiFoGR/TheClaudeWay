@@ -101,9 +101,11 @@ function sitesLight(sites, liveDomains, at) {
         : { level: "amber", order: 1, key: fired, detail: `Claude hasn't built ${name}'s site`, fix: STUCK_FIX });
     }
   }
-  const hosts = Array.isArray(liveDomains) ? liveDomains : sites.filter((s) => s.status === "live").map((s) => s.host);
+  const hosts = (Array.isArray(liveDomains) ? liveDomains : sites.filter((s) => s.status === "live").map((s) => s.host))
+    .filter((h) => typeof h === "string" && h);
   const domains = domainCount(hosts);
-  if (domains >= DOMAINS_WARN) {
+  // 80+ domains, or 40+ live sites (section 14) when some have only one (a test site's subdomain).
+  if (domains >= DOMAINS_WARN || hosts.length >= DOMAINS_WARN / 2) {
     problems.push({
       level: "amber", order: 2, key: 0,
       detail: `You're at ${domains} of ~100 client domains on this Pages project: time to plan the next one.`,
