@@ -86,6 +86,17 @@ test("build prompt names its endpoints, payloads and rules", () => {
   ]) assert.ok(PROMPT.includes(s), `the prompt contains ${s}`);
 });
 
+test("build prompt can read the format it is pointed to, and retries every refusal", () => {
+  const text = squash(PROMPT);
+  // The JSON shape lives only in 09-build.md section 5 (the GET answer carries `limits`, not the shape), so the prompt
+  // must not forbid reading the one file it sends Claude to.
+  assert.doesNotMatch(text, /never read, edit/i, "the prompt doesn't forbid reading the format file");
+  assert.ok(text.includes("The only repository file you read is docs/rebuild/09-build.md, for the JSON format in its section 5"));
+  assert.ok(text.includes("never edit, commit or push repository files"));
+  // The content POST refuses with 400 (validateContent) or 413 (over LIMITS.bytes), both with `errors`.
+  assert.ok(text.includes("If the answer is 400 or 413, fix every line in `errors`"));
+});
+
 test("build prompt has no price and no number that contradicts LIMITS", () => {
   assert.ok(!PROMPT.includes("£"), "no £");
   assert.equal(LIMITS.pages.service, 12);
