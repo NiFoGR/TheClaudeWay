@@ -58,7 +58,7 @@ test("home and a service page: title, meta, one H1, canonical, indexable, no dem
     assert.ok(html.includes(`<link rel="canonical" href="${canonical}">`), `${path}: canonical`);
     assert.doesNotMatch(html, /noindex/, path);
     assert.doesNotMatch(html, /ae-bar/, path);
-    assert.doesNotMatch(html, /\/d\/[^"]*\/e|sendBeacon/, `${path}: no demo beacon`);
+    assert.doesNotMatch(html, /\/d\/|sendBeacon/, `${path}: no demo beacon, no /d/ link`);
   }
   assert.ok(render("/services/roof-repairs").includes('<link rel="canonical" href="https://www.smithroofing.co.uk/services/roof-repairs">'));
 });
@@ -169,6 +169,17 @@ test("performance budget: inline CSS ≤ 16 KB, page ≤ 120 KB, every <img> siz
   assert.equal(imgs.filter((i) => i.includes('fetchpriority="high"')).length, 1);
   assert.ok(imgs.slice(1).filter((i) => !i.includes("fetchpriority")).every((i) => i.includes('loading="lazy"')));
   assert.match(home, /<img class="hero-img" src="https:\/\/smithroofing\.co\.uk\/images\/slate-roof\.jpg" alt="Slate roof repaired on a terraced house in Old Town, Swindon" width="1200" height="800" fetchpriority="high"/);
+  // Step 1's rule as written ("all but the first have loading=lazy") holds whenever the hero is the first <img>: a
+  // site with no logo (the wordmark instead) and a hero photo.
+  const noLogo = fx();
+  noLogo.theme.logo = "";
+  for (const path of ["/", "/services/chimney-repairs"]) {
+    const all = imgsOf(render(path, {}, noLogo));
+    assert.ok(all.length >= (path === "/" ? 2 : 1), path);
+    assert.match(all[0], /fetchpriority="high"/, path);
+    assert.doesNotMatch(all[0], /loading=/, path);
+    for (const i of all.slice(1)) assert.match(i, /loading="lazy"/, `${path}: ${i}`);
+  }
   // A copied file (/s/f/<id>) is a photo too, with its own size and alt.
   assert.match(render("/services/chimney-repairs"), /<img class="hero-img" src="\/s\/f\/a1b2c3d4e5f60718293a4b5c6d7e8f90" alt="Rebuilt brick chimney stack with new lead flashing in Swindon" width="1200" height="900"/);
 });
@@ -176,8 +187,9 @@ test("performance budget: inline CSS ≤ 16 KB, page ≤ 120 KB, every <img> siz
 test("preview: bar, every nav link under /c/<slug>/, a note instead of the form", () => {
   for (const path of PAGES) {
     const html = render(path, { previewBar: PREVIEW, base: "/c/s1", noindex: true, chat: true });
-    assert.ok(html.includes(h(PREVIEW)), `${path}: the bar text`);
-    assert.match(html, /<div class="ae-bar"><p>Preview of Smith Roofing&#39;s site · Ready to approve · <a href="\/#\/sites">Back to the Control Room<\/a><\/p><\/div>/);
+    // The bar text as written (element text: only & < > need escaping, so the apostrophe stays as it is).
+    assert.ok(html.includes(PREVIEW), `${path}: the bar text`);
+    assert.match(html, /<div class="ae-bar"><p>Preview of Smith Roofing's site · Ready to approve · <a href="\/#\/sites">Back to the Control Room<\/a><\/p><\/div>/);
     for (const href of hrefsOf(navOf(html))) assert.ok(href.startsWith("/c/s1/"), `${path}: nav ${href}`);
     assert.ok(html.includes("Works once the site is live."), `${path}: the note`);
     assert.doesNotMatch(html, /<form method="post"|<form[^>]*method="post"/, path);
@@ -301,6 +313,24 @@ test("reviews page shows every content review; home shows three", () => {
   assert.ok(count(render("/"), '<figure class="rev">') <= 3);
 });
 
+test("both review links open the review URL in a new tab with rel=noopener; none without a review URL", () => {
+  const NEW_TAB = 'target="_blank" rel="noopener">Leave us a Google review';
+  for (const trade of ["roofer", "landscaper"]) {
+    const c = fx();
+    c.business.trade = trade;
+    const reviews = render("/reviews", {}, c);
+    const foot = footerOf(reviews);
+    const body = reviews.replace(foot, "");
+    assert.ok(body.includes(`<a class="btn" href="${h(REVIEW_URL)}" ${NEW_TAB}`), `${trade}: the /reviews button`);
+    assert.ok(foot.includes(`<a href="${h(REVIEW_URL)}" ${NEW_TAB}`), `${trade}: the footer link`);
+    // Privacy is on the same site: same tab.
+    assert.match(foot, /<a href="\/privacy">Privacy<\/a>/, `${trade}: privacy stays in the same tab`);
+    for (const path of ["/", "/reviews", "/contact"]) {
+      assert.doesNotMatch(render(path, { reviewUrl: "" }, c), /Leave us a Google review|writereview/, `${trade} ${path}: no review link`);
+    }
+  }
+});
+
 test("services and areas hubs list the extra form services and areas without pages", () => {
   const form = structuredClone(CTX.form);
   form.services.push({ name: "Fascias and soffits", on: true, own: true });
@@ -335,6 +365,7 @@ test("hostile content never becomes markup", () => {
   c.reviews[0].author = X;
   for (const path of ["/", "/reviews", "/contact"]) {
     const html = render(path, { chat: true, previewBar: X }, c);
+    assert.ok(html.includes('<div class="ae-bar"><p>"&gt;&lt;img src=x onerror=alert(1)&gt;&lt;script&gt;alert(2)&lt;/script&gt; · '), `${path}: the bar is escaped`);
     // h() leaves "onerror=alert(1)" readable as plain text (it can't run): the tags themselves are checked below.
     assert.doesNotMatch(html, /<img src=x|<script>alert|"\s*onerror=alert|javascript:/, path);
     // Only the fixed handlers, only our own scripts.

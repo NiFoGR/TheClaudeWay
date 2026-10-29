@@ -278,6 +278,10 @@ const MESSAGE_MAX = 2000;
 const NOTE_LIVE = "Works once the site is live.";
 const BACK = '<a href="/#/sites">Back to the Control Room</a>';
 
+// Element text (never an attribute): h() with the apostrophe and quotes left as written, so the preview bar reads
+// "Smith Roofing's site" in the HTML as on screen. Only & < > can start markup between tags.
+const textHtml = (v) => h(v).replace(/&#39;|&quot;|&#96;/g, (e) => ({ "&#39;": "'", "&quot;": '"', "&#96;": "`" })[e]);
+
 /** Whether DemoData is a client site's (sites/sitedata.js): live mode with its pages. */
 const isSiteData = (data) => Array.isArray(data?.live?.pages) && Boolean(data.live.page) && typeof data.live.page === "object";
 
@@ -371,10 +375,10 @@ export function siteReviewsHtml(data, max = 12, { heading = true } = {}) {
   return `${heading ? "<h2>What customers say</h2>\n" : ""}<p class="sub">Reviews from Google</p>\n<div class="revs">${cards.join("")}</div>`;
 }
 
-/** "Leave us a Google review" as a button, when there's a review link; else "". */
+/** "Leave us a Google review" as a button opening in a new tab (rel="noopener"), when there's a review link; else "". */
 export function siteReviewLink(data) {
   const url = safeHttps(data.live.footer?.review_url);
-  return url ? `<p><a class="btn" href="${h(url)}">Leave us a Google review</a></p>` : "";
+  return url ? `<p><a class="btn" href="${h(url)}" target="_blank" rel="noopener">Leave us a Google review</a></p>` : "";
 }
 
 /** The embedded Google map (home and contact): the full address when shown, else the town; "" with neither. */
@@ -430,7 +434,7 @@ function siteFooter(data, tel, year) {
   const phone = tel ? `<a href="${h(tel)}">${h(nap.phone)}</a>` : h(nap.phone);
   const review = safeHttps(f.review_url);
   const privacy = str(f.privacy_href).startsWith("/") ? f.privacy_href : "/privacy";
-  const links = [review ? `<a href="${h(review)}">Leave us a Google review</a>` : "", `<a href="${h(privacy)}">Privacy</a>`].filter(Boolean).join(" · ");
+  const links = [review ? `<a href="${h(review)}" target="_blank" rel="noopener">Leave us a Google review</a>` : "", `<a href="${h(privacy)}">Privacy</a>`].filter(Boolean).join(" · ");
   return [
     '<footer class="foot"><div class="wrap">',
     `<p><b>${name}</b>${nap.phone ? ` · ${phone}` : ""}${str(nap.address) ? ` · ${h(nap.address)}` : ""}</p>`,
@@ -461,7 +465,7 @@ function renderSitePage(data, tpl, mode, date) {
     `<style>:root{--main:${colourOf(data)}}\n${SITE_SHELL_CSS}\n${css}\n${SITE_CSS}${str(live.preview_bar) ? `\n${PREVIEW_CSS}` : ""}</style>`,
     ld.length ? `<script type="application/ld+json">${ldJson(ld)}</script>` : "",
   ].filter(Boolean).join("\n");
-  const bar = str(live.preview_bar) ? `<div class="ae-bar"><p>${h(live.preview_bar)} · ${BACK}</p></div>` : "";
+  const bar = str(live.preview_bar) ? `<div class="ae-bar"><p>${textHtml(live.preview_bar)} · ${BACK}</p></div>` : "";
   const call = tel ? `<a class="callbar" href="${h(tel)}">Call ${h(data.business.name)}</a>` : "";
   const chat = live.chat === true && !bar ? `<script src="${h(base)}/s/chat.js" defer></script>` : "";
   return `<!doctype html>
