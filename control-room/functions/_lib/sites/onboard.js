@@ -14,7 +14,8 @@
 // then startTodos: 1 read, 1 domain write, 2 for the host and at most 8 todos (about 26 in all). Tested in control-room/tests/sites-onboard.test.mjs.
 
 import { fireRoutine } from "../routines.js";
-import { addTodo } from "../todo.js";
+import { setSetting } from "../settings.js";
+import { addTodo, closeTodos } from "../todo.js";
 import { iso, parseJson } from "../util.js";
 import { cappedBytes } from "./cappedBody.js";
 import { oneLine } from "./copy.js";
@@ -91,8 +92,39 @@ async function siteFor(DB, row, now) {
   return { client_id: s.client_id, place_id: s.place_id ?? null, host: s.host ?? null };
 }
 
+export const GBP_EMAIL_BAD = "That doesn't look like an email address.";
+const GBP_EMAIL_RE = /^[A-Za-z0-9._+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
+
+/**
+ * Nik's Google account address as typed: {ok: true, email} (trimmed, lower case; "" clears it) or {error}. Checked
+ * on the raw text too: a line break inside would otherwise only be trimmed away at the ends.
+ */
+export function checkGbpEmail(raw) {
+  if (typeof raw !== "string") return { error: GBP_EMAIL_BAD };
+  const email = raw.trim();
+  if (email && (email.length > 254 || !GBP_EMAIL_RE.test(email) || /[\r\n]/.test(raw))) return { error: GBP_EMAIL_BAD };
+  return { ok: true, email: email.toLowerCase() };
+}
+
+/**
+ * Saves `care:nik_google_email` (shared with stage 11's Care settings: whichever route saves it calls this) and,
+ * when it isn't empty, closes the `setup:gbp-email` todo, so the todo closes wherever Nik fills the address in.
+ * "" deletes the setting. → {ok: true, email} | {error} (nothing saved). D1: 1 write, + 1 when it closes the todo.
+ */
+export async function saveGbpEmail(DB, raw) {
+  const checked = checkGbpEmail(raw);
+  if (checked.error) return checked;
+  if (checked.email) {
+    await setSetting(DB, GBP_EMAIL_KEY, checked.email);
+    await closeTodos(DB, "setup:gbp-email");
+  } else {
+    await DB.prepare("DELETE FROM settings WHERE key = ?").bind(GBP_EMAIL_KEY).run();
+  }
+  return checked;
+}
+
 // The setup todo while the Google account clients invite isn't set: the form's GBP steps can't name it yet.
-// Setup's save of care:nik_google_email closes it.
+// Saving care:nik_google_email (saveGbpEmail, from Setup or stage 11's Care settings) closes it.
 function gbpEmailTodo(DB) {
   return addTodo(DB, {
     kind: "setup",
@@ -215,22 +247,39 @@ export async function submitOnboarding(DB, env, token, form, now = new Date(), {
   ]);
   if (clock.meta?.changes !== 1) return { status: 409, error: ONBOARD_ERRORS.sent };
 
-  const site = await siteFor(DB, row, now);
+  // From here on the clock has started and a second press is 409, so nothing below may turn this press into an error:
+  // the client would be told to press Send again and only ever see the thanks page, while the Routine fire or the
+  // todos were skipped. Each part is tried on its own and logged (the build API makes a missing site row itself).
+  const log = (what, err) => console.error(`Send for client ${id}: ${what} failed: ${String(err?.message ?? err).split("\n")[0].slice(0, 300)}`);
+  let site = null;
+  try {
+    site = await siteFor(DB, row, now);
+  } catch (err) {
+    log("making the site row", err);
+  }
 
   let fired;
   try {
     fired = await fire(DB, "build", `build: client ${id}`, { now });
   } catch (err) {
     // fireRoutine never throws for a failed fire; anything else is logged and counts as one (Nik presses Build again)
-    console.error(`The build Routine fire for client ${id} failed: ${String(err?.message ?? err).split("\n")[0].slice(0, 300)}`);
+    log("the build Routine fire", err);
     fired = { ok: false };
   }
   // Guarded on 'submitted': content Claude posted in the meantime has already moved it to review.
   if (fired?.ok === true) {
-    await DB.prepare("UPDATE onboarding SET status = 'building' WHERE client_id = ? AND status = 'submitted'").bind(id).run();
+    try {
+      await DB.prepare("UPDATE onboarding SET status = 'building' WHERE client_id = ? AND status = 'submitted'").bind(id).run();
+    } catch (err) {
+      log("the building status", err);
+    }
   }
 
-  await startTodos(DB, site, f, row.client, now);
+  try {
+    await startTodos(DB, site ?? { client_id: id, place_id: row.client.place_id, host: null }, f, row.client, now);
+  } catch (err) {
+    log("filing the domain and Google todos", err);
+  }
   return { status: 200, due_live_at: due };
 }
 

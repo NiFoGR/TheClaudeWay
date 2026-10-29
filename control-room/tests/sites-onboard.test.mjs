@@ -4,8 +4,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { formDefaults } from "../functions/_lib/sites/form.js";
-import { startTodos, submitOnboarding } from "../functions/_lib/sites/onboard.js";
-import { setSetting } from "../functions/_lib/settings.js";
+import { GBP_EMAIL_BAD, saveGbpEmail, startTodos, submitOnboarding } from "../functions/_lib/sites/onboard.js";
+import { getSetting, setSetting } from "../functions/_lib/settings.js";
 import { addTodo } from "../functions/_lib/todo.js";
 import { onRequestGet as getRoute, onRequestHead as headRoute } from "../functions/onboard/[token].js";
 import { onRequestPost as saveRoute } from "../functions/onboard/[token]/save.js";
@@ -428,4 +428,63 @@ test("startTodos is safe to run twice (dedupes) and needs no lead", async () => 
   assert.equal((await one(DB, "SELECT COUNT(*) AS n FROM todos WHERE dedupe = 'build:c3:domain:buy'")).n, 1);
   assert.equal((await one(DB, "SELECT COUNT(*) AS n FROM todos WHERE dedupe = 'build:c3:gbp'")).n, 1);
   assert.ok(await todo(DB, "build:c3:gphotos"));
+});
+
+test("once the clock has started, a D1 error making the site row or the todos still answers 200 and fires once", async () => {
+  const DB = await seed();
+  // D1 fails on the site row's insert and on the domain plan's write (both after the clock UPDATE)
+  const failing = new Proxy(DB, {
+    get(target, prop) {
+      if (prop === "prepare") {
+        return (sql) => {
+          if (/INSERT INTO client_sites|json_patch/.test(sql)) throw new Error("D1_ERROR: network connection lost");
+          return target.prepare(sql);
+        };
+      }
+      const v = target[prop];
+      return typeof v === "function" ? v.bind(target) : v;
+    },
+  });
+  const { fire, calls } = fakeFire();
+  const errors = [];
+  const original = console.error;
+  console.error = (msg) => errors.push(String(msg));
+  let out;
+  try {
+    out = await submitOnboarding(failing, {}, TOKEN, goodForm(), SUBMITTED, { fire });
+  } finally {
+    console.error = original;
+  }
+  assert.equal(out.status, 200);
+  assert.equal(out.due_live_at, "2026-10-31T22:30:00Z");
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].slice(1, 3), ["build", "build: client c1"]);
+  const row = await one(DB, "SELECT status, submitted_at FROM onboarding WHERE client_id = 'c1'");
+  assert.deepEqual({ ...row }, { status: "building", submitted_at: "2026-10-24T22:30:00Z" });
+  assert.equal((await todo(DB, "build:new:c1")).status, "done");
+  assert.ok(errors.some((e) => e.includes("Send for client c1: making the site row failed")), errors.join("\n"));
+  assert.ok(errors.some((e) => e.includes("Send for client c1: filing the domain and Google todos failed")), errors.join("\n"));
+  // a second press is still 409 and never fires again
+  assert.equal((await submitOnboarding(DB, {}, TOKEN, goodForm(), SUBMITTED, { fire })).status, 409);
+  assert.equal(calls.length, 1);
+});
+
+// care:nik_google_email is shared with stage 11's Care settings: whichever page saves it calls saveGbpEmail, so the
+// setup:gbp-email todo closes wherever Nik fills it in.
+test("saveGbpEmail: saves the address lower case and closes setup:gbp-email; a bad one saves nothing; empty clears it", async () => {
+  const DB = fakeD1();
+  await addTodo(DB, { kind: "setup", dedupe: "setup:gbp-email", title: "Add the Google account clients invite as Manager", link: "/#/setup" });
+  assert.deepEqual(await saveGbpEmail(DB, "nik@gmail"), { error: GBP_EMAIL_BAD });
+  assert.equal(GBP_EMAIL_BAD, "That doesn't look like an email address.");
+  assert.deepEqual(await saveGbpEmail(DB, "nik@gmail.com\nBcc: x@y.com"), { error: GBP_EMAIL_BAD });
+  assert.deepEqual(await saveGbpEmail(DB, 42), { error: GBP_EMAIL_BAD });
+  assert.equal(await getSetting(DB, "care:nik_google_email"), null);
+  assert.equal((await todo(DB, "setup:gbp-email")).status, "open");
+
+  assert.deepEqual(await saveGbpEmail(DB, "  Nik.Aetos@Gmail.com "), { ok: true, email: "nik.aetos@gmail.com" });
+  assert.equal(await getSetting(DB, "care:nik_google_email"), "nik.aetos@gmail.com");
+  assert.equal((await todo(DB, "setup:gbp-email")).status, "done");
+
+  assert.deepEqual(await saveGbpEmail(DB, ""), { ok: true, email: "" });
+  assert.equal(await getSetting(DB, "care:nik_google_email"), null);
 });
