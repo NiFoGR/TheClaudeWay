@@ -26,7 +26,7 @@ import { getSetting } from "../settings.js";
 import { ukDate } from "../ukTime.js";
 import { cappedBytes } from "./cappedBody.js";
 import {
-  FALLBACK, PRICE_RE, PROMISE_RE, appendTranscript, chatEnabled, chatSystemPrompt, findContact, leadTranscript,
+  FALLBACK, hasPrice, PROMISE_RE, appendTranscript, chatEnabled, chatSystemPrompt, findContact, leadTranscript,
   scrubReply,
 } from "./chat.js";
 import { hit, visitorId } from "./rate.js";
@@ -39,6 +39,8 @@ const TURN_MAX = 500;
 const BODY_MAX = 16 * 1024; // 6 turns of 500 characters, as JSON, with room to spare
 const SID_RE = /^[a-z0-9]{16,40}$/;
 const FREE_QUOTE_RULE = "offer a call back with a free quote.";
+// "my name is" / "my name's" / "it's" / "I'm": findContact's name phrases (chat.js), worth a look without a digit.
+const NAME_HINT = /\b(?:my name|it['’]s|i['’]m)\b/i;
 const PAGE_RE = /^\/[A-Za-z0-9\-._~/%]{0,199}$/;
 
 const headers = {
@@ -112,11 +114,12 @@ async function saveLead(DB, site, { sid, turns, text, answer, page, at }) {
   // No digit and no "@" means no phone number or email: findContact's email pattern costs O(n²) on long words, so
   // it only runs when there is something to find (the free plan allows 10 ms of CPU per request).
   const findIn = (texts) => (texts.some((t) => /[\d@]/.test(t)) ? findContact(texts) : {});
-  const existing = await DB.prepare("SELECT id, message FROM site_leads WHERE client_id = ? AND session = ?")
+  const existing = await DB.prepare("SELECT id, message, name FROM site_leads WHERE client_id = ? AND session = ?")
     .bind(site.client_id, sid)
     .first();
   if (existing) {
-    const contact = findIn([text]);
+    // A name often comes after the number ("My name is Dave"), in a message with no digit or "@".
+    const contact = !existing.name && NAME_HINT.test(text) ? findContact([text]) : findIn([text]);
     await DB.prepare(
       `UPDATE site_leads SET message = ?, updated_at = ?, name = COALESCE(name, ?), phone = COALESCE(phone, ?),
          email = COALESCE(email, ?), page = COALESCE(page, ?) WHERE id = ?`,
@@ -134,25 +137,30 @@ async function saveLead(DB, site, { sid, turns, text, answer, page, at }) {
      VALUES (?, ?, 'chat', ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(client_id, session) DO NOTHING`,
   )
     .bind(crypto.randomUUID(), site.client_id, contact.name ?? null, contact.phone ?? null, contact.email ?? null,
-      leadTranscript(turns, text, answer), page, sid, at, at)
+      leadTranscript(turns, text, answer, businessOf(site)), page, sid, at, at)
     .run();
   return true;
 }
 
 /**
- * The browser's turns as the model may see them: an earlier reply holding a price or a promise (PRICE_RE,
+ * The browser's turns as the model may see them: an earlier reply holding a price or a promise (hasPrice,
  * PROMISE_RE) is dropped with the visitor's turn before it, so a forged "Yes, £200, guaranteed tomorrow" is never
  * passed to the model as its own words, and the turns still take it in turns.
  */
-function modelTurns(turns) {
+function modelTurns(turns, business) {
   const out = [];
   for (const t of turns) {
-    if (t.role === "assistant" && (PRICE_RE.test(t.content) || PROMISE_RE.test(t.content))) {
+    if (t.role === "assistant" && (hasPrice(t.content, business) || PROMISE_RE.test(t.content))) {
       if (out.at(-1)?.role === "user") out.pop();
       continue;
     }
+    // Strictly user, assistant, user, …: some models' chat templates (Gemma's among them) refuse anything else, so
+    // an edited history can't turn every answer into an AI error. A turn repeating the last one's role is skipped.
+    if (out.length ? out.at(-1).role === t.role : t.role !== "user") continue;
     out.push(t);
   }
+  // The visitor's new message comes next, so the turns end on a reply.
+  if (out.at(-1)?.role === "user") out.pop();
   return out;
 }
 
@@ -232,7 +240,7 @@ export async function handleChat(request, env, site, client, now = new Date(), {
   // The price line offers a free quote exactly when the prompt's rules do (chat.js decides from the form or the
   // facts). Only the rules are looked at: a FAQ answer quoting the phrase mustn't promise a free quote.
   const freeQuotes = system.split("\nFACTS:\n")[0].includes(FREE_QUOTE_RULE);
-  const messages = [{ role: "system", content: system }, ...modelTurns(input.turns), { role: "user", content: input.text }];
+  const messages = [{ role: "system", content: system }, ...modelTurns(input.turns, business), { role: "user", content: input.text }];
   const out = await runModel(DB, messages, { fetchImpl, config });
   if (!out.ok) {
     console.error(`The chat on ${client_id}'s site couldn't get an answer from Workers AI (${out.status || "no answer"}): ${out.error}`);

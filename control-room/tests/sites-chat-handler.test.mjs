@@ -308,6 +308,8 @@ test("a phone number makes one chat lead for the session; later messages update 
   leads = await all(ctx.DB, "SELECT * FROM site_leads");
   assert.equal(leads.length, 1, "no second row for the same session");
   assert.notEqual(leads[0].message, firstMessage);
+  // Exactly its two lines are added; the browser's history isn't written again.
+  assert.equal(leads[0].message, `${firstMessage}\nVisitor: A leak over the kitchen\nAssistant: Thanks Dave, what's the job?`);
   assert.match(leads[0].message, /Visitor: A leak over the kitchen/);
   assert.match(leads[0].message, /Assistant: Thanks Dave/);
   assert.equal(leads[0].updated_at, "2026-10-19T10:01:00Z");
@@ -327,6 +329,43 @@ test("a phone number makes one chat lead for the session; later messages update 
     ctx.env, ctx.site, ctx.client, NOW, ai);
   assert.equal((await other.json()).lead_saved, false);
   assert.equal((await all(ctx.DB, "SELECT * FROM site_leads")).length, 1);
+});
+
+test("a name given after the number (no digit in that message) is still saved on the session's lead", async () => {
+  const ctx = await setup();
+  const ai = fakeAi({ reply: "Thanks, who am I speaking to?" });
+  await send(ctx, { text: "07700 900123" }, ai);
+  let [lead] = await all(ctx.DB, "SELECT * FROM site_leads");
+  assert.equal(lead.name, null);
+  const history = [{ role: "user", content: "07700 900123" }, { role: "assistant", content: "Thanks, who am I speaking to?" }];
+  await send(ctx, { history, text: "My name is Dave" }, { ...ai, now: new Date(NOW.getTime() + 60_000) });
+  [lead] = await all(ctx.DB, "SELECT * FROM site_leads");
+  assert.equal(lead.name, "Dave");
+  // A later name never replaces the first one.
+  await send(ctx, { history, text: "I'm Steve's neighbour, actually it's Dave's roof" }, { ...ai, now: new Date(NOW.getTime() + 120_000) });
+  [lead] = await all(ctx.DB, "SELECT * FROM site_leads");
+  assert.equal(lead.name, "Dave");
+});
+
+test("the turns sent to the model start with the visitor and take it in turns, whatever the browser sends", async () => {
+  const ctx = await setup();
+  const ai = fakeAi();
+  const history = [
+    { role: "assistant", content: "Hi! Ask me anything." },
+    { role: "user", content: "a" },
+    { role: "user", content: "b" },
+    { role: "assistant", content: "c" },
+    { role: "assistant", content: "d" },
+    { role: "user", content: "e" },
+  ];
+  await send(ctx, { history, text: "f" }, ai);
+  const roles = ai.calls[0].body.messages.map((m) => m.role);
+  assert.equal(roles[0], "system");
+  const rest = roles.slice(1);
+  assert.equal(rest[0], "user");
+  assert.equal(rest.at(-1), "user");
+  for (let i = 1; i < rest.length; i++) assert.notEqual(rest[i], rest[i - 1], `turn ${i}: ${rest.join(",")}`);
+  assert.equal(ai.calls[0].body.messages.at(-1).content, "f");
 });
 
 test("a bad sid → 400, nothing counted", async () => {
