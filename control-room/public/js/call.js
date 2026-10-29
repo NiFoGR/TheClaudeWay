@@ -167,34 +167,40 @@ export function callPageHtml(data) {
 /**
  * The call box from GET /api/calls?place_id= {calls, free_slots, phone}: "Booked: <label>" + Cancel (and the call
  * page) when a call is confirmed, else "Book a call:" the next free slots, "or another time", phone, Book. A time
- * Claude has offered and they haven't confirmed shows above the booking form. `card` wraps it as a card. From the
- * booked call's time on (`now`), the box links to the call page's "How did it go?" instead of offering Cancel.
+ * Claude has offered and they haven't confirmed shows above the booking form. `card` wraps it as a card. The booked
+ * call shown is the soonest still ahead of `now`; one whose time has come links to the call page's "How did it go?"
+ * (no Cancel) above the booking form, so Nik can still book the next call.
  */
 export function callBoxHtml(data, placeId, { card = false, now = new Date() } = {}) {
   const d = isObj(data) ? data : {};
   const calls = listOf(d.calls);
-  const booked = calls.find((c) => c.status === "confirmed");
   const head = `<h3>Call</h3>`;
   const wrap = (inner) => `<div class="${card ? "card " : ""}call-box" data-call-box data-place="${esc(str(placeId))}">${head}${inner}<p class="error" data-error hidden></p></div>`;
-  if (booked) {
-    const id = str(booked.id);
-    const page = `#/call/${esc(encodeURIComponent(id))}`;
-    // Once its time has come the call happened (or didn't): its outcome goes on the call page, never a Cancel here.
-    const slot = new Date(str(booked.slot_at)).getTime();
-    const at = now instanceof Date ? now.getTime() : NaN;
-    if (Number.isFinite(slot) && Number.isFinite(at) && at >= slot) {
-      return wrap(`<p>${esc(`Booked: ${str(booked.label)}`)}</p>
-      <div class="actions"><a class="btn sm" href="${page}">How did it go? Open the call page</a></div>`);
-    }
-    return wrap(`<p>${esc(`Booked: ${str(booked.label)}`)}</p>
-      <div class="actions"><a class="btn secondary sm" href="${page}">Open the call page</a><button type="button" class="btn danger sm" data-cancel="${esc(id)}" data-label="${esc(str(booked.label))}">Cancel</button></div>`);
+  const at = now instanceof Date ? now.getTime() : NaN;
+  const slotMs = (c) => new Date(str(c.slot_at)).getTime();
+  const confirmed = calls.filter((c) => c.status === "confirmed");
+  // The booked call still ahead (the soonest, whatever order the API lists them in): Booked + Cancel.
+  const ahead = confirmed
+    .filter((c) => Number.isFinite(at) && !(slotMs(c) <= at))
+    .sort((a, b) => (slotMs(a) || 0) - (slotMs(b) || 0))[0];
+  if (ahead) {
+    const id = str(ahead.id);
+    return wrap(`<p>${esc(`Booked: ${str(ahead.label)}`)}</p>
+      <div class="actions"><a class="btn secondary sm" href="#/call/${esc(encodeURIComponent(id))}">Open the call page</a><button type="button" class="btn danger sm" data-cancel="${esc(id)}" data-label="${esc(str(ahead.label))}">Cancel</button></div>`);
   }
+  // A booked call whose time has come happened (or didn't): its outcome goes on the call page, never a Cancel here.
+  // Nik can still book the next one below (Part A: any future time).
+  const past = confirmed.sort((a, b) => (slotMs(b) || 0) - (slotMs(a) || 0))[0];
+  const pastHtml = past
+    ? `<p>${esc(`Booked: ${str(past.label)}`)}</p>
+      <div class="actions"><a class="btn sm" href="#/call/${esc(encodeURIComponent(str(past.id)))}">How did it go? Open the call page</a></div>`
+    : "";
   const offered = calls.find((c) => c.status === "offered");
   const free = listOf(d.free_slots).filter((s) => str(s.slot_at));
   const slots = free.length
     ? `<label for="cb-slot">Book a call:</label><select id="cb-slot" data-slot>${free.map((s) => `<option value="${esc(str(s.slot_at))}">${esc(str(s.label) || str(s.slot_at))}</option>`).join("")}</select>`
     : `<p class="muted">Book a call: ${esc(NO_SLOTS)}</p>`;
-  return wrap(`${offered ? `<p class="muted">${esc(`Offered: ${str(offered.label)} (waiting for them to confirm)`)}</p>` : ""}
+  return wrap(`${pastHtml}${offered ? `<p class="muted">${esc(`Offered: ${str(offered.label)} (waiting for them to confirm)`)}</p>` : ""}
     <form data-book-call>
       ${slots}
       <div class="field-row">

@@ -114,6 +114,21 @@ test("the call box: Booked + Cancel, or Book a call with the next 3 free slots, 
   assert.doesNotMatch(past, /data-cancel=/);
   assert.match(past, /href="#\/call\/c1">How did it go\? Open the call page</);
 
+  // Booking cancels their other calls still ahead but keeps one whose time has passed (for its outcome): the box shows
+  // the one ahead, whatever order the API lists them in, and the past one still waiting for its outcome lets Nik book.
+  const PAST = { id: "c0", status: "confirmed", slot_at: "2026-10-16T10:00:00Z", label: "Friday 16 October at 11am" };
+  for (const calls of [[BOOKED.calls[0], PAST], [PAST, BOOKED.calls[0]]]) {
+    const two = callBoxHtml({ ...BOOKED, calls }, "p1", { now: new Date("2026-10-21T09:00:00Z") });
+    assert.match(two, /Booked: Friday 23 October at 11am/);
+    assert.match(two, /data-cancel="c1"/);
+    assert.doesNotMatch(two, /16 October|data-cancel="c0"/);
+  }
+  const waiting = callBoxHtml({ ...BOOKED, calls: [PAST] }, "p1", { now: new Date("2026-10-21T09:00:00Z") });
+  assert.match(waiting, /href="#\/call\/c0">How did it go\? Open the call page</);
+  assert.doesNotMatch(waiting, /data-cancel=/);
+  assert.match(waiting, /Book a call:/);
+  assert.match(waiting, /or another time/);
+
   const free = callBoxHtml({ calls: [{ id: "c0", status: "done", slot_at: "2026-10-13T10:00:00Z", label: "Tuesday 13 October at 11am" }], free_slots: FREE, phone: "07700 900123" }, "p1");
   assert.match(free, /Book a call:/);
   for (const s of FREE) assert.match(free, new RegExp(`<option value="${s.slot_at}">${s.label}</option>`));
