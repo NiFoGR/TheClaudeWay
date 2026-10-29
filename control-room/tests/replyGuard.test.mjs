@@ -198,3 +198,91 @@ test("weekdays: £1,750 with the monthly price is the weekend Full Package price
   assert.deepEqual(why("Just the website is £1,750, nothing monthly."), []);
   assert.deepEqual(why("It's £1,750 for the website only."), []);
 });
+
+test("the weekday £1,750 reason comes after the weekend one, as in Part A's table", () => {
+  assert.deepEqual(why("It's £1,750 to build, then £249 a month. SEO guaranteed, first 90 days free. [link]"), [
+    "Don't say \"SEO\": say \"top 3 on Google\" or \"the front page of Google\".",
+    "Promises must use the exact guarantee wording from the offer.",
+    "The weekend deal isn't on when this goes out: use the weekday offer.",
+    "£1,750 is the Website Only price; the Full Package is £1,950 to build.",
+    "Fill in or remove the placeholder [link].",
+  ]);
+});
+
+// ---- Second review: bypasses that put a wrong price or the weekend deal in front of a prospect ----
+
+test("a price with no £ at all, another currency, or a sign before the digits isn't in full", () => {
+  const full = ["Write prices in full with £, e.g. £1,950."];
+  for (const b of ["It's 1500 to build.", "That's 1,500 for the website.", "It costs 1500.", "You'd pay 1,950 for the site.",
+    "$1,500", "€1500", "1500 dollars", "USD 1500", "£-1500", "£~1,500", "£(1500)"]) assert.deepEqual(why(b), full, b);
+  for (const b of ["It costs nothing for 60 days.", "Over 1,000 searches a month for roofers in your town.",
+    "Your site would be one of 300 roofers in the area.", "I'll pay 100% attention", "Call me on 01234 567890."]) {
+    assert.deepEqual(why(b).filter((r) => r === full[0]), [], b);
+  }
+});
+
+test("the weekend's 90 free days in yet more words", () => {
+  const w = ["The weekend deal isn't on when this goes out: use the weekday offer."];
+  for (const b of ["90-day free trial", "a free 90 days", "3 months on us", "the first three months at no cost", "90 days at no cost",
+    "Pay nothing for 90 days.", "nothing to pay for ninety days"]) {
+    assert.deepEqual(why(b), w, b);
+    assert.deepEqual(why(b, { ...CTX, offer: offerFacts(new Date("2026-10-24T10:00:00Z")) }), [], `${b} (weekend)`);
+  }
+  // the weekday's own 60 days, and the 90-day ranking promise near "free" in another clause, are no weekend deal
+  for (const b of ["Your first 60 days are free, and you'd be in the top 3 on Google in 90 days.", "The first 60 days are free.",
+    "If you're not in the top 3 of Google results within 90 days, we keep working until you are.",
+    "In the first 3 months most clients see more calls."]) assert.deepEqual(why(b), [], b);
+});
+
+test("a sign-off with a surname under a closing line, and links with other common endings", () => {
+  const s = ["Don't sign off: \"Nik\" and \"Aetos Websites\" are added under your reply."];
+  for (const b of ["Sure.\n\nBest,\nNik Smith", "Sure.\nThanks\nNik P."]) assert.deepEqual(why(b), s, JSON.stringify(b));
+  assert.deepEqual(why("Sure, that works.\nNik will call you on Tuesday."), []);
+  assert.deepEqual(why("Visit Evil.Click today"), ["Links can only go to their demo, their order page or aetoswebsites.com (found evil.click)."]);
+});
+
+test("3 days or 90 months free is no weekend deal, and the new checks stay fast", () => {
+  assert.deepEqual(why("The demo stays up 3 days free of charge."), []);
+  const t = Date.now();
+  replyGuard(("free " + " ".repeat(300) + "x ").repeat(10) + "costs " + "1".repeat(3000) + "£" + " ".repeat(3000) + "$", CTX);
+  assert.ok(Date.now() - t < 200, `took ${Date.now() - t} ms`);
+});
+
+// ---- Third review: false alarms on good replies, and percent-encoded demo links ----
+
+test("a £ amount written with a space is checked as a price, not refused as 'not in full'", () => {
+  for (const b of ["£ 249 a month", "£ 1950 one-off", "£ 1,950 to build, then £ 249 per month."]) assert.deepEqual(why(b), [], b);
+  assert.deepEqual(why("£ 1500 to build"), ["£1,500 isn't one of our prices (£249, £1,750, £1,950)."]);
+  assert.deepEqual(why("1500 to build"), ["Write prices in full with £, e.g. £1,950."]);
+});
+
+test("percent-encoded demo links are read decoded", () => {
+  const other = ["That link is another business's demo (/d/other-slug)."];
+  for (const b of ["https://aetoswebsites.com/%64/other-slug", "https://aetoswebsites.com/d%2fother-slug",
+    "https://aetoswebsites.com/d/green-leaf-ab12%2F..%2Fother-slug"]) assert.deepEqual(why(b), other, b);
+  assert.deepEqual(why("https://aetoswebsites.com/d/green%2Dleaf-ab12"), []);
+  assert.deepEqual(why("https://aetoswebsites.com/d/green-leaf-ab12%"), ["That link is another business's demo (/d/green-leaf-ab12%)."]);
+});
+
+test("a sentence starting with the name under a closing word isn't a sign-off; 'Aetos Websites Team' is", () => {
+  assert.deepEqual(why("Sure, that works. Thanks!\nNik will call you on Tuesday"), []);
+  assert.deepEqual(why("Sure.\nRegards,\nAetos Websites Team"), ["Don't sign off: \"Nik\" and \"Aetos Websites\" are added under your reply."]);
+});
+
+// ---- Fixer: "free" as in "you're free" or "we work free until you are" is no weekend deal ----
+
+test("weekdays: the guarantee and 'check back in 3 months' wording aren't the weekend deal", () => {
+  for (const b of [
+    "If you're not in the top 3 on Google in 90 days, we work free until you are.",
+    "Top 3 on Google within 90 days, or it's free until you are.",
+    "No worries. Is it OK if I check back in 3 months, if you're free then?",
+    "That's fine. If you're free in 3 months I'll drop you a line.",
+    "Are you free in 3 months for a quick chat?",
+    "Would you be free for a chat in 3 months?",
+    "If you're not top 3 within 90 days, it's free work until you are.",
+  ]) assert.deepEqual(why(b), [], b);
+  const w = ["The weekend deal isn't on when this goes out: use the weekday offer."];
+  for (const b of ["a free 90 days", "3 months on us", "pay nothing for 90 days", "90-day free trial", "90 days free"]) {
+    assert.deepEqual(why(b), w, b);
+  }
+});

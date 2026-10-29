@@ -32,7 +32,10 @@ const BARE_RE = new RegExp(
 // Endings that make a bare "name.ending" a link even when written "Name.Com". Any other ending counts when it's all
 // lower or all upper case ("bit.ly", "evil.click", "BIT.LY") or has a path; "St.Albans" or "Sure.It" doesn't.
 const KNOWN_ENDINGS = new Set(["uk", "com", "net", "org", "io", "biz", "info", "co", "me", "eu", "ie", "london",
-  "wales", "scot", "cymru", "online", "site", "website", "shop", "store", "tech", "app", "dev", "xyz", "ly", "ai"]);
+  "wales", "scot", "cymru", "online", "site", "website", "shop", "store", "tech", "app", "dev", "xyz", "ly", "ai",
+  "click", "link", "top", "live", "page", "space", "club", "today", "email", "digital", "agency", "services",
+  "solutions", "group", "ltd", "plc", "cc", "tv", "gg", "ca", "au", "de", "fr", "nl", "es", "ru", "cn", "su", "ws",
+  "pw", "tk", "icu", "vip", "win", "cloud", "host", "pro", "blog", "news"]);
 
 // What a sentence puts after a link, which isn't part of it.
 const TRAILING = new Set([".", ",", ";", ":", "!", "?", "'", '"', "‘", "’", "“", "”", "»",
@@ -94,7 +97,14 @@ const SPELT_EMAIL_RE = new RegExp(
  * backslashes, "//d/other", "/D/other"), so a link can't reach another business's demo by a detour.
  */
 function demoSlugIn(path) {
-  let p = String(path).replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+  let p = String(path);
+  // "%64" is "d" and "%2f" a slash to Cloudflare's URL normalisation and some servers, so they're read decoded.
+  try {
+    p = decodeURIComponent(p);
+  } catch {
+    // a stray "%": keep p as written
+  }
+  p = p.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
   if (!p.startsWith("/")) p = `/${p}`;
   try {
     p = new URL(p, "https://x.invalid").pathname;
@@ -115,9 +125,16 @@ const NOT_IN_FULL = [
   /(?<![a-z])(?:quid|gbp)(?![a-z])/i,
   /(?<![a-z])(?:hundred|thousand|grand)\s+(?:pounds?|quid)(?![a-z])/i,
   // A number priced by the month or year without £ ("249 a month", "1950 up front", "1500£") isn't in full either.
-  /(?<![£\d,.])\d{2,}(?:,\d{3})*(?:\.\d\d)?\s*(?:a|per|\/|p)\s*(?:month|mth|mo|year|yr|annum)(?![a-z])/i,
-  /(?<![£\d,.])\d{2,}(?:,\d{3})*(?:\.\d\d)?\s*(?:up[\s-]?front|one[\s-]?off)(?![a-z])/i,
+  // (A number after "£ " is a £ amount, checked against the prices: "£ 249 a month" is in full.)
+  /(?<![£\d,.])(?<!£\s+)\d{2,}(?:,\d{3})*(?:\.\d\d)?\s*(?:a|per|\/|p)\s*(?:month|mth|mo|year|yr|annum)(?![a-z])/i,
+  /(?<![£\d,.])(?<!£\s+)\d{2,}(?:,\d{3})*(?:\.\d\d)?\s*(?:up[\s-]?front|one[\s-]?off)(?![a-z])/i,
   /(?<![\d,.])\d[\d,.]*\s?£(?!\s*\d)/,
+  // A sign between £ and the digits ("£-1500", "£~1,500", "£(1500)"), or another currency ("$1,500", "1500 euros").
+  /£\s*[^\d\s£]{1,3}\s*\d/,
+  /[$€]\s*\d|(?<![a-z])(?:usd|eur)\s*\d|\d\s*(?:usd|eur|euros?|dollars?|bucks)(?![a-z])/i,
+  // A price with no £ at all: "1500 to build", "1,500 for the website", "costs 1500", "pay 1,950".
+  /(?<![£\d,.])(?<!£\s+)(?:\d{3,}|\d{1,3}(?:,\d{3})+)(?:\.\d\d)?\s+(?:to\s+build|for\s+(?:the|a|your)\s+(?:new\s+)?(?:web\s?site|site|build|package))(?![a-z])/i,
+  /(?<![a-z])(?:costs?|costing|priced\s+at|price\s+is|pay|paying|charges?|charged|fee\s+(?:is|of))\s+(?:(?:just|only|about|around)\s+)?(?:\d{3,}|\d{1,3}(?:,\d{3})+)(?![\d,]|\.\d|\s*(?:%|per\s?cent|days?|weeks?|months?|years?|hours?|minutes?))/i,
 ];
 // A monthly price in words ("then £249 a month", "per month", "monthly"), not "no monthly fee" / "nothing monthly".
 const MONTHLY = /(?<!\b(?:no|nothing|without)\s+)(?:monthly|(?:a|per|each|every)\s+month(?![a-z])|\/\s?month)/i;
@@ -130,6 +147,10 @@ const SEO = [
   /search[\s-]*engine[\s-]*optimi[sz]/i,
 ];
 const PROMISE = /(?<![a-z])(?:guarant|promis)|(?<![\d.,])100\s*(?:%|per\s?cent)|money[\s-]*back/i;
+// The weekend's 90 days, or 3 months, for WEEKEND_WORDS' proximity patterns.
+const NINETY = String.raw`(?:(?:90|ninety)[\s-]+days?|(?:3|three)[\s-]+months?)`;
+// "free" as a price word (see WEEKEND_WORDS).
+const PRICE_FREE = String.raw`(?<!(?<![a-z])(?:you're|youre|you\s+are|are\s+you|be|i'm|we're|work|working|works)\s+)free(?![a-z])(?!\s+(?:until|till|to|then|work|working|for\s+a\s+(?:chat|call)))`;
 const WEEKEND_WORDS = [
   /(?<![a-z0-9])(?:90|ninety)\s+(?:free\s+)?days?\s+(?:(?:are|is)\s+)?(?:for\s+)?free/i,
   /(?<![a-z0-9])(?:90|ninety)\s+free\s+days/i,
@@ -139,6 +160,13 @@ const WEEKEND_WORDS = [
   /(?<![a-z0-9])(?:3|three)\s+(?:free\s+)?months?\s+(?:(?:are|is)\s+)?(?:for\s+)?free/i,
   /(?<![a-z0-9])(?:3|three)\s+free\s+months/i,
   /free\s+for\s+(?:the\s+)?(?:first\s+)?(?:3|three)\s+months/i,
+  // "90-day free trial", "a free 90 days", "3 months on us", "90 days at no cost", "pay nothing for 90 days": the 90
+  // days (or 3 months) with a free word a few words away, so the 90-day ranking promise in another clause isn't.
+  // "free" counts only as a price: not "you're free" / "are you free" (their time), "we work free", "free work" or
+  // "free until you are" (the ranking guarantee), "free to chat", "free then"; and a free word before "in/within/after/
+  // by 3 months" is a point in time ("free in 3 months"), where the deal says "for" or "first".
+  new RegExp(`(?<![a-z0-9])${NINETY}(?:[\\s,]+[a-z']+){0,2}?[\\s,]+(?:${PRICE_FREE}|on\\s+us|at\\s+no\\s+cost|no\\s+charge|for\\s+nothing|without\\s+paying)(?![a-z])`, "i"),
+  new RegExp(`(?<![a-z])(?:${PRICE_FREE}|nothing|no\\s+charge|not\\s+a\\s+penny)(?:[\\s,]+[a-z']+){0,3}?[\\s,]+(?<!(?<![a-z])(?:in|within|after|by)\\s+)${NINETY}(?![a-z])`, "i"),
 ];
 const PLACEHOLDER_RE = /\[[^[\]\n]{1,60}\]|\{\{?[^{}\n]{1,60}\}?\}/g;
 const HTML = [/<\/?[a-z][a-z0-9-]*(?:\s[^<>]*)?\/?>/i, /<!--/, /&(?:[a-z]{2,8}|#\d{1,6}|#x[0-9a-f]{1,6});/i];
@@ -146,11 +174,21 @@ const SIGN_OFF_WORDS = /^(?:(?:many|kind|best|warm|warmest)\s+)?(?:thanks|thank 
 
 const plainWords = (s) => s.toLowerCase().replace(new RegExp(`[^a-z0-9${NA}]+`, "g"), " ").trim();
 
-function signsOff(lastLine, signName) {
+const CLOSING = /^(?:(?:many|kind|best|warm|warmest)\s+)?(?:thanks|thank you|thankyou|cheers|regards|wishes|best|ta|speak soon|talk soon|all the best|yours(?: sincerely| faithfully)?)$/;
+
+function signsOff(lastLine, signName, lineBefore = "") {
   const line = plainWords(lastLine);
+  // "Best,\nNik Smith": the sender's first name and a surname, under a closing line.
+  const first = plainWords(String(signName ?? "")).split(" ")[0];
+  const words = line.split(" ");
+  // The surname is capitalised ("Nik Smith", "Nik P."), so "Thanks!\nNik will call" is a sentence, not a sign-off.
+  const capitalised = String(lastLine).trim().split(/\s+/).slice(1)
+    .every((w) => /^[^a-z]*[A-Z]/.test(w));
+  if (first && words[0] === first && words.length <= 3 && capitalised && CLOSING.test(plainWords(lineBefore))) return true;
   if (!line || line.split(" ").length > 6) return false;
   const name = plainWords(String(signName ?? ""));
-  const names = new Set(["aetos websites", "aetos", "the aetos websites team", "the aetos team"]);
+  const names = new Set(["aetos websites", "aetos", "the aetos websites team", "the aetos team", "aetos websites team",
+    "aetos team"]);
   if (name) {
     names.add(name);
     names.add(name.split(" ")[0]);
@@ -209,17 +247,6 @@ export function replyGuard(body, ctx = {}) {
   if (bad.length === 1) reasons.push(`${bad[0]} isn't one of our prices (${prices}).`);
   else if (bad.length > 1) reasons.push(`${bad.slice(0, -1).join(", ")} and ${bad.at(-1)} aren't our prices (${prices}).`);
   if (shortened || NOT_IN_FULL.some((re) => re.test(s))) reasons.push("Write prices in full with £, e.g. £1,950.");
-  // On a weekday the Full Package (the one with the monthly price) isn't £1,750: that's Website Only's price, or the
-  // weekend deal's. £1,750 next to a monthly price without £1,950 is the weekend price going out on a weekday; a reply
-  // that names both packages passes.
-  const pence = (pounds) => Math.round(Number(pounds) * 100) || 0;
-  const websiteOnly = pence(offer.website_only?.build);
-  const fullBuild = pence(offer.full?.build);
-  if (offer.weekend !== true && websiteOnly && fullBuild && websiteOnly !== fullBuild && found.has(websiteOnly)
-    && !found.has(fullBuild) && (found.has(pence(offer.full?.monthly)) || MONTHLY.test(s))) {
-    reasons.push(`${formatPounds(websiteOnly)} is the Website Only price; the Full Package is ${formatPounds(fullBuild)} to build.`);
-  }
-
   const plainLetters = s.replace(LOOKALIKE_RE, (c) => LOOKALIKE[c]);
   if (SEO.some((re) => re.test(plainLetters))) {
     reasons.push("Don't say \"SEO\": say \"top 3 on Google\" or \"the front page of Google\".");
@@ -236,6 +263,17 @@ export function replyGuard(body, ctx = {}) {
     reasons.push("The weekend deal isn't on when this goes out: use the weekday offer.");
   }
 
+  // On a weekday the Full Package (the one with the monthly price) isn't £1,750: that's Website Only's price, or the
+  // weekend deal's. £1,750 next to a monthly price without £1,950 is the weekend price going out on a weekday; a reply
+  // that names both packages passes.
+  const pence = (pounds) => Math.round(Number(pounds) * 100) || 0;
+  const websiteOnly = pence(offer.website_only?.build);
+  const fullBuild = pence(offer.full?.build);
+  if (offer.weekend !== true && websiteOnly && fullBuild && websiteOnly !== fullBuild && found.has(websiteOnly)
+    && !found.has(fullBuild) && (found.has(pence(offer.full?.monthly)) || MONTHLY.test(s))) {
+    reasons.push(`${formatPounds(websiteOnly)} is the Website Only price; the Full Package is ${formatPounds(fullBuild)} to build.`);
+  }
+
   const placeholders = distinct([...s.matchAll(PLACEHOLDER_RE)].map((m) => m[0]));
   if (placeholders.length === 1) reasons.push(`Fill in or remove the placeholder ${placeholders[0]}.`);
   else if (placeholders.length > 1) reasons.push(`Fill in or remove the placeholders ${placeholders.join(", ")}.`);
@@ -243,7 +281,7 @@ export function replyGuard(body, ctx = {}) {
   if (HTML.some((re) => re.test(s))) reasons.push("Plain text only: remove the HTML.");
 
   const lines = s.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  if (lines.length && signsOff(lines.at(-1), ctx.signName)) {
+  if (lines.length && signsOff(lines.at(-1), ctx.signName, lines.at(-2))) {
     reasons.push("Don't sign off: \"Nik\" and \"Aetos Websites\" are added under your reply.");
   }
 
