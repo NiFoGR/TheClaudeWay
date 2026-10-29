@@ -129,6 +129,16 @@ test("app.js: routes through routeFor, renders NAV flat with Log out under it, s
   assert.doesNotMatch(app, /api\/today|api\/overview/);
 });
 
+// routeFor and app.js must agree: a page routeFor can return but app.js doesn't run would silently open Todo.
+test("app.js runs every page routeFor can return", () => {
+  const app = js("app.js");
+  const block = app.slice(app.indexOf("const PAGE_RUN = {"), app.indexOf("\n};", app.indexOf("const PAGE_RUN = {")));
+  const run = new Set([...block.matchAll(/^ {2}(\w+): /gm)].map((m) => m[1]));
+  const hashes = [...NAV.map((n) => `#/${n[0]}`), "#/lead/p1", "#/lead/p1/thread", "#/replies/p1", "#/call/c1", "#/demo",
+    "#/sites", "#/site/c1", "#/nonsense"];
+  for (const h of hashes) assert.ok(run.has(routeFor(h).page), `app.js has no PAGE_RUN entry for ${routeFor(h).page} (${h})`);
+});
+
 // Part A "Nav (exact order)": #/demo has no nav item, so it is linked from Setup and Leads, always (not only while a
 // look waits for approval or the one-time setup Todo is open).
 test("the Demo page is linked from Setup and Leads", () => {
