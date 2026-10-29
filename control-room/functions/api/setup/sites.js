@@ -7,8 +7,8 @@
 //        setting (its readers fall back to the default). All fields are checked first; nothing is saved unless every
 //        one is valid. A new account id, token or a different model clears chat:last_test, so the switch waits for a
 //        fresh Test (the page sends the unchanged model with every Save; that keeps it).
-//        Saving the Google account (care:nik_google_email, shared with stage 11's Care settings) closes
-//        setup:gbp-email.
+//        Saving the Google account (care:nik_google_email, shared with stage 11's Care settings) goes through
+//        saveGbpEmail (_lib/sites/onboard.js), which closes setup:gbp-email: Care settings calls it too.
 //   POST ?test=chat  → testModel: {ok, detail}, stored in chat:last_test; a pass closes setup:chatbot.
 //   POST ?test=pages → {ok, detail}: does the Pages address (sites:pages_host, else goldbarwebsites.pages.dev) resolve
 //        to Cloudflare in DNS.
@@ -19,6 +19,7 @@ import { secretStatus, setSecret } from "../../_lib/settings.js";
 import { checkHost, HOST_CHECK_FAILED } from "../../_lib/sites/dns.js";
 import { PAGES_PROJECT } from "../../_lib/sites/domain.js";
 import { normaliseHost } from "../../_lib/sites/hosts.js";
+import { checkGbpEmail, saveGbpEmail } from "../../_lib/sites/onboard.js";
 import { sitesReadiness } from "../../_lib/sites/readiness.js";
 import { CHAT_MODEL_DEFAULT, testModel } from "../../_lib/sites/workersAi.js";
 import { closeTodos } from "../../_lib/todo.js";
@@ -28,14 +29,13 @@ import { readJson } from "./mailboxes.js";
 const SECRETS = ["cf_ai:account_id", "cf_ai:token"];
 const PAGES_DEFAULT = `${PAGES_PROJECT}.pages.dev`;
 const SWITCHES = { chatbot: "offer:chatbot_live", review_booster: "offer:review_booster_live" };
-const KEYS = { model: "chat:model", pages_host: "sites:pages_host", gbp_email: "care:nik_google_email" };
+const KEYS = { model: "chat:model", pages_host: "sites:pages_host" };
 
 // The same shapes workersAi.js accepts before it builds the API URL.
 const ACCOUNT_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const MODEL_RE = /^@[a-z0-9_-]+(?:\/[a-z0-9._-]+){1,3}$/i;
 const TOKEN_RE = /^[A-Za-z0-9._~+/=-]{20,200}$/;
 const PAGES_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.pages\.dev$/;
-const EMAIL_RE = /^[A-Za-z0-9._+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 
 export const SITES_SETUP_ERRORS = {
   json: "That request couldn't be read (it wasn't JSON). Reload Setup and try again.",
@@ -98,7 +98,8 @@ export async function onRequestGet(context) {
   return json(await status(DB, nowOf(context)));
 }
 
-// Every field checked before anything is written: {secrets: [[name, value]], settings: [[key, value|""]]} or {error}.
+// Every field checked before anything is written: {secrets: [[name, value]], settings: [[key, value|""]], gbpEmail?}
+// or {error}.
 function changesFrom(body) {
   const out = { secrets: [], settings: [] };
   for (const f of ["account_id", "token", "model", "pages_host", "gbp_email"]) {
@@ -128,11 +129,10 @@ function changesFrom(body) {
     if (pages && !host) return { error: SITES_SETUP_ERRORS.pages };
     out.settings.push([KEYS.pages_host, host]);
   }
-  const email = val("gbp_email");
-  if (email !== null) {
-    // Checked on the raw text too: a line break inside would otherwise be trimmed away only at the ends.
-    if (email && (email.length > 254 || !EMAIL_RE.test(email) || /[\r\n]/.test(body.gbp_email))) return { error: SITES_SETUP_ERRORS.email };
-    out.settings.push([KEYS.gbp_email, email.toLowerCase()]);
+  if (typeof body.gbp_email === "string") {
+    // the shared check (saveGbpEmail's), so Setup and stage 11's Care settings accept the same addresses
+    if (checkGbpEmail(body.gbp_email).error) return { error: SITES_SETUP_ERRORS.email };
+    out.gbpEmail = body.gbp_email;
   }
   return out;
 }
@@ -152,7 +152,8 @@ async function save(DB, body) {
   if (reconnect) stmts.push(DB.prepare(DELETE_SQL).bind("chat:last_test"));
   if (stmts.length) await DB.batch(stmts);
   for (const [name, value] of changes.secrets) await setSecret(DB, name, value);
-  if (changes.settings.some(([key, value]) => key === KEYS.gbp_email && value)) await closeTodos(DB, "setup:gbp-email");
+  // saves care:nik_google_email and closes setup:gbp-email, as stage 11's Care settings does
+  if (changes.gbpEmail !== undefined) await saveGbpEmail(DB, changes.gbpEmail);
   return {};
 }
 
