@@ -8,6 +8,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { PRICE_RE } from "../functions/_lib/sites/chat.js";
 import { ldJson, pageLd } from "../functions/_lib/sites/jsonld.js";
+import { serveClientHost } from "../functions/_lib/sites/serve.js";
+import { fakeD1 } from "./helpers/fakeD1.mjs";
 import {
   OFF_TOPIC,
   PRICE_PROMPTS,
@@ -360,4 +362,106 @@ test("runChecks: a request with no answer within 30 s fails in plain words", asy
 
 test("runChecks refuses an address that isn't a site", async () => {
   await assert.rejects(runChecks("site-test.aetoswebsites.com", { fetchImpl: async () => { throw new Error("no"); } }), /https:\/\//);
+});
+
+// ---- the whole run against the real client-site server (serveClientHost + fakeD1), Workers AI faked ----
+// This ties the script to what the server really does: the /s/chat body and answer, the fallback line, the 20-per-hour
+// visitor limit in rate_hits, the price scrub, renderSitemap and the JSON-LD the live renderer puts in each page.
+
+async function insertRow(DB, table, row) {
+  const cols = Object.keys(row);
+  await DB.prepare(`INSERT INTO ${table} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`).bind(...Object.values(row)).run();
+}
+
+async function realSite() {
+  const DB = fakeD1();
+  const AT = "2026-10-10T09:00:00Z";
+  const form = JSON.parse(readFileSync(new URL("./fixtures/site-ctx.json", import.meta.url), "utf8")).form;
+  await insertRow(DB, "clients", {
+    id: "ct", name: "Smith Roofing", place_id: null, package: "full", build_fee_pence: 195000, monthly_pence: 24900,
+    free_days: 60, paid_on: "2026-10-10", created_at: AT,
+  });
+  await insertRow(DB, "onboarding", {
+    client_id: "ct", token: "ct".padEnd(32, "T"), status: "live", form: JSON.stringify(form), submitted_at: AT,
+    due_live_at: "2026-10-17T09:00:00Z", created_at: AT,
+  });
+  await insertRow(DB, "client_sites", {
+    client_id: "ct", slug: "ct-site-abc123", host: HOST, content: JSON.stringify(FX), status: "live", domain: "{}",
+    features: "{}", is_test: 1, seen_at: AT, live_at: "2026-10-15T09:00:00Z", content_at: "2026-10-14T09:00:00Z",
+    created_at: AT, updated_at: AT,
+  });
+  // Workers AI connected; the offer switch stays off (a test site ignores it).
+  for (const [key, value] of [["secret:cf_ai:account_id", "acc123"], ["secret:cf_ai:token", "tok-secret-value"]]) {
+    await insertRow(DB, "settings", { key, value });
+  }
+  return DB;
+}
+
+test("runChecks against the real server: 25 checks, 0 failures, the server's own limit gives the 21st message the fallback", async () => {
+  const DB = await realSite();
+  const clock = fakeClock("2026-10-28T10:20:00Z");
+  const aiCalls = [];
+  const realFetch = globalThis.fetch;
+  // The model "gives" a price and answers an off-topic question in a way the scrub must catch: the price comes back
+  // as the price line, and a polite refusal otherwise.
+  globalThis.fetch = async (url, init) => {
+    assert.match(String(url), /^https:\/\/api\.cloudflare\.com\/client\/v4\/accounts\/acc123\/ai\/run\//);
+    const { messages } = JSON.parse(init.body);
+    const text = messages.at(-1).content;
+    aiCalls.push(text);
+    const response = /roof\?$/.test(text) ? "A new roof is about £5,000." : "Sorry, I can only help with Smith Roofing. Leave your number and they'll call you back.";
+    return new Response(JSON.stringify({ result: { response }, success: true, errors: [], messages: [] }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const seen = [];
+  const fetchImpl = async (url, init = {}) => {
+    seen.push(new URL(url).pathname);
+    const res = await serveClientHost({ request: new Request(url, init), env: { DB }, waitUntil: () => {} }, clock.now());
+    assert.ok(res, `${url} wasn't served as a client site`);
+    return res;
+  };
+  try {
+    const out = await runChecks(ORIGIN, { fetchImpl, now: clock.now, sleep: clock.sleep, log: () => {} });
+    assert.deepEqual(out.checks.filter((c) => !c.pass), []);
+    assert.equal(out.checks.length, 25);
+    assert.equal(out.failures, 0);
+    // The price reply was scrubbed by the server, so the judge saw the price line.
+    assert.equal(out.checks.find((c) => c.name === `price: "${PRICE_PROMPTS[0]}"`).pass, true);
+    // 20 prompts and 20 session messages reached the model; the 21st was stopped by the visitor limit.
+    assert.equal(aiCalls.length, 40);
+    assert.equal(seen.filter((x) => x === "/s/chat").length, 41);
+    // No chat left contact details, so no enquiry was saved.
+    assert.equal((await DB.prepare("SELECT COUNT(*) AS n FROM site_leads").first()).n, 0);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("runChecks against the real server: with the chat switched off for the site every chat check fails and says why", async () => {
+  const DB = await realSite();
+  await DB.prepare(`UPDATE client_sites SET features = '{"chatbot":false}' WHERE client_id = 'ct'`).run();
+  const clock = fakeClock("2026-10-28T10:20:00Z");
+  const fetchImpl = (url, init = {}) => serveClientHost({ request: new Request(url, init), env: { DB }, waitUntil: () => {} }, clock.now());
+  const out = await runChecks(ORIGIN, { fetchImpl, now: clock.now, sleep: clock.sleep, log: () => {} });
+  assert.equal(out.checks.length, 25);
+  assert.equal(out.failures, 21); // 20 prompts and the session test; sitemap and JSON-LD still pass
+  assert.ok(out.checks.filter((c) => !c.pass).every((c) => /fallback line/.test(c.why)));
+  assert.ok(clock.now() < new Date("2026-10-28T10:21:00Z"), "no hour wait when nothing was answered");
+});
+
+test("runChecks: a body that stalls after the headers counts against the 30 s too", async () => {
+  const clock = fakeClock("2026-10-28T10:20:00Z");
+  const site = fakeSite({ clock: clock.now });
+  const stalls = async (url, init = {}) => {
+    const res = await site.fetchImpl(url, init);
+    if (new URL(url).pathname !== "/sitemap.xml") return res;
+    return { ...res, text: () => new Promise(() => {}) };
+  };
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = (fn, ms, ...a) => realSetTimeout(fn, ms >= 30000 ? 1 : ms, ...a);
+  try {
+    const out = await runChecks(ORIGIN, { fetchImpl: stalls, now: clock.now, sleep: clock.sleep, log: () => {} });
+    assert.equal(out.checks.find((c) => c.name === "sitemap.xml").why, "/sitemap.xml didn't answer within 30 s");
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
 });

@@ -188,7 +188,7 @@ export function checkLd(kind, html, origin) {
   const bad = findKey(nodes, FORBIDDEN);
   if (bad) return fail(`the JSON-LD has ${bad} (self-serving or a price; leave it out)`);
   const of = (type) => nodes.filter((n) => n && n["@type"] === type);
-  if (kind === "home") return { pass: true, why: `${business["@type"]} with ${nodes.length} node(s)` };
+  if (kind === "home") return { pass: true, why: `${clip(business["@type"])} with ${nodes.length} node(s)` };
   if (kind === "service") {
     const svc = of("Service")[0];
     if (!svc) return fail("no Service node");
@@ -198,7 +198,7 @@ export function checkLd(kind, html, origin) {
   const crumbs = of("BreadcrumbList")[0];
   if (!crumbs) return fail("no BreadcrumbList node");
   if (!Array.isArray(crumbs.itemListElement) || crumbs.itemListElement.length !== 3) return fail("the BreadcrumbList doesn't have 3 items (Home › parent › page)");
-  return { pass: true, why: `${nodes.map((n) => n["@type"]).join(", ")}` };
+  return { pass: true, why: clip(nodes.map((n) => n?.["@type"]).join(", ")) };
 }
 
 // Replies and errors are printed to a terminal: control characters (escape sequences) out, length capped.
@@ -215,7 +215,8 @@ function newSid() {
 const hourOf = (date) => date.toISOString().slice(0, 13);
 
 /**
- * Runs every check against `siteUrl` (an https address, or http://localhost for `wrangler pages dev`). Options:
+ * Runs every check against `siteUrl` (an https address: client sites are only served on their own https host, never
+ * on localhost or *.pages.dev, so `wrangler pages dev` can't be checked this way). Options:
  * `fetchImpl` (default global fetch), `now()` (a Date), `sleep(ms)`, `log(line)` for progress. Returns
  * {checks: [{name, pass, why}], failures}.
  */
@@ -226,8 +227,7 @@ export async function runChecks(siteUrl, { fetchImpl = globalThis.fetch, now = (
   } catch {
     base = null;
   }
-  const local = base && base.protocol === "http:" && ["localhost", "127.0.0.1"].includes(base.hostname);
-  if (!base || (base.protocol !== "https:" && !local)) {
+  if (!base || base.protocol !== "https:") {
     throw new Error(`"${clip(siteUrl)}" isn't a site address: give the full address, e.g. https://site-test.aetoswebsites.com`);
   }
   let origin = base.origin;
@@ -241,26 +241,38 @@ export async function runChecks(siteUrl, { fetchImpl = globalThis.fetch, now = (
   let skew = 0;
   const serverNow = () => new Date(now().getTime() + skew);
 
+  // One request, body included, within REQUEST_TIMEOUT_MS (a body that stalls after the headers can't hang the run).
+  // Returns {status, url, text}.
   async function request(path, init = {}) {
     const ctrl = typeof AbortController === "function" ? new AbortController() : null;
-    const timer = ctrl ? setTimeout(() => ctrl.abort(), REQUEST_TIMEOUT_MS) : null;
-    try {
+    let timer = null;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        ctrl?.abort();
+        reject(new Error(`${path} didn't answer within ${REQUEST_TIMEOUT_MS / 1000} s`));
+      }, REQUEST_TIMEOUT_MS);
+    });
+    const go = (async () => {
       const res = await fetchImpl(`${origin}${path}`, { ...init, signal: ctrl?.signal, headers: { "user-agent": "aetos-site-checks", ...(init.headers || {}) } });
       const date = Date.parse(typeof res?.headers?.get === "function" ? res.headers.get("date") ?? "" : "");
       if (Number.isFinite(date)) skew = date - now().getTime();
-      return res;
+      return { status: res.status, url: res.url, text: await res.text() };
+    })();
+    go.catch(() => {}); // after a timeout its rejection is no longer awaited
+    try {
+      return await Promise.race([go, timeout]);
     } catch (e) {
       if (ctrl?.signal.aborted) throw new Error(`${path} didn't answer within ${REQUEST_TIMEOUT_MS / 1000} s`);
       throw e;
     } finally {
-      if (timer) clearTimeout(timer);
+      clearTimeout(timer);
     }
   }
 
   async function getText(path) {
     const res = await request(path);
     if (res.status !== 200) throw new Error(`${path} answered ${res.status}`);
-    return { text: await res.text(), url: res.url };
+    return { text: res.text, url: res.url };
   }
 
   // ---- Pages: home (its final address is the canonical origin), sitemap, a service page, an area page ----
@@ -319,7 +331,7 @@ export async function runChecks(siteUrl, { fetchImpl = globalThis.fetch, now = (
     if (res.status !== 200) throw new Error(`the chat answered ${res.status}${res.status === 404 ? " (is the chat on for this site?)" : ""}`);
     let body;
     try {
-      body = await res.json();
+      body = JSON.parse(res.text);
     } catch {
       throw new Error("the chat's answer isn't JSON");
     }
