@@ -39,6 +39,8 @@ test("GET /api/voice seeds Nik's two examples once; only his own price example c
   assert.equal(g.has_price_reply, false);                                 // a sent first email saying "costing you" doesn't count
   await examples.onRequestPost(ctx("/api/voice/examples", { kind: "rule", situation: "Always", body: "Never discuss price." }));
   assert.equal((await get()).has_price_reply, false);                     // a rule doesn't count
+  // (and not because the rule was refused: it was saved, as Nik's own words)
+  assert.ok((await get()).examples.some((i) => i.kind === "rule" && i.source === "nik_written" && i.body === "Never discuss price."));
   await examples.onRequestPost(ctx("/api/voice/examples", { kind: "example", situation: "They ask what it costs", body: "It's £1,950 for the site." }));
   assert.equal((await get()).has_price_reply, true);
   const seed = g.examples.find((i) => i.situation === "They ask for more info");
@@ -85,4 +87,22 @@ test("the seeds: Nik's exact words as his own examples, each once even when two 
   const rows = DB2.raw.prepare("SELECT situation FROM style_examples ORDER BY situation").all().map((r) => r.situation);
   assert.deepEqual(rows, ["They ask for a call", "They ask for more info"]);
   assert.equal((await (await getWith(DB2)).json()).has_price_reply, false); // neither seed is a price answer
+});
+
+test("has_price_reply goes back to false when Nik deletes his price example (the card comes back)", async () => {
+  const DB = fakeD1();
+  const call = (handler, path, init = {}, params = {}) =>
+    handler({ request: new Request(`${ORIGIN}${path}`, init), env: { DB }, params, now: NOW });
+  const get = async () => (await call(voice.onRequestGet, "/api/voice")).json();
+  assert.equal((await get()).has_price_reply, false);
+  const added = await call(examples.onRequestPost, "/api/voice/examples", {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ kind: "example", situation: "send me more info", body: "Happy to: HOW MUCH it is is on the page." }),
+  });
+  assert.equal(added.status, 200);
+  const mine = (await get()).examples.find((e) => e.situation === "send me more info");
+  assert.equal((await get()).has_price_reply, true); // the text alone is enough
+  const gone = await call(exampleId.onRequestDelete, `/api/voice/examples/${mine.id}`, { method: "DELETE" }, { id: mine.id });
+  assert.equal(gone.status, 200);
+  assert.equal((await get()).has_price_reply, false);
 });
