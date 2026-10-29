@@ -269,7 +269,11 @@ function todoItem(row) {
     : null;
   return {
     id: row.id, kind: row.kind, title: row.title, detail: row.detail ?? "", link: row.link ?? null,
-    draft: row.draft ?? null, due_at: row.due_at ?? null, place_id: row.place_id ?? null, client_id: row.client_id ?? null,
+    draft: row.draft ?? null, due_at: row.due_at ?? null,
+    // The booked call's own time (its due_at is the slot, calls-db.js confirmCall). Stage 8's other call Todos are
+    // due at another time: the outcome question (call-outcome:<id>) 30 minutes after, the day list at 07:00 UK.
+    call_at: row.kind === "call" && typeof row.dedupe === "string" && row.dedupe.startsWith("call:") ? (row.due_at ?? null) : null,
+    place_id: row.place_id ?? null, client_id: row.client_id ?? null,
     business: lead ? (row.business ?? null) : null, phone,
     lead_link: lead ? leadLink(row.place_id) : null, thread_link: lead ? threadLink(row.place_id) : null,
     can_send: SENDABLE.has(row.kind) && !!row.draft && messageIdFromDedupe(row.dedupe) !== null,

@@ -52,6 +52,24 @@ test("board groups, sorts and enriches today's items", async () => {
   assert.ok(b.counts.red >= 1);
 });
 
+test("call_at is the booked call's time, set only for a call:<id> Todo (not the outcome question or the day list)", async () => {
+  const db = seeded();
+  await addTodo(db, { kind: "call", title: "How did the call with Ian (Castle Car Sales) go?", place_id: "pc",
+    link: "/#/call/call-pc", due_at: "2026-10-23T10:30:00Z", dedupe: "call-outcome:call-pc" });
+  await addTodo(db, { kind: "call", title: "Today's calls: 11:00 Ian (Castle Car Sales)", link: "/#/call/call-pc",
+    due_at: "2026-10-23T06:00:00Z", dedupe: "calls-day:2026-10-23" });
+  await addTodo(db, { kind: "setup", title: "Something with a call: dedupe", due_at: "2026-10-23T09:00:00Z", dedupe: "call:not-a-call" });
+  const b = await loadBoard(db, ENV, NOW);
+  const all = [...b.today.overdue, ...b.today.today, ...b.today.later];
+  const by = (title) => all.find((t) => t.title.startsWith(title));
+  assert.equal(by("Call Ian at Castle").call_at, "2026-10-23T10:00:00Z");
+  assert.equal(by("How did the call").call_at, null);
+  assert.equal(by("How did the call").due_at, "2026-10-23T10:30:00Z");
+  assert.equal(by("Today's calls").call_at, null);
+  assert.equal(by("Something with").call_at, null);
+  assert.ok(all.every((t) => "call_at" in t), "every item carries call_at");
+});
+
 test("dedupe helpers", () => {
   assert.equal(messageIdFromDedupe("escalation:m2"), "m2");
   assert.equal(messageIdFromDedupe("call_time:m7@2026-10-22"), "m7");
@@ -122,6 +140,90 @@ test("send refuses a todo that's already done or dismissed, and nothing goes out
 });
 
 // ---------------------------------------------------------------- beyond the spec's seven
+
+test("two presses of Send at once send one reply; a refused send leaves the todo open", async () => {
+  const db = seeded();
+  const outCount = async () => (await db.prepare("SELECT COUNT(*) AS n FROM messages WHERE place_id = 'pn' AND direction = 'out' AND kind = 'reply'").first()).n;
+  // Two tabs (or Send and Send edited) at the same moment, with different words so stage 7's duplicate check can't help.
+  const [a, b] = await Promise.all([send("t-esc", { body: "Hi Sam, sorry." }, db), send("t-esc", { body: "Hi Sam, so sorry." }, db)]);
+  assert.deepEqual([a.status, b.status].sort(), [200, 409]);
+  assert.equal(await outCount(), 1);
+  assert.equal((await db.prepare("SELECT status FROM todos WHERE id = 't-esc'").first()).status, "done");
+  // Stage 7 refuses (no words): nothing is sent and the todo is still there to send.
+  await db.prepare("INSERT INTO todos (id, kind, place_id, title, dedupe, status, created_at) VALUES ('t-esc3','escalation','pn','x','escalation:m-pn1@3','open','2026-10-22T11:00:00Z')").run();
+  assert.equal((await send("t-esc3", { body: "  " }, db)).status, 422);
+  const t = await db.prepare("SELECT status, done_at FROM todos WHERE id = 't-esc3'").first();
+  assert.deepEqual([t.status, t.done_at], ["open", null]);
+  assert.equal(await outCount(), 1);
+});
+
+
+// A DB that runs `fault(sql)` on each prepare (it may throw) and holds every batch() until `gate` settles.
+function faulty(db, { fault = () => {}, gate = null } = {}) {
+  return new Proxy(db, {
+    get(t, k) {
+      if (k === "prepare") return (sql) => { fault(sql); return t.prepare(sql); };
+      if (k === "batch" && gate) return async (stmts) => { await gate; return t.batch(stmts); };
+      return typeof t[k] === "function" ? t[k].bind(t) : t[k];
+    },
+  });
+}
+const nikReplies = async (db) => (await db.prepare("SELECT COUNT(*) AS n FROM messages WHERE place_id = 'pn' AND direction = 'out' AND kind = 'reply' AND author = 'nik'").first()).n;
+const todoRow = async (db, id = "t-esc") => db.prepare("SELECT status, done_at FROM todos WHERE id = ?").bind(id).first();
+const tick = () => new Promise((r) => setImmediate(r));
+
+test("send's claim and send run to the end in waitUntil, so closing the tab can't split them", async () => {
+  // Nik presses Send, then loses signal or closes the tab while it's sending: Cloudflare may cancel the request's own
+  // promise, but what's handed to waitUntil runs to the end. Here the send fails after the claim: the todo opens again.
+  for (const fails of [true, false]) {
+    const db = seeded();
+    let release;
+    const gate = new Promise((res, rej) => { release = fails ? () => rej(new Error("D1_ERROR: network lost")) : res; });
+    gate.catch(() => {});
+    const waits = [];
+    const route = sendRoute({ request: req("POST", { body: "Sorry Sam, I'll ring you." }), env: { DB: faulty(db, { gate }) },
+      params: { id: "t-esc" }, now: NOW, waitUntil: (p) => waits.push(p) });
+    route.catch(() => {});
+    for (let i = 0; i < 50 && !waits.length; i++) await tick();
+    assert.ok(waits.length >= 1, "the claim and the send are handed to waitUntil before anything is awaited on them");
+    assert.equal((await todoRow(db)).status, "done");                     // claimed, nothing sent yet
+    release();
+    await waits[0];                                                       // the request itself is never awaited
+    if (fails) {
+      assert.deepEqual(await todoRow(db), { status: "open", done_at: null });
+      assert.equal(await nikReplies(db), 0);
+    } else {
+      assert.equal((await todoRow(db)).status, "done");
+      assert.equal(await nikReplies(db), 1);
+    }
+  }
+});
+
+test("a reply queued before an error keeps its todo closed; an error before the queue leaves it open", async () => {
+  // nikHandled's stage update fails after the reply is queued: the 500 leaves the todo done, so a second press with
+  // other words gets the 409 instead of a second email in the thread.
+  const db = seeded();
+  let thrown = 0;
+  const broken = faulty(db, { fault: (sql) => {
+    if (/UPDATE prospects SET stage/.test(sql) && !thrown++) throw new Error("D1_ERROR: stage write failed");
+  } });
+  const r = await sendRoute({ request: req("POST", { body: "Hi Sam, sorry about that." }), env: { DB: broken }, params: { id: "t-esc" }, now: NOW });
+  assert.equal(r.status, 500);
+  assert.equal(thrown, 1);
+  assert.equal((await todoRow(db)).status, "done");
+  assert.equal(await nikReplies(db), 1);
+  const again = await sendRoute({ request: req("POST", { body: "Hi Sam, really sorry." }), env: { DB: broken }, params: { id: "t-esc" }, now: NOW });
+  assert.deepEqual([again.status, (await again.json()).error], [409, "That's already been dealt with, so nothing was sent. Refresh the page."]);
+  assert.equal(await nikReplies(db), 1);
+  // The batch read fails (nothing queued yet): the todo is open again to send.
+  const db2 = seeded();
+  const gate = Promise.reject(new Error("D1_ERROR: read failed"));
+  gate.catch(() => {});
+  const r2 = await sendRoute({ request: req("POST", { body: "Hi Sam, sorry." }), env: { DB: faulty(db2, { gate }) }, params: { id: "t-esc" }, now: NOW });
+  assert.equal(r2.status, 500);
+  assert.deepEqual(await todoRow(db2), { status: "open", done_at: null });
+  assert.equal(await nikReplies(db2), 0);
+});
 
 test("kind order, then due time (none last), then id", () => {
   assert.deepEqual(KIND_ORDER, ["escalation", "health", "call_time", "call", "hot", "payment", "build", "care", "kpi", "pick", "setup"]);
