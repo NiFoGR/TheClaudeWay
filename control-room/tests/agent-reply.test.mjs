@@ -225,6 +225,23 @@ test("a call must come with the right intent and action", async () => {
   assert.equal(await count(DB, "SELECT COUNT(*) n FROM messages WHERE kind='reply'"), 0);
 });
 
+test("call_request can only offer a slot: a confirm (a call they never agreed to) is a 422, nothing booked", async () => {
+  const DB = await seeded();
+  const stageBefore = (await one(DB, "SELECT stage FROM prospects WHERE place_id='p1'")).stage;
+  const res = await recordReply(DB, { message_id: "m2", intent: "call_request", body: "Hi Sam,\n\nFriday 23 October at 11am it is. I'll ring you then.", call: { action: "confirm", slot_at: "2026-10-23T10:00:00Z" }, now: NOW });
+  assert.equal(res.status, 422);
+  const msg = "A call_request reply can't send that call: offer a slot with call_request, book one with confirms_slot (or proposes_time when their time is a free slot).";
+  assert.equal(res.body.error, msg);
+  assert.deepEqual(res.body.reasons, [msg]);
+  assert.equal(await count(DB, "SELECT COUNT(*) n FROM calls"), 0);
+  assert.equal((await one(DB, "SELECT needs_reply FROM messages WHERE id='m2'")).needs_reply, 1);
+  const stage = (await one(DB, "SELECT stage FROM prospects WHERE place_id='p1'")).stage;
+  assert.equal(stage, stageBefore);
+  assert.notEqual(stage, "call_booked");
+  assert.equal(await count(DB, "SELECT COUNT(*) n FROM todos WHERE kind='call'"), 0);
+  assert.equal(await count(DB, "SELECT COUNT(*) n FROM messages WHERE kind='reply'"), 0);
+});
+
 test("the slot is taken between inbox and reply: 422 with the next free slot, nothing written", async () => {
   const DB = await seeded();
   await insert(DB, "calls", { id: "cX", place_id: "pX", slot_at: "2026-10-23T10:00:00Z", status: "offered", phone: null, note: "", created_at: "2026-10-21T08:00:00Z", updated_at: "2026-10-21T08:00:00Z" });
@@ -499,4 +516,89 @@ test("read on Sunday 23:28, posted 23:31 (goes Monday 07:00): the weekend price 
   const plain = await recordReply(DB, { message_id: "m9", intent: "price", body: "It's £1,500.", now: D("2026-10-26T09:05:00Z") });
   assert.equal(plain.status, 422);
   assert.equal(plain.body.offer, undefined);
+});
+
+test("they pay between the checks and the write: no reply is queued, their mail goes to Nik", async () => {
+  const DB = await seeded();
+  await insert(DB, "clients", { id: "c1", place_id: "p1", name: "Green Leaf Landscapes", package: "full", build_fee_pence: 195000, monthly_pence: 24900, free_days: 60, paid_on: "2026-10-21", created_at: EARLIER });
+  // Stage 9's fulfilment lands right before the reply batch (the second batch of the request).
+  let batches = 0;
+  const raced = Object.create(DB);
+  raced.batch = async (stmts) => {
+    if (++batches === 2) DB.raw.prepare("UPDATE prospects SET stage = 'won' WHERE place_id = 'p1'").run();
+    return DB.batch(stmts);
+  };
+  const res = await recordReply(raced, { message_id: "m2", intent: "price", body: "Hi Sam,\n\nIt's £1,950.", now: NOW });
+  assert.equal(res.status, 409);
+  assert.equal(res.body.error, "They're a paying client: Nik answers them himself. Move on.");
+  assert.equal(await count(DB, "SELECT COUNT(*) n FROM messages WHERE kind='reply'"), 0);
+  assert.equal(await count(DB, "SELECT COUNT(*) n FROM messages WHERE needs_reply=1"), 0);
+  assert.equal(await count(DB, "SELECT COUNT(*) n FROM messages WHERE intent IS NOT NULL"), 0);
+  assert.deepEqual((await all(DB, "SELECT dedupe FROM todos ORDER BY dedupe")).map((t) => t.dedupe), ["client-mail:m1", "client-mail:m2"]);
+});
+
+test("confirm with no phone known: booked with phone NULL, the call Todo says no number yet", async () => {
+  const DB = await seeded();
+  DB.raw.prepare("UPDATE leads SET phone = NULL WHERE place_id = 'p1'").run();
+  const res = await recordReply(DB, { message_id: "m2", intent: "confirms_slot", body: "Hi Sam,\n\nFriday 23 October at 11am it is. What's the best number to ring you on?", call: { action: "confirm", slot_at: "2026-10-23T10:00:00Z" }, now: NOW });
+  assert.equal(res.status, 200);
+  assert.deepEqual(res.body.call.phone, null);
+  assert.deepEqual(await one(DB, "SELECT status, phone FROM calls"), { status: "confirmed", phone: null });
+  assert.equal((await one(DB, "SELECT title FROM todos WHERE kind='call'")).title, "Call Sam (Green Leaf Landscapes) Fri 11:00 · no number yet");
+});
+
+test("confirming their own offer after its 48-hour hold ran out, when nobody took the day, books it", async () => {
+  const DB = await seeded();
+  assert.equal((await recordReply(DB, { message_id: "m2", intent: "call_request", body: "Hi Sam,\n\nSoonest I am available is Sunday 25 October at 11am.", call: { action: "offer", slot_at: "2026-10-25T11:00:00Z" }, now: NOW })).status, 200);
+  await insert(DB, "messages", inbound("m3", "p1", "2026-10-25T09:00:00Z", { body: "Yes go on then" }));
+  const at = D("2026-10-25T09:30:00Z"); // Sun 09:30 UK (GMT): the hold ended Fri 09:30 UK, the slot is 90 minutes away
+  const res = await recordReply(DB, { message_id: "m3", intent: "confirms_slot", body: "Hi Sam,\n\nGreat, Sunday at 11am it is.", call: { action: "confirm", slot_at: "2026-10-25T11:00:00Z" }, now: at });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await all(DB, "SELECT status FROM calls"), [{ status: "confirmed" }]);
+  assert.equal((await one(DB, "SELECT stage FROM prospects WHERE place_id='p1'")).stage, "call_booked");
+});
+
+// ---------------------------------------------------------------- review fixes
+
+test("a reply to an address on the do-not-email list is refused (the send step would drop it without a word)", async () => {
+  const DB = await seeded();
+  await insert(DB, "suppression", { value: "them.co.uk", kind: "domain", reason: "opt_out", created_at: EARLIER });
+  const res = await recordReply(DB, { message_id: "m2", intent: "price", body: "Hi Sam,\n\nIt's £1,950.", now: NOW });
+  assert.equal(res.status, 422);
+  assert.deepEqual(res.body.reasons, ["Couldn't send: p1@them.co.uk is on the do-not-email list (they opted out). Escalate it as other so Nik reads it."]);
+  assert.equal(await count(DB, "SELECT COUNT(*) n FROM messages WHERE kind='reply'"), 0);
+  assert.equal(await count(DB, "SELECT COUNT(*) n FROM messages WHERE needs_reply=1"), 2);
+  // an opt-out still goes through (nothing is sent)
+  assert.equal((await recordReply(DB, { message_id: "m2", intent: "opt_out", now: NOW })).status, 200);
+});
+
+test("a reply far too long to be an email is refused before the checks run", async () => {
+  const DB = await seeded();
+  const res = await recordReply(DB, { message_id: "m2", intent: "price", body: `Hi Sam,\n\n${"a".repeat(5000)}`, now: NOW });
+  assert.equal(res.status, 422);
+  assert.equal(res.body.error, "Reply refused");
+  assert.deepEqual(res.body.reasons, ["Too long: 5,009 characters (4,000 max)."]);
+  assert.equal(await count(DB, "SELECT COUNT(*) n FROM messages WHERE kind='reply'"), 0);
+});
+
+test("not now a second time: Nik gets a new check-back Todo, 90 days from the new reply", async () => {
+  const DB = await seeded();
+  await thread(DB, "p7", "OAK TREE ROOFING LTD", "m7");
+  const body = "Hi,\n\nNo problem. Would it be OK if I checked back in with you in 3 months?";
+  await recordReply(DB, { message_id: "m7", intent: "not_now", body, now: NOW });
+  // Nik checked back in January and ticked it off; they wrote again (reopened) and said not now again.
+  DB.raw.prepare("UPDATE todos SET status = 'done', done_at = '2027-01-19T09:00:00Z' WHERE dedupe = 'checkback:p7'").run();
+  DB.raw.prepare("UPDATE prospects SET stage = 'replied', lost_reason = NULL WHERE place_id = 'p7'").run();
+  await insert(DB, "messages", inbound("m7b", "p7", "2027-01-20T10:00:00Z"));
+  await recordReply(DB, { message_id: "m7b", intent: "not_now", body, now: D("2027-01-20T10:05:00Z") });
+  const open = await all(DB, "SELECT title, due_at FROM todos WHERE dedupe = 'checkback:p7' AND status = 'open'");
+  assert.deepEqual(open, [{ title: "Check back with Oak Tree Roofing (they said not now on 20 Jan)", due_at: "2027-04-20T10:05:00Z" }]);
+  assert.equal(await count(DB, "SELECT COUNT(*) n FROM todos WHERE kind = 'pick' AND place_id = 'p7'"), 2);
+  // said again while the Todo is still open: the one Todo moves to 90 days from then
+  DB.raw.prepare("UPDATE prospects SET stage = 'replied', lost_reason = NULL WHERE place_id = 'p7'").run();
+  await insert(DB, "messages", inbound("m7c", "p7", "2027-02-01T10:00:00Z"));
+  await recordReply(DB, { message_id: "m7c", intent: "not_now", body, now: D("2027-02-01T10:05:00Z") });
+  assert.deepEqual(await all(DB, "SELECT title, due_at FROM todos WHERE dedupe = 'checkback:p7' AND status = 'open'"),
+    [{ title: "Check back with Oak Tree Roofing (they said not now on 1 Feb)", due_at: "2027-05-02T10:05:00Z" }]);
+  assert.equal(await count(DB, "SELECT COUNT(*) n FROM todos WHERE kind = 'pick' AND place_id = 'p7'"), 2);
 });
