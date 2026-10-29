@@ -5,7 +5,10 @@
 //   with the email it answered (In-Reply-To = their Message-ID; else the message it marked handled); the reply drill
 //   (drill:) and Nik's test lead (test:) never count. null when there are none.
 // - needs_you: the open escalation and call_time Todos, soonest due first, each with message_id (the email it's about,
-//   from its dedupe, or null) and phone (the lead's, for the call-time card).
+//   from its dedupe, or null) and phone (the lead's, for the call-time card). The reply drill's own Todos (drill:) are
+//   left out: they are practice (nothing is ever sent), the Todo page hides them too, and the drill's grade reads its
+//   call_time Todo as still open, so dismissing or booking one there would turn a right answer wrong. Nik's test lead
+//   (test:) is shown: its escalations are the live check (Perfect when 6).
 // - conversations: the 50 threads whose latest message is newest, among leads that have written back (a bounce or an
 //   auto-reply isn't writing back): {place_id, business, stage, last_who ("Them" / "Claude" / "You" / "Follow-up 3" /
 //   "System"), snippet (first 80 characters, quoted history off, as text), at}. An email that never went (cancelled
@@ -47,6 +50,7 @@ const NEEDS_YOU_SQL = `SELECT t.id, t.kind, t.place_id, t.title, t.detail, t.dra
     l.phone AS phone
   FROM todos t LEFT JOIN leads l ON l.place_id = t.place_id
   WHERE t.status = 'open' AND t.kind IN ('escalation', 'call_time')
+    AND substr(COALESCE(t.place_id, ''), 1, 6) <> 'drill:'
   ORDER BY COALESCE(t.due_at, t.created_at), t.created_at, t.id
   LIMIT ${NEEDS_YOU_MAX}`;
 
@@ -134,7 +138,7 @@ export async function onRequestGet({ env, now }) {
   const since = iso(new Date(at.getTime() - WEEK_MS));
   const [settings, stats, pairs, todos, threads] = await Promise.all([
     DB.prepare(SETTINGS_SQL).all(),
-    waitingStats(DB),
+    waitingStats(DB, at),
     DB.prepare(PAIRS_SQL).bind(since).all(),
     DB.prepare(NEEDS_YOU_SQL).all(),
     DB.prepare(CONVERSATIONS_SQL).all(),

@@ -132,6 +132,12 @@ test("the spec's test: escaping, empty state, cards, median, pause, nav entry", 
   assert.equal(list.median_minutes, 3);
   await replies.onRequestPost(ctx(DB, "/api/replies", { paused: true }));
   assert.equal(await getSetting(DB, "replies:paused"), "1");
+  // The spec's `route: "replies", label: "Replies"` PAGES entry: stage 11 (file 11) moved the nav into nav.js NAV and
+  // routeFor, as Task 15 says it would; app.js keeps the dispatch to repliesPage / threadPage.
+  const app = readFileSync(new URL("../public/js/app.js", import.meta.url), "utf8");
+  const nav = readFileSync(new URL("../public/js/nav.js", import.meta.url), "utf8");
+  assert.match(nav, /\["replies", "Replies", "[a-z-]+"\]/); // in the nav
+  assert.match(app, /replies: \(\{ id \}\) => \(id \? threadPage\(id\) : repliesPage\(\)\)/);
 });
 
 // ---------------------------------------------------------------- GET /api/replies
@@ -219,6 +225,58 @@ test("GET /api/replies: last_drill from the setting replies:last_drill", async (
   assert.deepEqual(list.last_drill, { right: 13, total: 14, wrong: [{ key: "angry", expected: "escalate angry", got: "reply not_interested" }] });
   await setSetting(DB, "replies:last_drill", "not json");
   assert.equal((await (await replies.onRequestGet(ctx(DB, "/api/replies"))).json()).last_drill, null);
+});
+
+test("GET /api/replies: the reply drill's Todos aren't in Needs you; Nik's test lead's are", async () => {
+  const DB = await seeded();
+  await addTodo(DB, {
+    kind: "call_time", title: "Confirm a time with Drill Test Landscapes by 6pm (they asked for Thursday at 3pm)",
+    detail: "d", link: "/#/replies/drill%3Aproposes_time", place_id: "drill:proposes_time", due_at: "2026-10-21T08:00:00Z",
+    dedupe: "call_time:dm1",
+  });
+  await addTodo(DB, {
+    kind: "escalation", title: "Angry reply from Drill Test Landscapes: Claude's draft is ready", detail: "d", draft: "Hi",
+    place_id: "drill:angry", due_at: "2026-10-21T08:00:00Z", dedupe: "escalation:dm2",
+  });
+  await addTodo(DB, {
+    kind: "escalation", title: "Angry reply from Drill Test Landscapes: Claude's draft is ready", detail: "d", draft: "Hi",
+    place_id: "test:nik", due_at: "2026-10-21T08:20:00Z", dedupe: "escalation:tm1",
+  });
+  const list = await (await replies.onRequestGet(ctx(DB, "/api/replies"))).json();
+  assert.deepEqual(list.needs_you.map((t) => [t.kind, t.place_id, t.message_id]), [
+    ["escalation", "p2", "m2"], ["escalation", "test:nik", "tm1"], ["call_time", "p2", "m2"],
+  ]);
+});
+
+test("GET /api/replies: a bounce or an auto-reply isn't writing back; a reply that never went isn't the last word", async () => {
+  const DB = fakeD1();
+  for (const id of ["b1", "b2", "b3"]) {
+    await insert(DB, "leads", lead(id, `Firm ${id}`));
+    await insert(DB, "prospects", prospect(id, { stage: "emailed" }));
+    await insert(DB, "messages", out(`f-${id}`, id, "first", "nik", "2026-10-19T09:00:00Z"));
+  }
+  // b1: only a bounce; b2: only an out-of-office. Neither is a conversation.
+  await insert(DB, "messages", inbound("b1x", "b1", "2026-10-19T09:01:00Z", { class: "bounce", author: "system" }));
+  await insert(DB, "messages", inbound("b2x", "b2", "2026-10-19T09:02:00Z", { class: "auto" }));
+  // b3: they wrote, Claude's reply failed, then an auto-reply came: their email is still the last word.
+  await insert(DB, "messages", inbound("b3m", "b3", "2026-10-20T10:00:00Z", { body: "How much is it?", intent: "price" }));
+  await insert(DB, "messages", out("b3r", "b3", "reply", "claude", "2026-10-20T10:03:00Z", { status: "failed", sent_at: null, error: "SMTP login failed" }));
+  await insert(DB, "messages", inbound("b3a", "b3", "2026-10-20T11:00:00Z", { class: "auto", body: "I'm away" }));
+  // A Todo Nik already handled isn't "needs you".
+  await addTodo(DB, { kind: "escalation", title: "Angry reply from Firm b3: Claude's draft is ready", detail: "d", draft: "Hi", place_id: "b3", dedupe: "escalation:b3m" });
+  await DB.prepare("UPDATE todos SET status = 'done' WHERE dedupe = 'escalation:b3m'").run();
+  const list = await (await replies.onRequestGet(ctx(DB, "/api/replies"))).json();
+  assert.deepEqual(list.conversations.map((c) => [c.place_id, c.last_who, c.snippet]), [["b3", "Them", "How much is it?"]]);
+  assert.deepEqual(list.needs_you, []);
+
+  // The thread shows all of it: the auto-reply is "System", the failed reply says so, and Reply as me answers theirs.
+  const t = await (await thread.onRequestGet(ctx(DB, "/api/replies/b3", null, { place_id: "b3" }))).json();
+  assert.deepEqual(t.messages.map((m) => [m.id, m.label, m.status]), [
+    ["f-b3", "You", "sent"], ["b3m", "Them", "received"], ["b3r", "Claude", "failed"], ["b3a", "System", "received"],
+  ]);
+  assert.equal(t.messages.find((m) => m.id === "b3a").intent, null);
+  assert.equal(t.reply_to, "b3m");
+  assert.ok(threadHtml(t.messages).includes("Didn&#39;t send"));
 });
 
 // ---------------------------------------------------------------- POST /api/replies

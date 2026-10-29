@@ -11,6 +11,7 @@ import { NAV, activeNav, badgeHtml, badgeLabel, badgeState, routeFor } from "./n
 import { repliesPage, threadPage } from "./replies.js";
 import { scraperRoute } from "./scraper.js";
 import { setupPage } from "./setup.js";
+import { sitePage, sitesPage } from "./sites.js";
 import { stopTodoPoll, todoPage } from "./todo.js";
 import { voicePage } from "./voice.js";
 
@@ -38,6 +39,9 @@ const PAGE_RUN = {
   voice: () => voicePage(),
   setup: ({ params }) => setupPage(params),
   demo: () => demoPage(),
+  // Stage 10's client sites: routed, not in the nav (linked from build todos, Setup and the client page).
+  sites: () => sitesPage(),
+  site: ({ id }) => sitePage(id),
 };
 
 let turn = 0; // the newest route: a slow page never opens its lead panel over the next one
