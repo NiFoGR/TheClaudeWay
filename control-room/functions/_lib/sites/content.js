@@ -45,11 +45,13 @@ const HTTPS = /^https:\/\/[^\s"'<>()\\]+$/i;
 // Addresses every client site answers itself (sections 7–8), so no old path can be redirected from them.
 const SERVED = new Set(["/privacy", "/sitemap.xml", "/robots.txt"]);
 const POSTCODE = /\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b/i;
+const POSTCODE_G = new RegExp(POSTCODE.source, "gi");
 // A UK phone number written in the copy (01793 123456, 07700 900123, +44 (0)1793 123456): it must be theirs.
 const PHONE_IN_TEXT = /(?:\+44[\s-]?(?:\(0\)[\s-]?)?|\b0)\d(?:[\s-]?\d){8,9}(?!\d)/g;
 const EMAIL_IN_TEXT = /(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
 // A year named in the copy ("since 1995") must be in a fact too, so the copy can't move their start date.
 const YEAR = /\b(?:19|20)\d{2}\b/g;
+const ANY_YEAR = new RegExp(YEAR.source); // no g flag: test() with g remembers where it stopped
 // An old path that can be redirected: path characters only (no spaces, quotes, angle brackets, ? or #).
 const OLD_PATH = /^\/[A-Za-z0-9\-._~%!$&'*+,;=:@/]*$/;
 
@@ -64,11 +66,23 @@ const BANNED = Object.freeze([
   [/\]\(http/i, `links to another site: only link to pages on this site`],
 ]);
 
+// "20 years", "20+ years", "twenty years", "twenty-five years": the number of years the copy says. A years claim is
+// allowed only when a fact says the same number (a fact "5 years" doesn't prove "50 years"). Every number word is in
+// these two lists, so no years claim written in words skips the check ("seventeen years", "sixty-five years").
+const UNITS = "one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen";
+const TENS = "twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety";
+const NUMBER_WORDS = Object.freeze(Object.fromEntries([
+  ...UNITS.split("|").map((w, i) => [w, i + 1]),
+  ...TENS.split("|").map((w, i) => [w, (i + 2) * 10]),
+]));
+const YEARS_SAID = new RegExp(`\\b(?:(\\d+)|(?:(${TENS})[\\s-])?(${UNITS}|${TENS}))\\+?\\s+years?\\b`, "gi");
+const yearsSaid = (t) => [...t.matchAll(YEARS_SAID)].map(([, d, tens, unit]) => (d ? Number(d) : (tens ? NUMBER_WORDS[tens.toLowerCase()] : 0) + NUMBER_WORDS[unit.toLowerCase()]));
+
 // Claims that need a fact (section 5): a sentence matching one is allowed only when the same pattern matches at least
 // one facts[].text. No g flag: test() with g remembers where it stopped.
 const CLAIMS = Object.freeze([
   // Section 5's pattern, plus the number written as a word ("over twenty years"), which says the same thing.
-  ["years", /\b(?:\d+\+?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty)\s+years?\b/i],
+  ["years", new RegExp(`\\b(?:\\d+\\+?|${UNITS}|${TENS})\\s+years?\\b`, "i")],
   ["accreditation", /accredit|certified|registered|approved|member of|checkatrade|trustmark|gas safe|niceic|federation|guild/i],
   ["award", /award/i],
   ["insurance", /insured|insurance/i],
@@ -88,7 +102,11 @@ function deepFreeze(o) {
 
 const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 const str = (v) => (typeof v === "string" ? v : "");
-const norm = (v) => str(v).replace(/\s+/g, " ").trim();
+// (Most text is already single-spaced: the test skips the replace then, which keeps a big site inside the CPU limit.)
+const norm = (v) => {
+  const s = str(v);
+  return /\s\s|[^\S ]/.test(s) ? s.replace(/\s+/g, " ").trim() : s.trim();
+};
 const fold = (v) => norm(v).toLowerCase();
 const chars = (s) => [...s].length;
 const clip = (s, n) => (chars(s) > n ? `${[...s].slice(0, n - 1).join("")}…` : s);
@@ -144,8 +162,9 @@ export function parseBody(text) {
 
 const sectionsOf = (page) => (Array.isArray(page?.sections) ? page.sections.filter(isObj) : []);
 const faqOf = (page) => (Array.isArray(page?.faq) ? page.faq.filter(isObj) : []);
-const WORD = /[\p{L}\p{N}]/u;
-const words = (s) => s.split(/\s+/).filter((w) => WORD.test(w)).length;
+// A word: a run of non-spaces with at least one letter or digit in it ("–" isn't one).
+const WORD = /[^\s\p{L}\p{N}]*[\p{L}\p{N}]\S*/gu;
+const words = (s) => s.match(WORD)?.length ?? 0;
 const SENTENCE_END = /(?<=[.!?])\s+/;
 const sentences = (lines) => lines.map(norm).filter(Boolean).flatMap((l) => l.split(SENTENCE_END));
 
@@ -165,7 +184,8 @@ function readPage(page) {
   for (const f of faqOf(page)) lines.push(str(f.q), str(f.a));
   const text = sentences(lines);
   const all = [...sentences([str(page?.title), str(page?.meta), str(page?.h1), ...h2s]), ...text];
-  return { lines, h2s, links, text, all };
+  const joined = all.join(" ");
+  return { lines, h2s, links, text, all, joined, lower: joined.toLowerCase() };
 }
 
 const countWords = (r) => [...r.lines, ...r.h2s].reduce((n, l) => n + words(l), 0);
@@ -206,8 +226,9 @@ function labelOf(page, i) {
   return page.key;
 }
 
-// A sentence as the duplicate check compares it: lower case, no punctuation, single spaces.
-const dupKey = (s) => s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, "").replace(/\s+/g, " ").trim();
+// A sentence as the duplicate check compares it: lower case, no punctuation, single spaces (sentences are already
+// single-spaced: they come from norm()ed lines).
+const dupKey = (s) => s.toLowerCase().replace(/[^\p{L}\p{N} ]+/gu, "").replace(/ {2,}/g, " ").trim();
 
 // Every string in a value with its field name ("pages.title", "reviews.text"), skipping NOT_TEXT fields.
 function textsOf(value, field, out) {
@@ -223,7 +244,8 @@ function textsOf(value, field, out) {
  * lead's Google reviews [{author, rating, text}]), brand ({logo, colour, photos} from the lead's audit), files (this
  * client's site_files [{id, kind, url, alt}]), package}. Returns {ok, errors}: every problem, one line each.
  */
-export function validateContent(content, ctx = {}) {
+export function validateContent(content, ctx) {
+  ctx = isObj(ctx) ? ctx : {};
   const lines = new Set(); // in the order found, each once
   const add = (line) => {
     lines.add(line);
@@ -417,28 +439,40 @@ export function validateContent(content, ctx = {}) {
     }
     if (page.key === "home" || page.key === "contact") {
       for (const p of areaPaths) if (!to.has(p)) add(`${label}: doesn't link the area page ${p}; home and contact link every area page`);
-      const need = Math.min(LIMITS.hubServiceLinks, servicePaths.length);
+      // Every area page (up to 8) plus 3 service pages would be 11 links, over the limit of 10: the service pages
+      // needed shrink to what the limit leaves.
+      const need = Math.min(LIMITS.hubServiceLinks, servicePaths.length, Math.max(0, LIMITS.links - areaPaths.length));
       if (linkedServices < need) add(`${label}: links to ${plural(linkedServices, "service page")}; it must link at least ${need}`);
     }
   }
 
   // Duplicate copy between pages.
-  const sentenceSets = pages.map(({ read }) => new Set(read.text.filter((s) => s.split(" ").length >= LIMITS.sentenceWords).map(dupKey).filter((s) => s.split(" ").length >= LIMITS.sentenceWords)));
+  // At least LIMITS.sentenceWords words: counts the single spaces without splitting (thousands of sentences on a big site).
+  const longEnough = (s) => {
+    for (let n = 1, i = s.indexOf(" "); i !== -1; i = s.indexOf(" ", i + 1)) if (++n >= LIMITS.sentenceWords) return true;
+    return LIMITS.sentenceWords <= 1 && s !== "";
+  };
+  const sentenceSets = pages.map(({ read }) => new Set(read.text.filter(longEnough).map(dupKey).filter(longEnough)));
+  const onPages = new Map(); // sentence → the pages (indexes, in order) that have it
+  sentenceSets.forEach((set, i) => {
+    for (const s of set) {
+      const at = onPages.get(s);
+      if (at) at.push(i);
+      else onPages.set(s, [i]);
+    }
+  });
   pages.forEach(({ label }, i) => {
     const mine = sentenceSets[i];
     if (mine.size === 0) return;
     let shared = 0;
-    const withPages = [];
+    const others = new Set();
     for (const s of mine) {
-      let found = false;
-      sentenceSets.forEach((other, j) => {
-        if (j === i || !other.has(s)) return;
-        found = true;
-        const p = str(pages[j].page.path) || pages[j].label;
-        if (!withPages.includes(p)) withPages.push(p);
-      });
-      if (found) shared++;
+      const at = onPages.get(s);
+      if (at.length < 2) continue;
+      shared++;
+      for (const j of at) if (j !== i) others.add(j);
     }
+    const withPages = [...others].sort((a, b) => a - b).map((j) => str(pages[j].page.path) || pages[j].label);
     const pct = Math.ceil((shared * 100) / mine.size);
     if (shared / mine.size > LIMITS.dupShare) {
       add(`${label}: shares ${pct}% of its sentences with ${withPages.join(", ")}; the limit is ${Math.round(LIMITS.dupShare * 100)}%: write this page's own copy`);
@@ -461,11 +495,11 @@ export function validateContent(content, ctx = {}) {
   const phoneDigits = ukDigits(formBiz.phone);
   const emails = new Set([fold(formBiz.email), fold(formBiz.leads_email)].filter(Boolean));
   for (const { label, read } of pages) {
-    const text = read.all.join(" ");
+    const text = read.joined;
     for (const m of text.matchAll(PHONE_IN_TEXT)) {
       if (ukDigits(m[0]) !== phoneDigits) add(`${label}: says the phone number "${m[0]}", but the number on their form is "${clip(norm(formBiz.phone), 40)}"`);
     }
-    for (const m of text.matchAll(EMAIL_IN_TEXT)) {
+    if (text.includes("@")) for (const m of text.matchAll(EMAIL_IN_TEXT)) {
       if (!emails.has(m[0].toLowerCase())) add(`${label}: says the email "${clip(m[0], 80)}", but it isn't the email on their form ("${clip(norm(formBiz.email), 80)}")`);
     }
   }
@@ -477,18 +511,20 @@ export function validateContent(content, ctx = {}) {
     const formAddr = norm(formBiz.address);
     const firstLine = norm(formAddr.split(",")[0]);
     if (/\d/.test(firstLine) && firstLine !== formAddr) hidden.push(firstLine);
-    const postcodes = [norm(addr.postcode), POSTCODE.exec(formAddr)?.[0] ?? ""].map((p) => p.replace(/\s+/g, "").toLowerCase()).filter(Boolean);
-    const shows = (t) => {
-      const text = fold(t);
-      const squashed = text.replace(/\s+/g, "");
-      return hidden.some((s) => s && text.includes(s.toLowerCase())) || postcodes.some((p) => squashed.includes(p));
-    };
+    const squash = (p) => p.replace(/\s+/g, "").toLowerCase();
+    const streets = hidden.filter(Boolean).map((s) => s.toLowerCase());
+    const postcodes = [norm(addr.postcode), POSTCODE.exec(formAddr)?.[0] ?? ""].map(squash).filter(Boolean);
+    // `lower` is single-spaced lower-case text. A postcode is found however it's spaced ("SN1 1AA", "sn11aa"); the
+    // text only needs squashing when the content's postcode isn't one POSTCODE recognises.
+    const shows = (lower) =>
+      streets.some((s) => lower.includes(s)) ||
+      postcodes.some((p) => (POSTCODE.test(p) ? [...lower.matchAll(POSTCODE_G)].some((m) => squash(m[0]) === p) : lower.replace(/\s+/g, "").includes(p)));
     for (const { label, read } of pages) {
-      if (shows(read.all.join(" "))) add(`${label}: shows the street or postcode, but they chose to show their town only`);
+      if (shows(read.lower)) add(`${label}: shows the street or postcode, but they chose to show their town only`);
     }
     // Alt text is in the page too (and read out by screen readers).
     (Array.isArray(content.photos) ? content.photos : []).forEach((p, i) => {
-      if (isObj(p) && shows(str(p.alt))) add(`photos[${i}]: the alt text shows the street or postcode, but they chose to show their town only`);
+      if (isObj(p) && shows(fold(p.alt))) add(`photos[${i}]: the alt text shows the street or postcode, but they chose to show their town only`);
     });
   }
   if (biz.socials !== undefined && (!Array.isArray(biz.socials) || !biz.socials.every((u) => typeof u === "string" && HTTPS.test(u)))) {
@@ -516,29 +552,26 @@ export function validateContent(content, ctx = {}) {
   const fileIds = new Set(files.map((f) => str(f.id)));
   const fileUrls = new Set(files.map((f) => str(f.url)).filter(Boolean));
   const allowed = (u) => typeof u === "string" && (theirs.has(u) || fileUrls.has(u) || fileIds.has(FILE_URL.exec(u)?.[1] ?? "\0"));
-  // Section 10 copies only https:// images into site_files; an http:// one would stay hot-linked and the site's
-  // content-security-policy (img-src 'self') would block it.
-  const copyable = (u) => FILE_URL.test(u) || fileUrls.has(u) || /^https:\/\//i.test(u);
+  // An http:// one of theirs passes: section 10's copyPhotos can't fetch it, so it drops it from the content with a
+  // warning (and counts it towards the "Add photos" todo) instead of refusing the whole post.
   const photos = Array.isArray(content.photos) ? content.photos : [];
   if (content.photos !== undefined && !Array.isArray(content.photos)) add("photos must be a list");
   if (photos.length > LIMITS.photos) add(`photos: there are ${photos.length}; the limit is ${LIMITS.photos}`);
   photos.forEach((p, i) => {
     if (!isObj(p) || !allowed(p.url)) add(`photos[${i}]: not one of their photos (use a URL from brand.photos, brand.logo or files)`);
-    else if (!copyable(p.url)) add(`photos[${i}]: only https:// photos can be copied to the site; leave this one out (Nik can add it on the Site page)`);
     else if (!norm(p.alt)) add(`photos[${i}]: alt is missing (a short, local description of the photo)`);
   });
   const theme = isObj(content.theme) ? content.theme : {};
   if (theme.main !== undefined && !(typeof theme.main === "string" && HEX.test(theme.main))) add(`theme.main must be a colour like "#1e4f86"`);
   if (theme.logo !== undefined && theme.logo !== "" && !allowed(theme.logo)) add("theme.logo: not their logo (use brand.logo or one of files)");
-  else if (theme.logo !== undefined && theme.logo !== "" && !copyable(theme.logo)) add("theme.logo: only an https:// logo can be copied to the site; leave it out (Nik can add it on the Site page)");
 
   // Banned words, anywhere people can read.
+  // Each field's text joined by "\0" (no pattern matches across it), so each pattern runs once per page.
   const scan = (label, value, field) => {
-    for (const t of textsOf(value, field, [])) {
-      for (const [re, msg] of BANNED) {
-        const m = re.exec(t);
-        if (m) add(`${label}: ${msg.replace("$&", m[0])}`);
-      }
+    const t = textsOf(value, field, []).join("\0");
+    for (const [re, msg] of BANNED) {
+      const m = re.exec(t);
+      if (m) add(`${label}: ${msg.replace("$&", m[0])}`);
     }
   };
   for (const { page, label } of pages) scan(label, page, "pages");
@@ -552,14 +585,42 @@ export function validateContent(content, ctx = {}) {
   const facts = Array.isArray(content.facts) ? content.facts : [];
   if (content.facts !== undefined && !Array.isArray(content.facts)) add("facts must be a list");
   const factTexts = facts.filter(isObj).map((f) => str(f.text));
-  for (const { label, read } of pages) {
+  const factYears = new Set(factTexts.flatMap(yearsSaid));
+  // What the client's form says no to, no fact from elsewhere can say yes to: their own answers win. Each has its own
+  // narrower pattern: "We reply within 24 hours" isn't an emergency call-out, so it goes on to the fact check below.
+  const formSaysNo = [
+    ["free quote", form.free_quotes === "no", "they don't give free quotes", /free quote/i],
+    ["emergency", form.emergency === "no", "they don't do emergency call-outs", /24\/7|emergenc/i],
+  ].filter(([, no]) => no);
+  // Every page's text, and each photo's alt text (it's in the page too).
+  const said = [
+    ...pages.map(({ label, read }) => ({ label, all: read.all, joined: read.joined })),
+    ...(Array.isArray(content.photos) ? content.photos : []).map((p, i) => ({ label: `photos[${i}]`, all: isObj(p) && norm(p.alt) ? [norm(p.alt)] : [], joined: isObj(p) ? norm(p.alt) : "" })),
+  ];
+  for (const { label, all, joined } of said) {
     for (const [name, re] of CLAIMS) {
-      if (factTexts.some((t) => re.test(t))) continue;
-      const s = read.all.find((x) => re.test(x));
-      if (s) add(`${label}: "${clip(s, 80)}" needs a fact: "${name}" (add the fact to facts with where it's from, or take it out)`);
+      if (!re.test(joined)) continue; // (sentences are joined by a space: no pattern here spans two)
+      const no = formSaysNo.find(([n]) => n === name);
+      let rest = all;
+      if (no) {
+        const s = all.find((x) => no[3].test(x));
+        if (s) add(`${label}: "${clip(s, 80)}" can't be said: their form says ${no[2]}`);
+        // the other sentences this claim matches still need a fact, as on any page
+        rest = all.filter((x) => !no[3].test(x));
+        if (!rest.some((x) => re.test(x))) continue;
+      }
+      if (!factTexts.some((t) => re.test(t))) {
+        const s = rest.find((x) => re.test(x));
+        if (s) add(`${label}: "${clip(s, 80)}" needs a fact: "${name}" (add the fact to facts with where it's from, or take it out)`);
+      } else if (name === "years") {
+        for (const x of all) {
+          const n = yearsSaid(x).find((y) => !factYears.has(y));
+          if (n !== undefined) add(`${label}: "${clip(x, 80)}" needs a fact: "${n} years" (no fact says ${n} years)`);
+        }
+      }
     }
     const years = new Set();
-    for (const x of read.all) {
+    if (ANY_YEAR.test(joined)) for (const x of all) {
       for (const [y] of x.replace(PHONE_IN_TEXT, " ").matchAll(YEAR)) { // "020 2019 1234" is a phone number, not a year
         if (years.has(y) || factTexts.some((t) => t.includes(y))) continue;
         years.add(y);

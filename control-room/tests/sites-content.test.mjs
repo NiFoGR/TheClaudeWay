@@ -399,12 +399,14 @@ test("the same review twice", () => {
   assert.match(errs(c), /reviews\[3\]: this review is already on the site/);
 });
 
-test("an http:// photo of theirs can't be copied", () => {
+test("an http:// photo of theirs passes: copyPhotos drops it with a warning (section 10), it doesn't refuse the post", () => {
   const c = fx();
   const x = ctx();
   x.brand.photos[0] = "http://smithroofing.co.uk/images/slate-roof.jpg";
+  x.brand.logo = "http://smithroofing.co.uk/images/logo.png";
   c.photos[0].url = x.brand.photos[0];
-  assert.match(errs(c, x), /photos\[0\]: only https:\/\/ photos can be copied/);
+  c.theme.logo = x.brand.logo;
+  assert.deepEqual(validateContent(c, x).errors, []);
 });
 
 test("links only in section bodies; redirects only from plain paths", () => {
@@ -425,4 +427,103 @@ test("a refusal lists at most 50 lines", () => {
   assert.equal(ok, false);
   assert.equal(errors.length, 50);
   assert.match(errors[49], /^…and \d+ more problems like these$/);
+});
+
+// Adversarial review fixes.
+test("a years claim needs a fact with the same number of years", () => {
+  const c = withBody("We have 50 years' experience.");
+  c.facts.push({ text: "Roofing in Swindon for 5 years", source: "https://smithroofing.co.uk/about" });
+  assert.match(errs(c), /We have 50 years' experience\." needs a fact: "50 years"/);
+  const d = withBody("We have over twenty-five years' experience.");
+  d.facts.push({ text: "Roofing in Swindon for 25 years", source: "https://smithroofing.co.uk/about" });
+  assert.deepEqual(validateContent(d, ctx()).errors, []);
+  const e = withBody("We have 25+ years' experience.");
+  e.facts.push({ text: "Roofing for twenty-five years", source: "https://smithroofing.co.uk/about" });
+  assert.deepEqual(validateContent(e, ctx()).errors, []);
+});
+
+test("their form's no wins over any fact: no free quotes, no emergency call-outs", () => {
+  const x = ctx();
+  x.form.free_quotes = "no";
+  x.form.emergency = "no";
+  const c = withBody("Ring for a free quote today.");
+  c.facts = c.facts.filter((f) => f.text !== "Free quotes" && f.text !== "Emergency call-outs");
+  c.facts.push({ text: "Free quotes on every job", source: "https://smithroofing.co.uk/" });
+  const lines = validateContent(c, x).errors.filter((l) => /can't be said/.test(l));
+  assert.ok(lines.some((l) => /service \/services\/roof-repairs: "[^"]*[Ff]ree quote[^"]*" can't be said: their form says they don't give free quotes/.test(l)), lines.join("\n"));
+  assert.ok(lines.some((l) => /their form says they don't do emergency call-outs/.test(l)), lines.join("\n"));
+});
+
+test("a claim or a year in a photo's alt text needs a fact too", () => {
+  const c = fx();
+  c.photos[0].alt = "Our award winning slate roof in Old Town, Swindon";
+  assert.match(errs(c), /photos\[0\]: "Our award winning slate roof in Old Town, Swindon" needs a fact: "award"/);
+  const d = fx();
+  d.photos[0].alt = "Slate roof we fitted in 1998 in Old Town, Swindon";
+  assert.match(errs(d), /photos\[0\]: .* needs a fact: "1998"/);
+});
+
+test("8 area pages: home and contact link all 8 and 2 service pages, inside the limit of 10 links", () => {
+  const towns = ["Wroughton", "Old Town", "Stratton", "Highworth", "Purton", "Lydiard", "Covingham", "Blunsdon"];
+  const x = ctx();
+  x.form.areas = ["Swindon", ...towns];
+  const c = fx();
+  const slug = (t) => t.toLowerCase().replace(/ /g, "-");
+  const tmpl = page(c, "/areas/old-town");
+  for (const t of towns.slice(2)) {
+    const p = structuredClone(tmpl);
+    p.name = t;
+    p.path = `/areas/${slug(t)}`;
+    p.title = `${p.title} ${t}`;
+    p.meta = p.meta.replace(/.{0,12}$/, t).padEnd(70, ".");
+    p.h1 = `Roofer in ${t}`;
+    c.pages.push(p);
+  }
+  const hub = (p) => {
+    p.sections = [{ h2: p.sections[0].h2, body: p.sections.map((s) => s.body.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")).join("\n\n") },
+      { h2: "Where we work", body: `${towns.map((t) => `[${t}](/areas/${slug(t)})`).join(", ")}. We fix [roofs](/services/roof-repairs) and [flat roofs](/services/flat-roofs).` }];
+  };
+  hub(page(c, "/"));
+  hub(page(c, "/contact"));
+  const e = validateContent(c, x).errors.join("\n");
+  assert.doesNotMatch(e, /^(home|contact): (has \d+ links|links to \d+ service page|doesn't link)/m);
+});
+
+test("ctx missing or null doesn't throw", () => {
+  assert.equal(validateContent(fx(), null).ok, false);
+  assert.equal(validateContent(fx()).ok, false);
+});
+
+test("a years claim in any number word needs a fact with that number (thirteen to nineteen, sixty to ninety)", () => {
+  assert.match(errs(withBody("We have over seventeen years' experience.")), /needs a fact: "years"/);
+  assert.match(errs(withBody("We have over thirteen years' experience.")), /needs a fact: "years"/);
+  assert.match(errs(withBody("The firm has over sixty years of history.")), /needs a fact: "years"/);
+  assert.match(errs(withBody("Nearly ninety years on Swindon roofs.")), /needs a fact: "years"/);
+  const five = withBody("We have sixty-five years' experience.");
+  five.facts.push({ text: "Roofing in Swindon for 5 years", source: "https://smithroofing.co.uk/about" });
+  assert.match(errs(five), /needs a fact: "65 years"/);
+  const sixtyFive = withBody("We have sixty-five years' experience.");
+  sixtyFive.facts.push({ text: "Roofing in Swindon for 65 years", source: "https://smithroofing.co.uk/about" });
+  assert.deepEqual(validateContent(sixtyFive, ctx()).errors, []);
+  const seventeen = withBody("We have seventeen years' experience.");
+  seventeen.facts.push({ text: "Roofing in Swindon for 17 years", source: "https://smithroofing.co.uk/about" });
+  assert.deepEqual(validateContent(seventeen, ctx()).errors, []);
+});
+
+test("a form that says no to emergency call-outs doesn't ban an ordinary '24 hours' line (it still needs a fact)", () => {
+  const x = ctx();
+  x.form.emergency = "no";
+  const line = "We reply to every message within 24 hours.";
+  const backed = withBody(line);
+  backed.facts.push({ text: "Replies to every message within 24 hours", source: "https://smithroofing.co.uk/contact" });
+  const lines = validateContent(backed, x).errors;
+  assert.deepEqual(lines.filter((l) => l.includes("within 24 hours")), [], lines.join("\n"));
+  // the fixture's "Emergency call-outs ..." lines are still refused by the form's no
+  assert.ok(lines.some((l) => /"[^"]*Emergency call-outs[^"]*" can't be said: their form says they don't do emergency call-outs/.test(l)), lines.join("\n"));
+  // with no fact behind it, the 24 hours line needs one (section 5), it isn't "can't be said"
+  const bare = withBody(line);
+  bare.facts = bare.facts.filter((f) => !/24\/7|24 hours|emergenc/i.test(f.text));
+  const out = validateContent(bare, x).errors.filter((l) => l.includes("within 24 hours"));
+  assert.equal(out.length, 1, out.join("\n"));
+  assert.match(out[0], /needs a fact: "emergency"/);
 });
