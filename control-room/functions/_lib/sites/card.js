@@ -15,11 +15,15 @@ import { qrSvg } from "./qr.js";
 const NAME_MAX = 120;
 const PHONE_MAX = 40;
 const CARDS = 8;
+// The QR prints 37 mm wide. Past QR version 20 (97 modules + the 4-module quiet zone each side = 105) a module is
+// under 0.35 mm and phone cameras stop reading it reliably, so a card that wouldn't scan is never printed. The one
+// limit: the Site page's save (api/sites/[client_id]/domain.js), its QR preview and the onboarding form use cardQr too.
+export const QR_MAX_UNITS = 105;
 
 const ASK = "We'd really appreciate a Google review. Scan the code with your phone camera.";
 const NO_LINK = "There's no Google review link for this business yet.";
 // qrSvg's own message ("That link is too long to fit in a QR code.") plus what to do: a page, never a 500.
-const TOO_LONG = "This Google review link is too long to fit in a QR code. Send us the short link from your Google Business Profile (Ask for reviews) and we'll put that on your cards.";
+const TOO_LONG = "This Google review link is too long to fit in a QR code. Send us the short link from your Google Business Profile (Get more reviews) and we'll put that on your cards.";
 
 const CSS = `@page { size: A4; margin: 0 }
 *, *::before, *::after { box-sizing: border-box }
@@ -69,6 +73,21 @@ const SCRIPT = `(function () {
   }
 })();`;
 
+/**
+ * The QR SVG for `url` when it fits the printed card (at most QR_MAX_UNITS wide with its quiet zone), else "" (too
+ * dense to scan at card size, too long for any QR code, or empty). Never throws.
+ */
+export function cardQr(url) {
+  let svg;
+  try {
+    svg = qrSvg(String(url ?? ""));
+  } catch {
+    return "";
+  }
+  const units = Number(/viewBox="0 0 (\d+) /.exec(svg)?.[1]);
+  return units > 0 && units <= QR_MAX_UNITS ? svg : "";
+}
+
 function page(title, body) {
   return `<!doctype html>
 <html lang="en-GB">
@@ -113,12 +132,8 @@ export function renderReviewCard({ business, phone, owner, reviewUrl } = {}) {
   if (!checked.ok) return page(title, `<main class="empty"><p>${h(NO_LINK)}</p></main>`);
 
   const link = checked.url;
-  let svg;
-  try {
-    svg = qrSvg(link);
-  } catch {
-    return page(title, `<main class="empty"><p>${h(TOO_LONG)}</p></main>`);
-  }
+  const svg = cardQr(link);
+  if (!svg) return page(title, `<main class="empty"><p>${h(TOO_LONG)}</p></main>`);
   const cards = Array.from({ length: CARDS }, () => card(name, tel, svg)).join("\n");
   const m = reviewMessages({ business: name, owner, link });
 

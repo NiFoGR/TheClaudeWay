@@ -2,7 +2,7 @@
 // Run: node --test control-room/tests/sites-card.test.mjs
 import assert from "node:assert/strict";
 import test from "node:test";
-import { renderReviewCard } from "../functions/_lib/sites/card.js";
+import { cardQr, QR_MAX_UNITS, renderReviewCard } from "../functions/_lib/sites/card.js";
 import { qrSvg } from "../functions/_lib/sites/qr.js";
 import { reviewMessages } from "../functions/_lib/sites/copy.js";
 
@@ -154,4 +154,32 @@ test("a review link too long for a QR code: a plain page saying what to do, neve
 test("on a phone screen only the A4 sheet scrolls sideways, not the whole page", () => {
   const html = renderReviewCard(ARGS);
   assert.match(html, /@media screen \{[^@]*\.sheet \{[^}]*max-width: 100%; overflow-x: auto/);
+});
+
+test("a review link that only fits a QR too dense to scan at card size gets the plain page, not unreadable cards", () => {
+  // 664 bytes: QR version 20 (97 modules), still about 0.35 mm a module at 37 mm wide: printed.
+  const ok = `https://g.page/r/${"a".repeat(640)}/review`;
+  const cards = cardsOf(renderReviewCard({ ...ARGS, reviewUrl: ok }));
+  assert.equal(cards.length, 8);
+  for (const card of cards) assert.ok(card.includes(qrSvg(ok)));
+  // 670 bytes: version 21 (101 modules): too small to scan reliably, so no cards.
+  const html = renderReviewCard({ ...ARGS, reviewUrl: `https://g.page/r/${"a".repeat(646)}/review` });
+  assert.ok(!html.includes('class="card"'));
+  assert.ok(!html.includes("<svg"));
+  assert.match(html, /too long to fit in a QR code/);
+  assert.match(html, /Get more reviews/);
+});
+
+test("cardQr: the one size limit the save, the Site page and the card share", () => {
+  assert.equal(QR_MAX_UNITS, 105);
+  const ok = `https://g.page/r/${"a".repeat(640)}/review`;
+  assert.equal(cardQr(ok), qrSvg(ok));
+  // encodes without throwing (version 21) but is past 105 units: ""
+  const dense = `https://g.page/r/${"a".repeat(646)}/review`;
+  assert.doesNotThrow(() => qrSvg(dense));
+  assert.equal(cardQr(dense), "");
+  // too long for any QR (qrSvg throws), empty, or not a string: "" and never a throw
+  assert.equal(cardQr(`https://g.page/r/${"a".repeat(3000)}/review`), "");
+  assert.equal(cardQr(""), "");
+  assert.equal(cardQr(null), "");
 });
