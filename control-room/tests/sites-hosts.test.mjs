@@ -31,6 +31,11 @@ test("normaliseHost lower-cases and drops the port and the trailing dot", () => 
   assert.equal(normaliseHost("smith.co.uk.."), "smith.co.uk");
   assert.equal(normaliseHost("xn--bcher-kva.de"), "xn--bcher-kva.de");
   assert.equal(normaliseHost("bücher.de"), "xn--bcher-kva.de");
+  // new URL() would read these as bücher.de and quietly drop the rest: a non-ASCII host with anything that isn't part
+  // of a host name is no host at all.
+  for (const junk of ["smith.co.uk@bücher.de", "bücher.de/x", "bücher.de\\evil", "bücher.de?x", "bücher.de#x", "bü cher.de"]) {
+    assert.equal(normaliseHost(junk), "", JSON.stringify(junk));
+  }
   assert.equal(normaliseHost(""), "");
   assert.equal(normaliseHost(undefined), "");
   assert.equal(normaliseHost(null), "");
@@ -79,7 +84,8 @@ test("canonicalHost: www.<domain> from whatever the client typed", () => {
   assert.equal(canonicalHost("bücher.de").domain, "xn--bcher-kva.de");
   assert.deepEqual(canonicalHost("smith"), { ok: false, error: BAD_DOMAIN });
   for (const bad of ["", "   ", "www.", "smith .co.uk", "you@smith.co.uk", "smith.c", "-smith.co.uk", "smith..co.uk",
-    "1.2.3.4", "smith_roofing.co.uk", "smith.co.uk/ page", null, undefined, 42]) {
+    "1.2.3.4", "smith_roofing.co.uk", "smith.co.uk/ page", "bücher.de\\evil", "smithü.co.uk\\x", "smith.co.uk@bücher.de",
+    null, undefined, 42]) {
     assert.deepEqual(canonicalHost(bad), { ok: false, error: BAD_DOMAIN }, `refuses ${JSON.stringify(bad)}`);
   }
 });

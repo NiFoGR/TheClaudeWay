@@ -39,9 +39,13 @@ const BAD_DOMAIN = "That doesn't look like a web address. Type it like smithroof
 const LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const TLD_RE = /^(?:[a-z]{2,63}|xn--[a-z0-9-]{1,59})$/;
 
-// Punycode for a host with non-ASCII letters (new URL() does IDNA); "" when it can't be a host at all.
+// Punycode for a host with non-ASCII letters (new URL() does IDNA); "" when it can't be a host at all. new URL() would
+// quietly read "smith.co.uk@bücher.de" as bücher.de and drop a path, "\", "?" or "#" part, so anything that isn't
+// part of a host name is refused first.
+const NOT_HOST_RE = /[\s/\\?#@:%[\]<>^|"'`{}]/;
 function toAscii(host) {
   if (/^[\x00-\x7f]*$/.test(host)) return host;
+  if (NOT_HOST_RE.test(host)) return "";
   try {
     return new URL(`https://${host}`).hostname;
   } catch {
