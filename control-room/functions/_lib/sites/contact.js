@@ -30,15 +30,18 @@ export const FORM_LIMIT = 5; // posts per visitor per site per UTC hour
 export const MIN_FILL_MS = 3000;
 export const MESSAGE_MAX = 2000;
 const BODY_MAX = 64 * 1024; // far above a 2,000-character message; anything bigger isn't a person
-const EMAIL_MAX = 254;
+// Not RFC's 254: the enquiry email prints every detail through oneLine (200 characters), so a longer address would be
+// cut there. No real address is that long; one over it is refused, never stored or emailed cut short.
+const EMAIL_MAX = 200;
 const PAGE_MAX = 200;
 const SENT = "/contact?sent=1";
 // The path prefix a page is served under: "" on the client's own host, "/w/<slug>" on the temporary link (Task 23).
 const BASE_RE = /^(?:\/[A-Za-z0-9._~-]+)*$/;
 const PAGE_PATH = /^\/[A-Za-z0-9\-._~/%]*$/;
 const EMAIL_RE = /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[^\s@<>()[\]\\,;:"]{2,}$/;
-// Control characters other than tab and LF (CR is turned into LF first), and the bidi overrides, out of a message.
-const MESSAGE_JUNK = /[\u0000-\u0008\u000B-\u001F\u007F\u202A-\u202E\u2066-\u2069]/g;
+// Control characters other than tab and LF (CR is turned into LF first), C1 controls, and the bidi overrides, out of
+// a message.
+const MESSAGE_JUNK = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F\u202A-\u202E\u2066-\u2069]/g;
 
 const CSP = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' "
   + "'unsafe-inline'; frame-src https://maps.google.com https://www.google.com; form-action 'self'; base-uri 'none'";
@@ -75,6 +78,10 @@ const cleanMessage = (s) => String(s ?? "").replace(/\r\n?/g, "\n").replace(MESS
 // One line: control and bidi characters out, then copy.js's oneLine (every CR/LF and run of spaces one space, ≤ 200).
 const cleanLine = (s) => oneLine(String(s ?? "").replace(/[\r\n]+/g, " ").replace(MESSAGE_JUNK, ""));
 
+// The email on one line, junk out, but never cut short (oneLine stops at 200 characters, and a cut address is a
+// wrong one): contactErrors refuses one over EMAIL_MAX instead.
+const cleanEmail = (s) => String(s ?? "").replace(MESSAGE_JUNK, "").replace(/\s+/g, " ").trim();
+
 const digits = (s) => (String(s).match(/\d/g) || []).length;
 
 // The page the visitor was on: the form's hidden `page` field when it is a plain path on this site, else null.
@@ -83,12 +90,15 @@ function pageOf(value) {
   return p && p.length <= PAGE_MAX && PAGE_PATH.test(p) && !p.startsWith("//") ? p : null;
 }
 
-/** The fields as stored: single-line ones on one line (CR/LF gone), at most 200 characters; the message as typed. */
+/**
+ * The fields as stored: single-line ones on one line (CR/LF gone), at most 200 characters (the email is never cut:
+ * a longer one is refused); the message as typed.
+ */
 export function contactFields(data) {
   return {
     name: cleanLine(field(data, "name")),
     phone: cleanLine(field(data, "phone")),
-    email: cleanLine(field(data, "email")),
+    email: cleanEmail(field(data, "email")),
     message: cleanMessage(field(data, "message")),
     page: pageOf(field(data, "page")),
   };

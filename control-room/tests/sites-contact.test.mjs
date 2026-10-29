@@ -395,3 +395,43 @@ test("a chunked contact body under the limit is still read as the form", async (
   assert.equal(leads.length, 1);
   assert.equal(leads[0].phone, "07700900123");
 });
+
+test("an email too long to print in full is refused, never stored cut short", async () => {
+  const { DB, env, site } = await setup();
+  // 201 characters that would still look like an address once cut at 200.
+  const email = `dave@${"a.".repeat(96)}co.uk`;
+  assert.equal(email.length, 202);
+  const res = await handleContact(post({ name: "Dave", email, message: "Leak" }), env, site, NOW);
+  assert.equal(res.status, 400);
+  assert.ok((await res.text()).includes("That email doesn&#39;t look right."));
+  assert.equal((await all(DB, "SELECT * FROM site_leads")).length, 0);
+  // At the limit it goes through whole.
+  const ok = `dave@${"a.".repeat(94)}co.uk`;
+  assert.equal(ok.length, 198);
+  assert.equal((await handleContact(post({ name: "Dave", email: ok, message: "Leak" }), env, site, NOW)).status, 303);
+  assert.equal((await all(DB, "SELECT email FROM site_leads"))[0].email, ok);
+});
+
+test("a body with a Content-Length over 64 KB → 413 before anything is read or counted", async () => {
+  const { DB, env, site } = await setup();
+  let pulls = 0;
+  const chunk = new TextEncoder().encode("x".repeat(1024));
+  const body = new ReadableStream({ pull(controller) { pulls++; controller.enqueue(chunk); } });
+  const request = new Request(URL_CONTACT, {
+    method: "POST", body, duplex: "half",
+    headers: { "content-type": "application/x-www-form-urlencoded", "CF-Connecting-IP": IP, "content-length": String(70 * 1024) },
+  });
+  assert.equal(request.headers.get("content-length"), String(70 * 1024));
+  const res = await handleContact(request, env, site, NOW);
+  assert.equal(res.status, 413);
+  assert.ok(pulls <= 2, `the body wasn't read (pulled ${pulls} chunks)`);
+  assert.equal((await all(DB, "SELECT * FROM site_leads")).length, 0);
+  assert.equal((await all(DB, "SELECT * FROM rate_hits")).length, 0);
+});
+
+test("C1 control characters are taken out of the message too", async () => {
+  const { DB, env, site } = await setup();
+  const res = await handleContact(post({ ...VALID, message: "Leak\u0085here\u009b" }), env, site, NOW);
+  assert.equal(res.status, 303);
+  assert.equal((await all(DB, "SELECT message FROM site_leads"))[0].message, "Leakhere");
+});
