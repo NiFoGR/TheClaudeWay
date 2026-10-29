@@ -21,8 +21,25 @@ const FACT_MAX = 300;
 /**
  * The price pattern (section 11): any reply it matches is replaced by the price line. Case-insensitive, never global
  * (so .test() keeps no state). The live checks (scripts/site-checks-lib.mjs) import it to judge replies the same way.
+ * Section 11's pattern, plus (review of Task 19) spelled-out amounts ("a few hundred pounds", "two thousand quid",
+ * "fifty pence") and "4k" amounts, which it misses; "6 p.m." is a time, not "6p". A "k" amount is a free-standing
+ * number ("about 4k", "2.5k"): not part of a word ("Y2K", "A2K") and not a "4K CCTV" camera or "40k miles". A
+ * business whose own name has one ("4K Drain Services") is handled by hasPrice, which blanks the name out first.
  */
-export const PRICE_RE = /£|\bGBP\b|\d+\s?(pounds|quid|p\b)|per (hour|day|metre|m2|sq)|an hour\b/i;
+export const PRICE_RE = /£|\bGBP\b|\d+\s?(pounds|quid|p\b(?!\.\s?m\b))|per (hour|day|metre|m2|sq)|an hour\b|\b(?:pounds|quid|pence)\b|(?<![A-Za-z0-9.])\d+(?:\.\d+)?k\b(?!\s?(?:cctv|camera|video|tv|uhd|miles?)\b)/i;
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * True when `text` mentions a price (PRICE_RE), with the business's own name blanked out first (any case), so a
+ * client called "4K Drain Services" can still be named in a reply. Every price check on a reply goes through this.
+ */
+export function hasPrice(text, business) {
+  let t = String(text ?? "");
+  const name = cut(clean(business), NAME_MAX);
+  if (name) t = t.replace(new RegExp(escapeRe(name).replace(/ /g, "\\s+"), "gi"), " ");
+  return PRICE_RE.test(t);
+}
 
 /**
  * A UK phone number in a visitor's message: section 11's pattern, plus London-style 02x numbers written
@@ -214,7 +231,7 @@ export function PRICE_LINE(business, freeQuotes) {
 export function scrubReply(text, { business, freeQuotes } = {}) {
   const raw = String(text ?? "");
   const stripped = raw.replace(/[<>]/g, "").trim();
-  if (PRICE_RE.test(raw) || PRICE_RE.test(stripped)) return { text: PRICE_LINE(business, freeQuotes), scrubbed: true };
+  if (hasPrice(raw, business) || hasPrice(stripped, business)) return { text: PRICE_LINE(business, freeQuotes), scrubbed: true };
   if (!stripped) return { text: FALLBACK(business), scrubbed: false, fallback: true };
   return { text: cut(stripped, REPLY_MAX).trimEnd(), scrubbed: false };
 }
@@ -228,14 +245,14 @@ const NOT_NAMES = new Set(`a an the not just looking after interested wondering 
   local moving retired renting selling buying stuck unsure worried monday tuesday wednesday thursday friday saturday sunday
   january february march april may june july august september october november december mr mrs ms miss dr`.split(/\s+/));
 const NAME_WORD = /^\p{L}[\p{L}'’-]{1,29}$/u;
-const NAME_RE = /\b(my name is|it['’]s|i['’]m)\s+([^\s,.!?;:()"]+)(?:\s+([^\s,.!?;:()"]+))?/giu;
+const NAME_RE = /\b(my name is|my name['’]s|it['’]s|i['’]m)\s+([^\s,.!?;:()"]+)(?:\s+([^\s,.!?;:()"]+))?/giu;
 const isName = (w, needCapital) => Boolean(w) && NAME_WORD.test(w) && !NOT_NAMES.has(w.toLowerCase()) &&
   (!needCapital || /^\p{Lu}/u.test(w));
 const capital = (w) => w.charAt(0).toUpperCase() + w.slice(1);
 
 function nameIn(text) {
   for (const m of text.matchAll(NAME_RE)) {
-    const byName = /^my name is$/i.test(m[1]);
+    const byName = /^my name/i.test(m[1]);
     if (!isName(m[2], !byName)) continue;
     const words = [m[2]];
     if (isName(m[3], true)) words.push(m[3]);
@@ -244,13 +261,20 @@ function nameIn(text) {
   return null;
 }
 
-// UK numbers are often written "+44 (0)7700 900123" or "(01793) 123456": the brackets go before PHONE_RE looks, so
-// the number is found (and stored as "+44 7700 900123" / "01793 123456", which still dials).
-const phoneText = (t) => t.replace(/\+44\s?\(0\)\s?/g, "+44 ").replace(/\((0\d{2,4})\)/g, "$1");
+// UK numbers are often written "+44 (0)7700 900123", "(01793) 123456", "0044 7700 900123", "+44-7700-900123",
+// "07700.900.123" or with doubled spaces: they're tidied before PHONE_RE looks, so the number is found (and stored as
+// "+44 7700 900123" / "01793 123456" / "07700 900 123", which still dials).
+const phoneText = (t) => t
+  .replace(/\s+/g, " ")
+  .replace(/ ?- ?/g, "-")
+  .replace(/(^|\D)0044[ -]?/g, "$1+44 ")
+  .replace(/\+44(?: ?\(0\) ?|-)/g, "+44 ")
+  .replace(/\((0\d{2,4})\)/g, "$1")
+  .replace(/(\d)\.(?=\d)/g, "$1 ");
 
 /**
  * Contact details in the visitor's own messages (never the assistant's): the first UK phone number, the first email
- * and a name from "my name is X" / "I'm X" / "it's X". Only the keys found are returned ({} when none).
+ * and a name from "my name is X" / "my name's X" / "I'm X" / "it's X". Only the keys found are returned ({} when none).
  */
 export function findContact(userTexts) {
   const out = {};
@@ -338,12 +362,12 @@ export function fitTranscript(lines) {
 /**
  * A new chat lead's message: the turns the browser sent (the visitor's as "Visitor:"; earlier replies labelled as
  * shown in the visitor's browser, and dropped when they hold a price), the visitor's new message and this request's
- * own reply, the only plain "Assistant:" line.
+ * own reply, the only plain "Assistant:" line. `business` is the name the price check blanks out (hasPrice).
  */
-export function leadTranscript(turns, text, answer) {
+export function leadTranscript(turns, text, answer, business = "") {
   const lines = (Array.isArray(turns) ? turns : []).map((t) => {
     if (t?.role === "user") return line("Visitor", t.content);
-    if (t?.role !== "assistant" || PRICE_RE.test(String(t.content ?? ""))) return "";
+    if (t?.role !== "assistant" || hasPrice(t.content, business)) return "";
     return line(BROWSER_REPLY_LABEL, t.content);
   });
   return fitTranscript([...lines, line("Visitor", text), line("Assistant", answer)]);

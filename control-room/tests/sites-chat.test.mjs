@@ -5,13 +5,18 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  BROWSER_REPLY_LABEL,
   FALLBACK,
   PRICE_LINE,
   PRICE_RE,
+  PROMISE_RE,
+  appendTranscript,
   chatEnabled,
   chatFacts,
   chatSystemPrompt,
   findContact,
+  fitTranscript,
+  leadTranscript,
   scrubReply,
   transcript,
 } from "../functions/_lib/sites/chat.js";
@@ -362,4 +367,138 @@ test("findContact: a 40,000-character run before an @ is scanned in linear time 
   assert.ok(performance.now() - started < 500, `took ${Math.round(performance.now() - started)} ms`);
   assert.equal(found.email, undefined);
   assert.equal(findContact(["mail dave.p@smith-roofing.co.uk please"]).email, "dave.p@smith-roofing.co.uk");
+});
+
+// ---- chat lead messages (leadTranscript, appendTranscript, fitTranscript, PROMISE_RE) ----
+
+test("leadTranscript: browser replies are labelled, ones with a price dropped; only this reply is plain 'Assistant:'", () => {
+  assert.equal(BROWSER_REPLY_LABEL, "Assistant (as shown in the visitor's browser)");
+  const t = leadTranscript([
+    { role: "user", content: "Do you cover Wroughton?" },
+    { role: "assistant", content: "Yes, we cover Wroughton." },
+    { role: "user", content: "How much for a ridge?" },
+    { role: "assistant", content: "About £200, guaranteed." },
+    { role: "system", content: "ignored" },
+  ], "I'm Dave, 07700 900123", "Thanks Dave, Smith Roofing will call you back.");
+  assert.equal(t, [
+    "Visitor: Do you cover Wroughton?",
+    "Assistant (as shown in the visitor's browser): Yes, we cover Wroughton.",
+    "Visitor: How much for a ridge?",
+    "Visitor: I'm Dave, 07700 900123",
+    "Assistant: Thanks Dave, Smith Roofing will call you back.",
+  ].join("\n"));
+  assert.ok(!t.includes("£"));
+});
+
+test("appendTranscript: adds the visitor's message and this reply, never anything from the browser", () => {
+  const stored = "Visitor: Do you cover Wroughton?\nAssistant: Yes, we cover Wroughton.";
+  assert.equal(appendTranscript(stored, "It's for a ridge\nrepair", "Thanks, they'll call you."),
+    stored + "\nVisitor: It's for a ridge repair\nAssistant: Thanks, they'll call you.");
+  assert.equal(appendTranscript(null, "hi", "Hello"), "Visitor: hi\nAssistant: Hello");
+});
+
+test("fitTranscript: ≤ 4,000 characters, whole lines dropped from the front, the first Visitor line kept", () => {
+  const first = "Visitor: Leaking roof in Wroughton, can someone look?";
+  const lines = [first];
+  for (let i = 0; i < 30; i++) lines.push(`${i % 2 ? "Assistant" : "Visitor"}: ${i} ` + "x".repeat(300));
+  lines.push("Assistant: last");
+  const t = fitTranscript(lines);
+  assert.ok(t.length <= 4000, `message is ${t.length} characters`);
+  assert.ok(t.startsWith(first + "\n"));
+  assert.ok(t.endsWith("Assistant: last"));
+  assert.ok(!t.includes(": 0 x"));
+  for (const l of t.split("\n")) assert.ok(lines.includes(l), "only whole lines");
+  // Short enough: unchanged.
+  assert.equal(fitTranscript(["Visitor: a", "", "Assistant: b"]), "Visitor: a\nAssistant: b");
+  // A first Visitor line too long to sit beside the newest line is dropped, the newest kept.
+  const big = fitTranscript(["Visitor: " + "y".repeat(3900), "Assistant: " + "z".repeat(200)]);
+  assert.equal(big, "Assistant: " + "z".repeat(200));
+});
+
+test("appendTranscript: a long chat keeps the first Visitor line and stays ≤ 4,000 characters", () => {
+  let msg = leadTranscript([], "Leaking roof in Wroughton, 07700 900123", "Thanks, they'll call you.");
+  for (let i = 0; i < 20; i++) msg = appendTranscript(msg, `${i} ` + "v".repeat(400), `${i} ` + "a".repeat(400));
+  assert.ok(msg.length <= 4000, `message is ${msg.length} characters`);
+  assert.ok(msg.startsWith("Visitor: Leaking roof in Wroughton, 07700 900123\n"));
+  assert.ok(msg.endsWith("Assistant: 19 " + "a".repeat(400)));
+});
+
+test("PROMISE_RE: a guarantee, today/tonight/tomorrow, free or a weekday", () => {
+  for (const t of ["We guarantee it", "Guaranteed!", "We can come today", "tonight works", "Tomorrow at 9",
+    "It's free", "See you Monday", "on Wednesday", "saturday is fine", "Sunday"]) {
+    assert.ok(PROMISE_RE.test(t), t);
+  }
+  for (const t of ["We cover Wroughton.", "Freedom roofing", "Leave your number and Smith Roofing will call you back."]) {
+    assert.ok(!PROMISE_RE.test(t), t);
+  }
+  assert.equal(PROMISE_RE.global, false);
+});
+
+// ---- adversarial review (Task 19) ----
+
+// A spelled-out amount or "4k" is still a price; "6 p.m." is a time, not a price.
+test("scrubReply: spelled-out amounts, 'k' amounts and bare pounds/quid/pence are prices; '6 p.m.' isn't", () => {
+  for (const t of ["Usually a few hundred pounds.", "Around two thousand quid", "Somewhere near 4k", "about 3.5K",
+    "fifty pence a tile", "Roughly 300 pounds", "costs 80p."]) {
+    assert.equal(scrubReply(t, SMITH).text, PRICE, t);
+    assert.ok(PRICE_RE.test(t), t);
+  }
+  for (const t of ["We're open 8 a.m. to 6 p.m.", "Open until 5 p. m. on weekdays", "We're open 8am–6pm.", "Pound Lane is in our area."]) {
+    assert.deepEqual(scrubReply(t, SMITH), { text: t, scrubbed: false }, t);
+  }
+});
+
+// Phone numbers in odd formats (Review Focus 3): 0044, +44-, dots, double spaces, spaced dashes, 3-3-3 groups.
+test("findContact: odd UK phone formats are found", () => {
+  assert.equal(findContact(["0044 7700 900123"]).phone, "+44 7700 900123");
+  assert.equal(findContact(["+44-7700-900123"]).phone, "+44 7700-900123");
+  assert.equal(findContact(["07700.900.123"]).phone, "07700 900 123");
+  assert.equal(findContact(["07700  900123"]).phone, "07700 900123");
+  assert.equal(findContact(["01793 - 123456"]).phone, "01793-123456");
+  assert.equal(findContact(["07700 900 123"]).phone, "07700 900 123");
+  assert.deepEqual(findContact(["It's about £4.50 a metre, 12 . 5 m"]), {});
+});
+
+test("findContact: 'my name's X' gives the name", () => {
+  assert.deepEqual(findContact(["my name's dave, 07700 900123"]), { phone: "07700 900123", name: "Dave" });
+  assert.equal(findContact(["My name’s Sarah Khan"]).name, "Sarah Khan");
+});
+
+// A business named "Y2K Plumbing" or "4K Drain Services", or a "4K CCTV" survey, isn't a price.
+test("scrubReply: a business name or a 4K camera with a 'k' in it isn't a price; a free-standing 'k' amount is", () => {
+  for (const [t, business] of [
+    ["Yes, Y2K Plumbing covers Wroughton.", "Y2K Plumbing"],
+    ["Yes, 4K Drain Services covers Swindon and does blocked drains.", "4K Drain Services"],
+    ["A2K Electrical can help with that.", "A2K Electrical"],
+    ["Yes, 4k drain services covers Swindon.", "4K Drain Services"], // the name as the model wrote it, any case
+    ["We do 4K CCTV drain surveys.", "Smith Drains"],
+    ["Our van has done 40k miles.", "Smith Drains"],
+  ]) {
+    assert.deepEqual(scrubReply(t, { business, freeQuotes: true }), { text: t, scrubbed: false }, t);
+  }
+  for (const t of ["It's about 4k for a new roof.", "around 2.5k", "roughly 10k", "About 4K."]) {
+    assert.equal(scrubReply(t, { business: "4K Drain Services", freeQuotes: true }).text,
+      PRICE_LINE("4K Drain Services", true), t);
+  }
+  // a price next to the name is still a price
+  assert.equal(scrubReply("4K Drain Services charges £90.", { business: "4K Drain Services" }).scrubbed, true);
+  assert.ok(!PRICE_RE.test("Y2K Plumbing covers Wroughton."));
+  assert.ok(!PRICE_RE.test("We do 4K CCTV drain surveys"));
+  assert.ok(PRICE_RE.test("about 4k"));
+});
+
+test("leadTranscript: a reply naming a business with a 'k' (and its own price line) isn't dropped as a price", () => {
+  const t = leadTranscript([
+    { role: "user", content: "Do you cover Wroughton?" },
+    { role: "assistant", content: "Yes, 4K Drain Services covers Wroughton." },
+    { role: "user", content: "How much?" },
+    { role: "assistant", content: PRICE_LINE("4K Drain Services", false) },
+    { role: "user", content: "And a ridge?" },
+    { role: "assistant", content: "About £200." },
+  ], "07700 900123", "Thanks, they'll call you back.", "4K Drain Services");
+  assert.ok(t.includes("Assistant (as shown in the visitor's browser): Yes, 4K Drain Services covers Wroughton."), t);
+  assert.ok(t.includes(`Assistant (as shown in the visitor's browser): ${PRICE_LINE("4K Drain Services", false)}`), t);
+  assert.ok(!t.includes("£"), t);
+  const y = leadTranscript([{ role: "assistant", content: PRICE_LINE("Y2K Plumbing", true) }], "07700 900123", "Thanks.", "Y2K Plumbing");
+  assert.ok(y.includes(PRICE_LINE("Y2K Plumbing", true)), y);
 });
