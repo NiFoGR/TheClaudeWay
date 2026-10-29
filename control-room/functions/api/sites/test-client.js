@@ -23,6 +23,13 @@ const NONE = "There's no test client to delete.";
 
 const TEST_SQL = `SELECT cs.client_id FROM client_sites cs JOIN clients c ON c.id = cs.client_id
   WHERE cs.is_test = 1 AND c.notes = 'TEST'`;
+// What DELETE removes: those, plus a test client this route started but never gave a site (a POST cut off between
+// its two writes): notes TEST, an id only this route makes (cl_test_…), and no site at all. A real client never
+// matches: their ids come from Stripe or the Money page, and their site (if any) has is_test = 0.
+const DELETE_SQL = `${TEST_SQL}
+  UNION SELECT c.id AS client_id FROM clients c
+  WHERE c.notes = 'TEST' AND substr(c.id, 1, 8) = 'cl_test_'
+    AND NOT EXISTS (SELECT 1 FROM client_sites cs WHERE cs.client_id = c.id)`;
 
 const hex = (n) => [...crypto.getRandomValues(new Uint8Array(n))].map((b) => b.toString(16).padStart(2, "0")).join("");
 
@@ -48,8 +55,14 @@ export async function onRequestPost(context) {
     ).bind(id, TEST_NAME, ukDate(now), at),
     DB.prepare("INSERT INTO onboarding (client_id, token, status, created_at) VALUES (?, ?, 'sent', ?)").bind(id, token, at),
   ]);
-  await ensureSite(DB, id, { name: TEST_NAME, place_id: null, is_test: true }, now);
-  const host = await setHost(DB, id, TEST_HOST, now, { test: true });
+  let host;
+  try {
+    await ensureSite(DB, id, { name: TEST_NAME, place_id: null, is_test: true }, now);
+    host = await setHost(DB, id, TEST_HOST, now, { test: true });
+  } catch (err) {
+    await removeClients(DB, [id]); // never leave a half-made test client behind
+    throw err;
+  }
   if (!host.ok) {
     // Another (real) site holds the test host: undo, so a half-made test client never lingers.
     await removeClients(DB, [id]);
@@ -85,7 +98,7 @@ async function removeClients(DB, ids) {
 
 export async function onRequestDelete(context) {
   const DB = await db(context.env);
-  const { results } = await DB.prepare(TEST_SQL).all();
+  const { results } = await DB.prepare(DELETE_SQL).all();
   const ids = (results ?? []).map((r) => r.client_id);
   if (!ids.length) return bad(NONE, 404);
   await removeClients(DB, ids);

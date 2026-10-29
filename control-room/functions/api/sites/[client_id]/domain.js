@@ -8,7 +8,8 @@
 //                                     unticking files it again. Auto steps (ns_wait) tick themselves: 400.
 //   nameservers: [ns1, ns2]           Cloudflare's two nameservers (case B), *.ns.cloudflare.com only; saving them
 //                                     ticks `zone` (its last instruction is to paste them here). [] clears them.
-//   review_url: "https://g.page/…"    Nik's review link (checkReviewLink: 400 "That isn't a Google review link.");
+//   review_url: "https://g.page/…"    Nik's review link (checkReviewLink: 400 "That isn't a Google review link.";
+//                                     400 TOO_LONG_SAVE when its QR wouldn't fit the printed card, cardQr);
 //                                     "" or null goes back to the form's link, else Google's link for the place.
 //   gbp: "invite_accepted" | "profile_created", on?: boolean
 //                                     the Google Business Profile ticks: they close build:<id>:gbp. Invite accepted
@@ -18,6 +19,7 @@
 import { checkReviewLink, oneLine } from "../../../_lib/sites/copy.js";
 import { getSite, setHost, updateDomain } from "../../../_lib/sites/db.js";
 import { canonicalHost, normaliseHost, nsIsCloudflare } from "../../../_lib/sites/hosts.js";
+import { cardQr } from "../../../_lib/sites/card.js";
 import { addTodo, closeTodos } from "../../../_lib/todo.js";
 import { bad, db, iso, json } from "../../../_lib/util.js";
 import {
@@ -32,6 +34,7 @@ const NS_BAD = "Paste the two nameservers Cloudflare shows for the domain, like 
 const GBP_PICK = "Pick invite_accepted or profile_created.";
 export const GBP_NOT_LIVE = "Tick this once the site is live: the day you tick it starts the 90 days.";
 const GBP_TICKS = ["invite_accepted", "profile_created"];
+export const TOO_LONG_SAVE = "That link is too long to print as a QR code. Use the short link from their Google Business Profile (Get more reviews), e.g. https://g.page/r/...";
 
 const blank = (v) => v === null || (typeof v === "string" && !v.trim());
 const fail = (error, status = 400) => ({ error, status });
@@ -103,6 +106,9 @@ async function saveReviewUrl(DB, site, raw, now) {
   else {
     const checked = checkReviewLink(typeof raw === "string" ? raw : "");
     if (!checked.ok) return fail(checked.error);
+    // It goes on the printed QR card: a link whose QR wouldn't fit the card (cardQr, the card's own limit) is refused
+    // here, in plain English, so a saved link is always one the card prints.
+    if (!cardQr(checked.url)) return fail(TOO_LONG_SAVE);
     url = checked.url;
   }
   await DB.prepare("UPDATE client_sites SET review_url = ?, updated_at = ? WHERE client_id = ?")

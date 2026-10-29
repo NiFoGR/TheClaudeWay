@@ -2,6 +2,7 @@
 // Task 24), behind the login (_middleware.js): {…site, label, countdown, pages: [{path, title, words, preview}],
 // steps: [{id, title, detail, done_at, auto}], chat: {on, reason, today, month, fallbacks_today}, leads (the last 20,
 // each message cut to 120 characters), files, form, review: {url, qr_svg, card_url, messages, booster}, last_errors}.
+// qr_svg is "" and card_url null when the link's QR wouldn't fit the printed card (cardQr).
 // `…site` is getSite()'s row (content, domain, host_check, features parsed; the client's name and package; the
 // onboarding clock) plus has_content, preview_url, temp_url, mode, nameservers, gbp, email_to and owner_first.
 // 404 {error: "No client with that id."} for an unknown client.
@@ -13,6 +14,7 @@
 //
 // D1: 1 (getSite) + 1 (form, contacts, settings) + 1 batch of 2 (chat usage, leads) + 1 (files).
 import { fireRoutine } from "../../_lib/routines.js";
+import { cardQr } from "../../_lib/sites/card.js";
 import { chatEnabled } from "../../_lib/sites/chat.js";
 import { wordCount } from "../../_lib/sites/content.js";
 import { checkReviewLink, oneLine, reviewMessages, reviewUrl } from "../../_lib/sites/copy.js";
@@ -22,7 +24,6 @@ import { listFiles } from "../../_lib/sites/files.js";
 import { domainMode, domainSteps, PAGES_PROJECT } from "../../_lib/sites/domain.js";
 import { onboardFirst } from "../../_lib/sites/form.js";
 import { canonicalHost } from "../../_lib/sites/hosts.js";
-import { qrSvg } from "../../_lib/sites/qr.js";
 import { ukDate } from "../../_lib/ukTime.js";
 import { bad, db, json, parseJson } from "../../_lib/util.js";
 
@@ -196,6 +197,7 @@ export function siteReviewUrl(site) {
   return reviewUrl({ formLink: site?.form?.review_link, placeId: site?.place_id ?? null });
 }
 
+
 const cutText = (s, n) => {
   const t = String(s ?? "").replace(/\s+/g, " ").trim();
   if (t.length <= n) return t;
@@ -242,6 +244,9 @@ export async function onRequestGet(context) {
 
   const { mode, steps } = planSteps(site);
   const url = siteReviewUrl(site);
+  // The card's own QR (cardQr): "" when the link's QR wouldn't fit the printed card (a long link stored before the
+  // save checked it), and then no card button either: the page says to paste the short link instead.
+  const qr = url ? cardQr(url) : "";
   const booster = site.package !== "website" && site.features.review_booster !== false;
   const business = oneLine(content?.business?.name) || oneLine(site.form.business?.name) || oneLine(site.name);
   const { chat, form, ...rest } = site;
@@ -275,8 +280,8 @@ export async function onRequestGet(context) {
     form,
     review: {
       url,
-      qr_svg: url ? qrSvg(url) : "",
-      card_url: url && booster && site.status === "live" && site.host ? `https://${site.host}/s/review-card` : null,
+      qr_svg: qr,
+      card_url: qr && booster && site.status === "live" && site.host ? `https://${site.host}/s/review-card` : null,
       messages: url ? reviewMessages({ business, owner: site.owner_first, link: url }) : null,
       booster,
     },

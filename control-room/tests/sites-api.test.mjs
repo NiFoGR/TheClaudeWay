@@ -31,6 +31,7 @@ const T0 = "2026-10-20T09:00:00Z";
 const CONTENT = JSON.parse(readFileSync(new URL("./fixtures/site-content.json", import.meta.url), "utf8"));
 const FIRE_FAILED = "Claude couldn't be reached: the build Routine's link or token on Setup is wrong. Fix it on Setup, then press Build again.";
 const BASE = "https://goldbarwebsites.pages.dev";
+const TOO_LONG_SAVE = "That link is too long to print as a QR code. Use the short link from their Google Business Profile (Get more reviews), e.g. https://g.page/r/...";
 
 const FORM = {
   business: {
@@ -203,6 +204,17 @@ test("detail: an unknown client is a 404", async () => {
   const res = await detailRoute(ctx(DB, new Request(`${BASE}/api/sites/nope`), { params: { client_id: "nope" } }));
   assert.equal(res.status, 404);
   assert.equal((await res.json()).error, "No client with that id.");
+});
+
+test("detail: a review link too long for a QR code still shows the Site page (no QR)", async () => {
+  const DB = await setup();
+  const long = `https://g.page/r/${"a".repeat(2400)}/review`;
+  await DB.prepare("UPDATE onboarding SET form = ? WHERE client_id = 'c1'").bind(JSON.stringify({ ...FORM, review_link: long })).run();
+  const res = await detailRoute(ctx(DB, new Request(`${BASE}/api/sites/c1`)));
+  assert.equal(res.status, 200);
+  const d = await res.json();
+  assert.equal(d.review.url, long);
+  assert.equal(d.review.qr_svg, "");
 });
 
 // ---------------------------------------------------------------- approve
@@ -392,6 +404,38 @@ test("domain: a review link that isn't Google's is a 400; a Google one is stored
   res = await domainRoute(ctx(DB, post("/api/sites/c1/domain", { review_url: "https://g.page/r/abc/review" })));
   assert.equal(res.status, 200);
   assert.equal((await site(DB)).review_url, "https://g.page/r/abc/review");
+});
+
+test("domain: a review link too long for the QR card is a 400 and isn't stored", async () => {
+  const DB = await setup();
+  const res = await domainRoute(ctx(DB, post("/api/sites/c1/domain", { review_url: `https://g.page/r/${"a".repeat(2400)}/review` })));
+  assert.equal(res.status, 400);
+  assert.equal((await res.json()).error, TOO_LONG_SAVE);
+  assert.equal((await site(DB)).review_url, null);
+});
+
+// A long Google Maps link encodes (QR version 22-ish, no throw) but is past the printed card's 105 units, so it would
+// be saved, shown with a QR, and then the card would refuse it. One limit: the save, the Site page and the card agree.
+const MAPS_768 = `https://www.google.com/maps/place/Smith+Roofing/@51.5,-1.7,17z/data=${"x".repeat(768 - 68)}`;
+test("domain: a 768-character Google Maps link (too big for the printed card) is a 400; a stored one shows no QR or card", async () => {
+  assert.equal(MAPS_768.length, 768);
+  const DB = await setup({ site: { status: "live", host: "www.smithroofing.co.uk", live_at: "2026-10-27T09:00:00Z" } });
+  const res = await domainRoute(ctx(DB, post("/api/sites/c1/domain", { review_url: MAPS_768 })));
+  assert.equal(res.status, 400);
+  assert.equal((await res.json()).error, TOO_LONG_SAVE);
+  assert.equal((await site(DB)).review_url, null);
+
+  // one stored before this check existed: the Site page shows the link, no QR and no card button
+  await DB.prepare("UPDATE client_sites SET review_url = ? WHERE client_id = 'c1'").bind(MAPS_768).run();
+  const d = await (await detailRoute(ctx(DB, new Request(`${BASE}/api/sites/c1`)))).json();
+  assert.equal(d.review.url, MAPS_768);
+  assert.equal(d.review.qr_svg, "");
+  assert.equal(d.review.card_url, null);
+  // a short link on the same live site: QR and card
+  await DB.prepare("UPDATE client_sites SET review_url = ? WHERE client_id = 'c1'").bind("https://g.page/r/abc/review").run();
+  const ok = await (await detailRoute(ctx(DB, new Request(`${BASE}/api/sites/c1`)))).json();
+  assert.match(ok.review.qr_svg, /^<svg/);
+  assert.equal(ok.review.card_url, "https://www.smithroofing.co.uk/s/review-card");
 });
 
 test("domain: ticking a step closes its todo; unticking files it again; auto steps can't be ticked", async () => {
@@ -585,6 +629,22 @@ test("test client: POST creates the client, onboarding and an is_test site on si
   // deleting again is fine
   const again2 = await deleteTestRoute({ request: new Request(`${BASE}/api/sites/test-client`, { method: "DELETE" }), env: { DB }, now: NOW });
   assert.equal(again2.status, 404);
+});
+
+test("test client: DELETE also removes a test client left without a site, and never a real client noted TEST", async () => {
+  const DB = fakeD1();
+  await addClient(DB, "c1", "Smith Roofing");
+  await DB.prepare("UPDATE clients SET notes = 'TEST' WHERE id = 'c1'").run(); // a real client Nik happened to note TEST
+  await insert(DB, "clients", { id: "cl_test_abcdef123456", name: "Aetos Test Site", package: "full", build_fee_pence: 0, monthly_pence: 0, free_days: 0, paid_on: "2026-10-28", notes: "TEST", created_at: T0 });
+  await insert(DB, "onboarding", { client_id: "cl_test_abcdef123456", token: "t".repeat(32), status: "sent", created_at: T0 });
+  const del = await deleteTestRoute({ request: new Request(`${BASE}/api/sites/test-client`, { method: "DELETE" }), env: { DB }, now: NOW });
+  assert.equal(del.status, 200);
+  assert.deepEqual((await del.json()).deleted, ["cl_test_abcdef123456"]);
+  assert.equal(await count(DB, "clients", "id = 'cl_test_abcdef123456'"), 0);
+  assert.equal(await count(DB, "onboarding", "client_id = 'cl_test_abcdef123456'"), 0);
+  assert.equal(await count(DB, "clients", "id = 'c1'"), 1);
+  assert.equal(await count(DB, "client_sites", "client_id = 'c1'"), 1);
+  assert.equal(await count(DB, "onboarding", "client_id = 'c1'"), 1);
 });
 
 // ---------------------------------------------------------------- login
