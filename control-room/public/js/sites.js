@@ -220,10 +220,11 @@ function bind(el, d, mine, clientId) {
     box.addEventListener("change", () => {
       const which = box.dataset.gbp;
       const on = box.checked;
+      let care = null;
       run(box, async () => {
-        if (which === "invite_accepted" && on) await careAccess(clientId);
+        if (which === "invite_accepted" && on) care = await careAccess(clientId);
         return post("/domain", { gbp: which, on });
-      }, on ? "Ticked." : "", () => { box.checked = !on; });
+      }, () => (!on ? "" : care?.shipped ? "Ticked: the 90 days start today." : "Ticked: the todo is closed."), () => { box.checked = !on; });
     });
   });
 

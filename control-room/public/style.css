@@ -862,3 +862,9 @@ details.lost .lost-cards { grid-template-columns: repeat(auto-fill, minmax(230px
   .site-answers dd { margin-bottom: 8px; }
   .site-qr-row { flex-direction: column; }
 }
+/* the Sites list on phones: the shared mobile rule lets .table-card tables overflow (and .table-card clips), so this
+   table scrolls inside its card and the countdown may wrap instead of being cut off */
+@media (max-width: 860px) {
+  .table-card:has(.sites-table) .table-wrap { overflow-x: auto; }
+  .sites-table .due { white-space: normal; }
+}

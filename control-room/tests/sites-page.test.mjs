@@ -258,3 +258,27 @@ test("sites.js: the page wiring (source checks: it reads the page, so it isn't i
     assert.ok(src.includes(`/${route}`), route);
   }
 });
+
+test("Sites list on a phone: the table scrolls inside its card (the shared mobile rule would clip it)", () => {
+  const css = readFileSync(new URL("../public/style.css", import.meta.url), "utf8");
+  // .table-card is overflow: hidden and, at ≤ 860 px, .table-card .table-wrap is overflow-x: visible: without this the
+  // countdown and address columns are cut off on a phone.
+  assert.match(css, /@media \(max-width: 860px\) \{[^}]*\.table-card:has\(\.sites-table\) \.table-wrap \{ overflow-x: auto; \}/);
+});
+
+test("Site page: the nameserver inputs have labels; the review-link hint says what empty does", () => {
+  const html = siteView(detail());
+  assert.match(html, /<input name="ns1" aria-label="First nameserver"/);
+  assert.match(html, /<input name="ns2" aria-label="Second nameserver"/);
+  assert.ok(html.includes("Leave it empty to use the link from their form, else Google's own link for their listing."));
+});
+
+test("Site page: a review link too long for the printed card says so instead of the card button", () => {
+  const TOO_LONG = "This link is too long to print as a QR code, so there's no printable card. Paste the short link from their Google Business Profile (Get more reviews) above, e.g. https://g.page/r/...";
+  const html = siteView(detail({ status: "live", review: { ...detail().review, qr_svg: "", card_url: null } }));
+  assert.ok(html.includes(TOO_LONG.replace(/'/g, "&#39;")));
+  assert.ok(!html.includes("The printable card opens once the site is live."));
+  assert.doesNotMatch(html, /class="site-qr"/);
+  // a link that fits: no such note
+  assert.ok(!siteView(detail()).includes("too long to print"));
+});

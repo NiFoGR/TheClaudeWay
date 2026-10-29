@@ -174,7 +174,7 @@ function domainSection(d) {
     const list = Array.isArray(d.nameservers) ? d.nameservers.map(str) : [];
     ns = `<form class="site-inline" data-form="nameservers">
   <label>Cloudflare's two nameservers for ${esc(bare || "the domain")}</label>
-  <div class="site-inline-row"><input name="ns1" value="${esc(list[0] ?? "")}" placeholder="ada.ns.cloudflare.com" autocomplete="off" spellcheck="false"><input name="ns2" value="${esc(list[1] ?? "")}" placeholder="bob.ns.cloudflare.com" autocomplete="off" spellcheck="false"><button class="btn secondary" type="submit">Save</button></div>
+  <div class="site-inline-row"><input name="ns1" aria-label="First nameserver" value="${esc(list[0] ?? "")}" placeholder="ada.ns.cloudflare.com" autocomplete="off" spellcheck="false"><input name="ns2" aria-label="Second nameserver" value="${esc(list[1] ?? "")}" placeholder="bob.ns.cloudflare.com" autocomplete="off" spellcheck="false"><button class="btn secondary" type="submit">Save</button></div>
 </form>`;
   }
 
@@ -226,19 +226,25 @@ function messageBlock(key, label, text) {
 <pre class="site-msg" data-copy-text="${key}">${esc(text)}</pre></div>`;
 }
 
+const QR_TOO_LONG = "This link is too long to print as a QR code, so there's no printable card. Paste the short link from their Google Business Profile (Get more reviews) above, e.g. https://g.page/r/...";
+
 function reviewSection(d) {
   const r = isObj(d.review) ? d.review : {};
   const url = safeUrl(str(r.url));
   const form = `<form class="site-inline" data-form="review">
   <label for="site-review">Their Google review link</label>
   <div class="site-inline-row"><input id="site-review" name="review_url" value="${esc(url)}" placeholder="https://g.page/r/…/review" autocomplete="off" spellcheck="false"><button class="btn secondary" type="submit">Save</button></div>
-  <p class="hint">Leave it empty to use Google's own link for their listing.</p>
+  <p class="hint">Leave it empty to use the link from their form, else Google's own link for their listing.</p>
 </form>`;
   const booster = r.booster === true;
   const cardUrl = safeUrl(str(r.card_url));
+  // A link whose QR wouldn't fit the printed card (the API's cardQr gives no QR then): say what to paste instead.
+  const tooLong = Boolean(url) && !str(r.qr_svg);
   const cardLine = !booster
     ? '<p class="muted">The printable review card is switched off for this client, and their emails don\'t mention it.</p>'
-    : cardUrl
+    : tooLong
+      ? `<p class="muted">${esc(QR_TOO_LONG)}</p>`
+      : cardUrl
       ? `<p><a class="btn secondary sm" href="${esc(cardUrl)}" target="_blank" rel="noopener">Open the printable card</a></p>`
       : '<p class="muted">The printable card opens once the site is live.</p>';
   const m = isObj(r.messages) ? r.messages : null;
