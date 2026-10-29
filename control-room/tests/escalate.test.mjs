@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import test from "node:test";
 import { onRequest as gate } from "../functions/_middleware.js";
-import { dismissTodo, escalateMessage, recordReply, sendAsNik } from "../functions/_lib/replies-db.js";
+import { dismissTodo, escalateMessage, onHumanInbound, recordReply, sendAsNik } from "../functions/_lib/replies-db.js";
 import { setSecret, setSetting } from "../functions/_lib/settings.js";
 import { addTodo } from "../functions/_lib/todo.js";
 import { onRequestPost as escalateRoute } from "../functions/api/agent/escalate.js";
@@ -342,4 +342,63 @@ test("sendAsNik: a double press of Send queues one reply; new words, or after Ca
   const later = await sendAsNik(DB, { message_id: "m2", body: "Sorry, Sam.", now: D("2026-10-21T09:00:00Z") });
   assert.notEqual(later.body.reply_id, resent.body.reply_id);
   assert.equal(await count(DB, "SELECT COUNT(*) n FROM messages WHERE kind='reply' AND author='nik' AND status='queued'"), 3);
+});
+
+test("escalateMessage while Claude's replies are paused: 409, nothing written, the mail keeps waiting for Nik", async () => {
+  const DB = await seeded();
+  await setSetting(DB, "replies:paused", "1");
+  const e = await escalateMessage(DB, { message_id: "m2", intent: "angry", reason: "r", draft: DRAFT, now: NOW });
+  assert.equal(e.status, 409);
+  assert.equal(e.body.error, "Nik has paused Claude's replies: post nothing more and finish the run.");
+  assert.equal(await count(DB, "SELECT COUNT(*) n FROM todos"), 0);
+  assert.equal(await count(DB, "SELECT COUNT(*) n FROM messages WHERE needs_reply = 1"), 2);
+  assert.equal((await one(DB, "SELECT stage FROM prospects")).stage, "replied");
+  // Nik's own reply still goes while Claude is paused
+  assert.equal((await sendAsNik(DB, { message_id: "m2", body: "Sorry, Sam.", now: NOW })).status, 200);
+  assert.equal(await count(DB, "SELECT COUNT(*) n FROM messages WHERE needs_reply = 1"), 0);
+});
+
+test("new mail in a needs_nik thread: the stage stays, Claude's reply is 409, it is escalated too", async () => {
+  const DB = await seeded();
+  assert.equal((await escalateMessage(DB, { message_id: "m2", intent: "angry", reason: "r", draft: DRAFT, now: NOW })).status, 200);
+  const m9 = inbound("m9", "p1", "2026-10-21T08:40:00Z", { body: "Well?" });
+  await insert(DB, "messages", m9);
+  assert.equal(await onHumanInbound(DB, m9, D("2026-10-21T08:41:00Z")), "replied");
+  assert.equal((await one(DB, "SELECT stage FROM prospects")).stage, "needs_nik");
+  const r = await recordReply(DB, { message_id: "m9", intent: "price", body: "Hi Sam,\n\nIt's £1,950.", now: D("2026-10-21T08:42:00Z") });
+  assert.equal(r.status, 409); assert.equal(r.body.error, "Nik is handling this thread: escalate instead.");
+  assert.equal(await count(DB, "SELECT COUNT(*) n FROM messages WHERE kind='reply'"), 0);
+  assert.equal((await escalateMessage(DB, { message_id: "m9", intent: "other", reason: "Thread is with Nik", draft: "Hi Sam,", now: D("2026-10-21T08:42:00Z") })).status, 200);
+  // Send as me on the first escalation: m9's is still open, so Nik is still needed
+  assert.equal((await sendAsNik(DB, { message_id: "m2", body: "Sorry, Sam.", now: D("2026-10-21T08:50:00Z") })).status, 200);
+  assert.equal((await one(DB, "SELECT stage FROM prospects")).stage, "needs_nik");
+  assert.equal((await sendAsNik(DB, { message_id: "m9", body: "As I said, sorry.", now: D("2026-10-21T08:51:00Z") })).status, 200);
+  assert.equal((await one(DB, "SELECT stage FROM prospects")).stage, "replied");
+  assert.equal(await count(DB, "SELECT COUNT(*) n FROM todos WHERE status = 'open'"), 0);
+});
+
+test("Send as me on an escalation from a lead with a call booked: back to call_booked", async () => {
+  const DB = await seeded();
+  await DB.prepare("UPDATE prospects SET stage = 'call_booked'").run();
+  await insert(DB, "calls", { id: "c1", place_id: "p1", slot_at: "2026-10-23T10:00:00Z", status: "confirmed", phone: "01925 123456", note: "", created_at: EARLIER, updated_at: EARLIER });
+  assert.equal((await escalateMessage(DB, { message_id: "m2", intent: "angry", reason: "r", draft: DRAFT, now: NOW })).status, 200);
+  assert.equal((await one(DB, "SELECT stage FROM prospects")).stage, "needs_nik");
+  assert.equal((await sendAsNik(DB, { message_id: "m2", body: "Sorry, Sam. Still on for Friday?", now: NOW })).status, 200);
+  assert.equal((await one(DB, "SELECT stage FROM prospects")).stage, "call_booked");
+});
+
+test("Reply as me racing Claude's reply to the same waiting email: one email in the thread, Send again sends his", async () => {
+  const claude = (DB) => recordReply(DB, { message_id: "m2", intent: "price", body: "Hi Sam,\n\nIt's £1,950. Have a look at your demo.", now: NOW });
+  const nik = (DB) => sendAsNik(DB, { message_id: "m2", body: "Hi Sam, Nik here.", now: NOW });
+  for (const nikFirst of [true, false]) {
+    const DB = await seeded();
+    const [n, c] = nikFirst ? await Promise.all([nik(DB), claude(DB)]) : (await Promise.all([claude(DB), nik(DB)])).reverse();
+    assert.deepEqual([n.status, c.status].sort(), [200, 409], `nikFirst=${nikFirst}`);
+    assert.equal(await count(DB, "SELECT COUNT(*) n FROM messages WHERE kind='reply'"), 1, `nikFirst=${nikFirst}`);
+    if (n.status === 409) {
+      assert.equal(n.body.error, "Claude has just answered that email, so yours wasn't sent. Read the thread, then press Send again if it still needs saying.");
+      assert.equal((await nik(DB)).status, 200); // he read it and still wants his sent
+      assert.equal(await count(DB, "SELECT COUNT(*) n FROM messages WHERE kind='reply' AND author='nik'"), 1);
+    }
+  }
 });
