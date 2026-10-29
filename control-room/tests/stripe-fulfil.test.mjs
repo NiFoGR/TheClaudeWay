@@ -263,7 +263,25 @@ test("paid twice", async () => {
   assert.equal(todo.kind, "payment");
   assert.equal(todo.title, "Smith Roofing paid twice: refund one in Stripe");
   assert.equal(todo.link, "/#/money");
+  // Refunding the charge doesn't stop this order's monthly plan: the todo names it, and how to stop it
+  assert.equal(todo.detail, "Refund this order's £1,950 in Stripe (customer cus_1), then Money → the newer "
+    + "\"Smith Roofing\" row → Stopped paying. That cancels its monthly plan in Stripe (sub_1); otherwise they pay "
+    + "£249 twice a month, this one from Friday 18 December 2026.");
   assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM clients"), 2); // both recorded: the money was taken
+});
+
+test("paid twice for Website Only: the todo says what to refund, and there's no monthly plan to stop", async () => {
+  const DB = await seed();
+  await insert(DB, "clients", {
+    id: "cl_other", name: "Smith Roofing", place_id: "p1", package: "website", build_fee_pence: 175000,
+    monthly_pence: 0, free_days: 0, paid_on: "2026-10-19", created_at: "2026-10-19T09:30:00Z",
+  });
+  await fulfilCheckout(DB, session({
+    mode: "payment", subscription: null, amount_total: 175000, metadata: { ...session().metadata, package: "website" },
+  }), { now: NOW });
+  const todo = await one(DB, "SELECT * FROM todos WHERE dedupe = 'payment:double:p1:cs_1'");
+  assert.equal(todo.title, "Smith Roofing paid twice: refund one in Stripe");
+  assert.equal(todo.detail, "Refund this order's £1,750 in Stripe (customer cus_1). The refund shows on the Money page by itself.");
 });
 
 test("paid once: no paid-twice todo; a cancelled earlier client doesn't count", async () => {
@@ -305,8 +323,12 @@ test("a run that fails before the welcome email still sends it on the retry", as
     },
   });
   await assert.rejects(() => fulfilCheckout(flaky, session(), { now: NOW }), /Network connection lost/);
+  // step 5's onboarding row comes before the prospect step (Part A's order), so its token is already fixed
+  const token = (await one(DB, "SELECT token FROM onboarding WHERE client_id = 'cl_cs_1'"))?.token;
+  assert.match(token ?? "", /^[A-Za-z0-9_-]{32}$/);
   const res = await fulfilCheckout(flaky, session(), { now: NOW }); // Stripe resends after the 500
   assert.equal(res.created, true);
+  assert.equal(res.token, token);
   assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM messages WHERE kind = 'system'"), 1);
   assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM onboarding"), 1);
   assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM clients"), 1);
@@ -480,5 +502,81 @@ test("paying keeps Nik's open conversations and calls; sales todos close", async
     assert.ok(t, `${dedupe} keeps its dedupe`);
     assert.equal(t.status, "open", dedupe);
   }
+  assert.equal((await one(DB, "SELECT status FROM todos WHERE kind = 'hot'")).status, "done");
+});
+
+test("paid_on and the first charge are UK dates (late evening in BST, and after the clocks go back)", async () => {
+  const DB = await seed();
+  // Paid Mon 19 Oct 2026 23:30 UTC, Tue 20 Oct 00:30 UK (BST): paid on the 20th. Stripe ends the trial 60 × 24 hours
+  // later, 18 Dec 23:30 UTC, which is still Fri 18 Dec in the UK (GMT by then): that is the day it charges.
+  const bst = await fulfilCheckout(DB, session({ created: Date.parse("2026-10-19T23:10:00Z") / 1000 }),
+    { now: new Date("2026-10-19T23:30:00Z") });
+  assert.equal((await one(DB, "SELECT paid_on FROM clients WHERE id = 'cl_cs_1'")).paid_on, "2026-10-20");
+  assert.equal((await one(DB, "SELECT paid_on FROM payments WHERE id = 'build:cus_1'")).paid_on, "2026-10-20");
+  assert.equal(bst.firstChargeOn, "2026-12-18");
+  // Sun 25 Oct 2026 23:30 UTC is still Sunday in the UK (GMT from 02:00 that morning)
+  const gmt = await fulfilCheckout(DB, session({
+    id: "cs_2", customer: "cus_2", subscription: "sub_2", created: Date.parse("2026-10-25T23:20:00Z") / 1000,
+  }), { now: new Date("2026-10-25T23:30:00Z") });
+  assert.equal((await one(DB, "SELECT paid_on FROM clients WHERE id = 'cl_cs_2'")).paid_on, "2026-10-25");
+  assert.equal(gmt.firstChargeOn, "2026-12-24");
+});
+
+// Review fix: the free days run from when they paid (when Stripe makes the subscription and starts its trial), never
+// from session.created (when the payment page was opened, up to 24 hours earlier).
+test("a page opened Sunday 23:50 and paid Monday 00:20: paid Monday, first charge 90 days after paying", async () => {
+  const DB = await seed();
+  const res = await fulfilCheckout(DB, session({
+    created: Date.parse("2026-11-01T23:50:00Z") / 1000, amount_total: 175000,
+    metadata: { ...session().metadata, weekend: "1" },
+  }), { now: new Date("2026-11-02T00:25:00Z"), completedAt: new Date("2026-11-02T00:20:00Z") });
+  assert.equal((await one(DB, "SELECT paid_on FROM clients")).paid_on, "2026-11-02");
+  assert.equal((await one(DB, "SELECT paid_on FROM payments WHERE id = 'build:cus_1'")).paid_on, "2026-11-02");
+  assert.equal(res.firstChargeOn, "2027-01-31"); // Stripe: 2 Nov 00:20 + 90 days = 31 Jan 00:20
+  // without a completion time (the thanks page), now is when they paid
+  const B = await seed();
+  const thanks = await fulfilCheckout(B, session({
+    created: Date.parse("2026-11-01T23:50:00Z") / 1000, amount_total: 175000,
+    metadata: { ...session().metadata, weekend: "1" },
+  }), { now: new Date("2026-11-02T00:21:00Z") });
+  assert.equal((await one(B, "SELECT paid_on FROM clients")).paid_on, "2026-11-02");
+  assert.equal(thanks.firstChargeOn, "2027-01-31");
+});
+
+test("a GMT order whose 60 days end in BST: the day Stripe charges, from its trial_end when it sent one", async () => {
+  // Wed 10 Feb 2027 23:30 UTC (GMT) + 60 days = Sun 11 Apr 23:30 UTC = Mon 12 Apr 00:30 UK (BST)
+  const paid = new Date("2027-02-10T23:30:00Z");
+  const DB = await seed();
+  const plain = await fulfilCheckout(DB, session({ created: Date.parse("2027-02-10T23:00:00Z") / 1000 }), { now: paid });
+  assert.equal(plain.firstChargeOn, "2027-04-12");
+  assert.equal((await one(DB, "SELECT paid_on FROM clients")).paid_on, "2027-02-10");
+  // the subscription expanded (the thanks page asks for it; the webhook fetches it): Stripe's own trial_end wins
+  const B = await seed();
+  const trialEnd = Date.parse("2027-04-11T23:30:00Z") / 1000;
+  const expanded = await fulfilCheckout(B, session({
+    created: Date.parse("2027-02-10T23:00:00Z") / 1000,
+    subscription: { id: "sub_1", object: "subscription", trial_end: trialEnd, start_date: Math.floor(paid / 1000) },
+  }), { now: new Date("2027-02-11T09:00:00Z") });
+  assert.equal(expanded.firstChargeOn, "2027-04-12");
+  assert.equal((await one(B, "SELECT stripe_subscription FROM client_links")).stripe_subscription, "sub_1");
+  assert.equal((await one(B, "SELECT paid_on FROM clients")).paid_on, "2027-02-10"); // the subscription's start, not now
+  // a trial_end that says otherwise is believed over the arithmetic
+  const C = await seed();
+  const odd = await fulfilCheckout(C, session({
+    subscription: { id: "sub_1", trial_end: Date.parse("2027-04-13T09:00:00Z") / 1000 },
+  }), { now: paid });
+  assert.equal(odd.firstChargeOn, "2027-04-13");
+});
+
+test("welcome from a cold mailbox: the 'add a system mailbox' todo stays open after the lead's todos close", async () => {
+  const DB = await seed({ mailbox: false });
+  await insert(DB, "mailboxes", {
+    id: "cold1", address: "nik@aetos-mail.co.uk", display_name: "Nik", role: "cold", started_on: "2026-01-01",
+    status: "active", created_at: "2026-01-01T09:00:00Z",
+  });
+  const res = await fulfilCheckout(DB, session(), { now: NOW });
+  assert.equal(res.created, true);
+  assert.equal((await one(DB, "SELECT mailbox_id FROM messages WHERE kind = 'system'")).mailbox_id, "cold1");
+  assert.equal((await one(DB, "SELECT status FROM todos WHERE dedupe = 'setup:system_mailbox'")).status, "open");
   assert.equal((await one(DB, "SELECT status FROM todos WHERE kind = 'hot'")).status, "done");
 });

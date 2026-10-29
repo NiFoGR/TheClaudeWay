@@ -11,10 +11,11 @@ import { applyStageEvent } from "./prospects.js";
 import { handOffWaiting } from "./replies-db.js";
 import { paymentFailedEmail, sendClientMail, welcomeEmail } from "./client-mail.js";
 import { formatPounds, termsFor } from "./offer.js";
+import { ukLongDate } from "./order-page.js";
 import { beat } from "./routines.js";
 import { invoiceSubscription, stripeApi, stripeKey, verifySignature, webhookSecret } from "./stripe.js";
 import { addTodo, closeLeadTodos } from "./todo.js";
-import { addUkDays, ukDate } from "./ukTime.js";
+import { ukDate } from "./ukTime.js";
 import { iso } from "./util.js";
 
 async function clientForCustomer(DB, customer) {
@@ -69,6 +70,11 @@ const WELCOME_DONE_SQL = `SELECT EXISTS (SELECT 1 FROM messages WHERE id = ?1)
     OR EXISTS (SELECT 1 FROM todos WHERE dedupe = ?2 OR (dedupe > ?2 || '@' AND dedupe < ?2 || 'A')) AS done`;
 const ALREADY_QUEUED_RE = /UNIQUE constraint failed: messages\.id/;
 
+const DAY_MS = 86_400_000;
+// A Stripe unix time (seconds) as a Date, else null.
+const unixDate = (seconds) => (Number.isFinite(seconds) && seconds > 0 ? new Date(seconds * 1000) : null);
+const validDate = (value) => (value instanceof Date && !Number.isNaN(value.getTime()) ? value : null);
+
 const toDate = (value) => {
   const d = value instanceof Date ? value : new Date(value ?? Date.now());
   if (Number.isNaN(d.getTime())) throw new TypeError("fulfilCheckout needs the time now, as a Date or UTC ISO text.");
@@ -76,9 +82,9 @@ const toDate = (value) => {
 };
 
 /**
- * A paid Checkout Session becomes a client, once (Part A's 9 steps, in order, except that the onboarding row (step 5)
- * is made after steps 6–7, right before the welcome email). Returns {status: "ok", client_id, token, created, terms,
- * amountPaid, firstChargeOn, place_id}; `created` is true for the run that queued the welcome email (or filed it as
+ * A paid Checkout Session becomes a client, once (Part A's 9 steps, in order; step 5's welcome email is queued after
+ * steps 6–7, so the prospect is won and any opt-out lifted before it goes). Returns {status: "ok", client_id, token,
+ * created, terms, amountPaid, firstChargeOn, place_id}; `created` is true for the run that queued the welcome email (or filed it as
  * Nik's no-mailbox todo). Not paid, or not one of our packages → {status: "ignored", reason} and nothing is written.
  * Every step runs every time and is idempotent, so a run cut off half way (a D1 error anywhere, the welcome email's
  * insert included) is finished by the next: the onboarding token is made once and never changes (a link already
@@ -87,8 +93,11 @@ const toDate = (value) => {
  * the lead's sales todos, filing "New client: … onboarding form sent") runs only while onboarding.status is 'sent'
  * (the form not yet submitted), so a thanks-page reload or a late Stripe redelivery after stage 10 has closed that
  * todo doesn't file it again.
+ * Dates: paid_on is the UK date they paid (the expanded subscription's start_date, else `completedAt`, the webhook
+ * event's time, else `now`), never session.created; firstChargeOn is the UK date of Stripe's trial_end when the
+ * subscription came expanded, else of paid time + freeDays × 24 hours (how Stripe counts trial_period_days).
  */
-export async function fulfilCheckout(DB, session, { now: at } = {}) {
+export async function fulfilCheckout(DB, session, { now: at, completedAt } = {}) {
   const nowDate = toDate(at);
   const s = session && typeof session === "object" ? session : {};
   const ignored = (reason) => ({
@@ -108,9 +117,19 @@ export async function fulfilCheckout(DB, session, { now: at } = {}) {
   const email = text(s.customer_details?.email) || text(s.customer_email);
   const phone = text(s.customer_details?.phone);
   const amountPaid = Number.isSafeInteger(s.amount_total) && s.amount_total > 0 ? s.amount_total : 0;
-  const createdAt = Number.isFinite(s.created) ? new Date(s.created * 1000) : nowDate;
-  const paidOn = ukDate(createdAt);
-  const firstChargeOn = terms.monthly > 0 ? addUkDays(paidOn, terms.freeDays) : null;
+  // When they paid, which is when Stripe makes the subscription and starts its trial: the subscription's start_date
+  // when it came expanded, else the completion time given (the webhook's event.created), else now (the thanks page,
+  // shown as they come back from paying). Never session.created: that is when the payment page was opened, up to 24
+  // hours earlier (a weekend page opened Sunday 23:50 and paid Monday 00:20).
+  const sub = s.subscription && typeof s.subscription === "object" ? s.subscription : null;
+  const paidAt = unixDate(sub?.start_date) ?? validDate(completedAt) ?? nowDate;
+  const paidOn = ukDate(paidAt);
+  // The day Stripe takes the first monthly payment: its own trial_end when we have it, else what Stripe does with
+  // trial_period_days (the trial ends that many 24-hour days after it starts), as a UK date.
+  const trialEnd = unixDate(sub?.trial_end);
+  const firstChargeOn = terms.monthly > 0
+    ? ukDate(trialEnd ?? new Date(paidAt.getTime() + terms.freeDays * DAY_MS))
+    : null;
   const stamp = iso(nowDate);
 
   const wanted = text(s.metadata?.place_id) || text(s.client_reference_id);
@@ -139,6 +158,12 @@ export async function fulfilCheckout(DB, session, { now: at } = {}) {
   }
   await DB.batch(stmts);
 
+  // 5. the onboarding row, made once (its token never changes, so a link the thanks page showed stays valid)
+  await DB.prepare("INSERT OR IGNORE INTO onboarding (client_id, token, status, created_at) VALUES (?, ?, 'sent', ?)")
+    .bind(client_id, newToken(), stamp).run();
+  const onboarding = await DB.prepare("SELECT token, status FROM onboarding WHERE client_id = ?").bind(client_id).first();
+  const token = onboarding?.token ?? null;
+
   let greetName = null;
   if (place_id) {
     // 6. the prospect is won (a lost one too: money beats a "no"); no row → one is made with the checkout email
@@ -150,14 +175,9 @@ export async function fulfilCheckout(DB, session, { now: at } = {}) {
   // 7. a past "no thanks" can't block client mail
   if (email) await DB.prepare("DELETE FROM suppression WHERE kind = 'email' AND value = ?").bind(email.toLowerCase()).run();
 
-  // 5. the onboarding row, made once (its token never changes). Then the welcome email, on every run until it has
-  // been queued or handed to Nik, so a run that fails anywhere (the email's own insert included) is finished by the
-  // retry (Stripe resends after a 500), or by the webhook after a thanks page that failed.
-  await DB.prepare("INSERT OR IGNORE INTO onboarding (client_id, token, status, created_at) VALUES (?, ?, 'sent', ?)")
-    .bind(client_id, newToken(), stamp).run();
-  const onboarding = await DB.prepare("SELECT token, status FROM onboarding WHERE client_id = ?").bind(client_id).first();
-  const token = onboarding?.token ?? null;
-
+  // 5 (continued). The welcome email, after steps 6–7, on every run until it has been queued or handed to Nik, so a
+  // run that fails anywhere (the email's own insert included) is finished by the retry (Stripe resends after a 500),
+  // or by the webhook after a thanks page that failed.
   let created = false;
   const welcomeId = `welcome:${client_id}`;
   if (email && token
@@ -206,12 +226,27 @@ export async function fulfilCheckout(DB, session, { now: at } = {}) {
     if (other) {
       await addTodo(DB, {
         kind: "payment", dedupe: `payment:double:${place_id}:${s.id}`, title: `${name} paid twice: refund one in Stripe`,
+        detail: doubleDetail({ name, amountPaid, customer, subscription, terms, firstChargeOn }),
         link: "/#/money", place_id, client_id,
       });
     }
   }
 
   return { status: "ok", client_id, token, created, terms, amountPaid, firstChargeOn, place_id };
+}
+
+// What Nik does about a second order: refunding its charge in Stripe doesn't cancel its monthly plan (a trialing
+// subscription), so for the Full Package the todo also says to stop this newer client, which cancels it in Stripe.
+function doubleDetail({ name, amountPaid, customer, subscription, terms, firstChargeOn }) {
+  const who = customer ? ` (customer ${customer})` : "";
+  const refund = amountPaid > 0 ? `Refund this order's ${formatPounds(amountPaid)} in Stripe${who}` : `This order took no payment${who}`;
+  if (!(terms.monthly > 0)) return `${refund}. The refund shows on the Money page by itself.`;
+  let from = "";
+  try {
+    from = firstChargeOn ? `, this one from ${ukLongDate(firstChargeOn)}` : "";
+  } catch { /* no date to give */ }
+  return `${refund}, then Money → the newer "${name}" row → Stopped paying. That cancels its monthly plan in Stripe`
+    + `${subscription ? ` (${subscription})` : ""}; otherwise they pay ${formatPounds(terms.monthly)} twice a month${from}.`;
 }
 
 // The client an invoice belongs to: by its customer, else by its subscription (either payload shape).
@@ -241,9 +276,14 @@ async function chargeFee(DB, env, chargeId, fetchImpl) {
 }
 
 /**
- * Money actually received on an invoice: the build fee (its one-off lines, id `build:<customer>`, the same row
- * fulfilCheckout writes) and/or a monthly payment (`<invoice id>:monthly`). Stripe's fee is split pro rata. A repeat
- * only refreshes the fee, so whichever of the invoice and the checkout arrives first, there is one build row.
+ * Money actually received on an invoice: its one-off lines and/or a monthly payment (`<invoice id>:monthly`, Monthly
+ * retainers). The one-off lines are the build fee only on the checkout's own build invoice: the Full Package's first
+ * invoice (billing_reason subscription_create) or the Website Only invoice checkout.js tags (metadata aetos_build
+ * "1"). That one is `build:<customer>`, the same row fulfilCheckout writes, so whichever of the invoice and the
+ * checkout arrives first there is one build row. Any other one-off money (an invoice Nik raises in Stripe for extra
+ * work, an invoice item added to a monthly invoice, proration) is `<invoice id>:oneoff` under Other income, so it is
+ * counted and never touches the build row. Stripe's fee is split pro rata. Every id is per invoice, so a repeat of
+ * the same invoice only refreshes its own fee.
  */
 async function invoicePaid(DB, env, inv, { now: at, fetchImpl }) {
   const paid = pence(inv.amount_paid);
@@ -252,30 +292,37 @@ async function invoicePaid(DB, env, inv, { now: at, fetchImpl }) {
   const link = await linkForInvoice(DB, inv);
   const customer = stripeId(inv.customer) || link?.stripe_customer || null;
 
-  const parts = { build: 0, monthly: 0 };
-  for (const line of inv.lines?.data || []) parts[isSubscriptionLine(line) ? "monthly" : "build"] += pence(line?.amount);
-  if (!parts.build && !parts.monthly) parts[invoiceSubscription(inv) && inv.billing_reason !== "subscription_create" ? "monthly" : "build"] = paid;
-  if (parts.build && !customer) return "ignored: a build payment with no Stripe customer"; // its id needs one
+  const isBuildInvoice = inv.billing_reason === "subscription_create" || inv.metadata?.aetos_build === "1";
+  // `oneoff` is every line that isn't the monthly plan; on the build invoice that is the build fee
+  const parts = { oneoff: 0, monthly: 0 };
+  for (const line of inv.lines?.data || []) parts[isSubscriptionLine(line) ? "monthly" : "oneoff"] += pence(line?.amount);
+  if (!parts.oneoff && !parts.monthly) parts[invoiceSubscription(inv) && inv.billing_reason !== "subscription_create" ? "monthly" : "oneoff"] = paid;
+  if (parts.oneoff && isBuildInvoice && !customer) return "ignored: a build payment with no Stripe customer"; // its id needs one
 
   const fee = await chargeFee(DB, env, stripeId(inv.charge), fetchImpl);
-  const total = parts.build + parts.monthly;
+  const total = parts.oneoff + parts.monthly;
   // pro rata, the remainder on the last part, so the rows add up to exactly what Stripe took
   const share = (part, of) => Math.round((part / total) * of);
-  const amounts = parts.build && parts.monthly
-    ? { build: [share(parts.build, paid), share(parts.build, fee)], monthly: [paid - share(parts.build, paid), fee - share(parts.build, fee)] }
-    : { [parts.build ? "build" : "monthly"]: [paid, fee] };
+  const amounts = parts.oneoff && parts.monthly
+    ? { oneoff: [share(parts.oneoff, paid), share(parts.oneoff, fee)], monthly: [paid - share(parts.oneoff, paid), fee - share(parts.oneoff, fee)] }
+    : { [parts.oneoff ? "oneoff" : "monthly"]: [paid, fee] };
+  const rowFor = {
+    oneoff: isBuildInvoice ? [`build:${customer}`, "Website builds"] : [`${inv.id}:oneoff`, "Other income"],
+    monthly: [`${inv.id}:monthly`, "Monthly retainers"],
+  };
 
   const client = link ? await DB.prepare("SELECT name FROM clients WHERE id = ?").bind(link.client_id).first() : null;
   const name = text(client?.name) || text(inv.customer_name) || text(inv.customer_email) || "Stripe payment";
   const paidAt = inv.status_transitions?.paid_at || inv.created;
   const paidOn = ukDate(Number.isFinite(paidAt) ? new Date(paidAt * 1000) : at);
   const stamp = iso(at);
+  // ON CONFLICT refreshes the fee of this invoice's own row only: every id here is this invoice's (build:<customer>
+  // is only ever the checkout's build invoice, which fulfilCheckout's row of the same id is)
   const stmts = Object.entries(amounts).map(([part, [amount, partFee]]) =>
     DB.prepare(`INSERT INTO payments (id, stripe_customer, name, category, amount_pence, fee_pence, paid_on, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET fee_pence = excluded.fee_pence`)
-      .bind(part === "build" ? `build:${customer}` : `${inv.id}:monthly`, customer, name,
-        part === "build" ? "Website builds" : "Monthly retainers", amount, partFee, paidOn, stamp));
+      .bind(rowFor[part][0], customer, name, rowFor[part][1], amount, partFee, paidOn, stamp));
   if (link) stmts.push(DB.prepare("UPDATE client_links SET failed_on = NULL WHERE client_id = ?").bind(link.client_id));
   await DB.batch(stmts);
   return `recorded ${formatPounds(paid)} from ${name}`;
@@ -318,30 +365,39 @@ async function paymentFailed(DB, inv, at) {
     detail: to ? payLink : `We have no email address for them, so nobody has emailed them yet.${payUrl ? ` ${payLink}` : ""}`,
     link: "/#/money", place_id: client?.place_id ?? null, client_id: link.client_id,
   });
-  if (!todoId) return "card failed again (already emailed)";
+  if (!todoId) return "card failed again (already dealt with for this invoice)";
   if (!to) return "marked payment failed (no email address)";
-  let sent;
+  // The email has a fixed id per invoice, so a run that queued it and then failed (the webhook answers 500, Stripe
+  // retries) finds it already there on the retry and never sends a second one.
+  const mailId = `payment-failed:${inv.id}`;
   try {
-    sent = await sendClientMail(DB, {
-      client_id: link.client_id, place_id: client?.place_id ?? null, to, business: name, now: at,
-      compose: (signName) => paymentFailedEmail({ business: name, greetName: client?.greet_name, amountDue, payUrl, signName }),
-      noMailboxTodo: {
-        dedupe: `setup:client-mail:${link.client_id}:payment-failed:${inv.id}`,
-        title: "Send {name} this email yourself (no mailbox yet)",
-      },
-    });
+    let sent;
+    try {
+      sent = await sendClientMail(DB, {
+        id: mailId, client_id: link.client_id, place_id: client?.place_id ?? null, to, business: name, now: at,
+        compose: (signName) => paymentFailedEmail({ business: name, greetName: client?.greet_name, amountDue, payUrl, signName }),
+        noMailboxTodo: {
+          dedupe: `setup:client-mail:${link.client_id}:payment-failed:${inv.id}`,
+          title: "Send {name} this email yourself (no mailbox yet)",
+        },
+      });
+    } catch (err) {
+      if (!ALREADY_QUEUED_RE.test(String(err?.message ?? err))) throw err;
+      sent = { queued: mailId }; // queued by an earlier run of this event
+    }
+    if (sent?.queued == null) {
+      // No mailbox: nothing went; the email is in Nik's "Send … this email yourself" setup todo.
+      await DB.prepare("UPDATE todos SET title = ?, detail = ? WHERE id = ?").bind(
+        `${head} No mailbox yet, so nobody has emailed them: send the email in the "Send ${name} this email yourself" todo; Stripe will retry.`,
+        payLink, todoId,
+      ).run();
+      return "marked payment failed (no mailbox: Nik sends the email)";
+    }
   } catch (err) {
-    // The email didn't go: take the todo back, so Stripe's retry of this event (after the 500) files it and emails.
+    // Not finished: take the todo back, so Stripe's retry of this event (after the 500) files it again, with the
+    // right title, and sends the email if it hasn't gone.
     await DB.prepare("DELETE FROM todos WHERE id = ?").bind(todoId).run();
     throw err;
-  }
-  if (sent?.queued == null) {
-    // No mailbox: nothing went; the email is in Nik's "Send … this email yourself" setup todo.
-    await DB.prepare("UPDATE todos SET title = ?, detail = ? WHERE id = ?").bind(
-      `${head} No mailbox yet, so nobody has emailed them: send the email in the "Send ${name} this email yourself" todo; Stripe will retry.`,
-      payLink, todoId,
-    ).run();
-    return "marked payment failed (no mailbox: Nik sends the email)";
   }
   return "marked payment failed, client emailed";
 }
@@ -401,8 +457,27 @@ async function checkoutExpired(DB, session) {
   return id ? "call todo added" : "call todo already there";
 }
 
-async function checkoutCompleted(DB, session, at) {
-  const res = await fulfilCheckout(DB, session, { now: at });
+/**
+ * The session with its subscription from Stripe ({id, trial_end, start_date, …}), so the first charge date is
+ * Stripe's own trial_end. Only for one of our paid sessions with a subscription id; if Stripe can't be asked (no key,
+ * down, refusing), the session as it came: fulfilCheckout then counts the free days from the event's time.
+ */
+async function withSubscription(DB, env, session, fetchImpl) {
+  const sub = session?.subscription;
+  if (typeof sub !== "string" || !sub || !PAID.includes(session.payment_status) || !sessionPackage(session.metadata)) return session;
+  try {
+    const key = (await stripeKey(env, DB))?.key;
+    if (!key) return session;
+    const got = await stripeApi(key, "GET", `subscriptions/${encodeURIComponent(sub)}`, null, fetchImpl);
+    return got && typeof got === "object" && got.id === sub ? { ...session, subscription: got } : session;
+  } catch {
+    return session; // the date falls back to the event's time + the free days, which is what Stripe does
+  }
+}
+
+async function checkoutCompleted(DB, env, session, eventCreated, at, fetchImpl) {
+  const full = await withSubscription(DB, env, session, fetchImpl);
+  const res = await fulfilCheckout(DB, full, { now: at, completedAt: unixDate(eventCreated) ?? undefined });
   if (res.status !== "ok") return `ignored: ${res.reason}`;
   return res.created ? `client added: ${res.client_id}` : "already recorded";
 }
@@ -411,7 +486,7 @@ async function checkoutCompleted(DB, session, at) {
 export async function handleEvent(DB, env, event, { now: at = new Date(), fetchImpl = fetch } = {}) {
   const obj = event?.data?.object || {};
   switch (event?.type) {
-    case "checkout.session.completed": return checkoutCompleted(DB, obj, at);
+    case "checkout.session.completed": return checkoutCompleted(DB, env, obj, event.created, at, fetchImpl);
     case "invoice.paid": return invoicePaid(DB, env, obj, { now: at, fetchImpl });
     case "invoice.payment_failed": return paymentFailed(DB, obj, at);
     case "customer.subscription.deleted": return subscriptionDeleted(DB, obj, at);
