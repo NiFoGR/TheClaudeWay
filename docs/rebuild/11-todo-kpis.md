@@ -72,7 +72,7 @@ What each row shows. All text comes from the todo row, enriched by the API.
   gave a message id. Client and unknown-sender escalations (stage 0's `escalation:client:<id>` and
   `escalation:unknown:<id>`, no draft and no thread) never get them; they show **Open** (`todos.link`) when set,
   Done and Dismiss.
-| `call` | title, time "Tue 11:00", phone | **Call <phone>** (`tel:`), **Open email thread**, Done, Dismiss |
+| `call` | title, time "Tue 11:00" (the item's `call_at`: booked calls only, not the outcome question or the day list), phone | **Call <phone>** (`tel:`), **Open email thread**, Done, Dismiss |
 | `hot` | title, phone | **Call <phone>** when there's a phone, **Open lead**, Done, Dismiss |
 | `health`, `payment`, `build`, `care`, `kpi`, `pick`, `setup` | title, detail | **Open** (`todos.link`), Done, Dismiss |
 
@@ -94,7 +94,12 @@ What each row shows. All text comes from the todo row, enriched by the API.
   from the todo's `dedupe`). On success the toast says "Sent. It's in the email thread." and the row disappears (the
   todo is done). On failure the toast shows stage 7's plain-English error. A todo that's already done or dismissed
   (Nik answered elsewhere while this page was stale) is refused with 409 "That's already been dealt with, so nothing
-  was sent. Refresh the page." and nothing is sent.
+  was sent. Refresh the page." and nothing is sent. The route claims the todo first (open → done in one conditional
+  UPDATE), so two presses at once send one reply and the second gets that 409. When nothing is sent (stage 7's 422,
+  404 or 409, or an error before Nik's reply is queued) the claim is undone and the todo is open again; an error after
+  his reply is queued keeps it closed (the tick's send step sends that reply), so a second press with other words gets
+  the 409, never a second email. The claim and the send run as one promise handed to `waitUntil`, so closing the tab
+  or losing signal mid-send can't leave the todo claimed with nothing sent.
 - Empty: "Nothing for you right now. New things show up here the moment they need you."
 
 ### 3. Pipeline
@@ -759,9 +764,11 @@ JS, `style.css`.
   - `loadBoard(DB, env, now) → Promise<{now, health, today: {overdue, today, later}, pipeline, clients, counts: {due,
     red}}>`
   - `setTodoStatus(DB, id, status, now) → Promise<"ok"|"missing">`
-  - Todo item shape: `{id, kind, title, detail, link, draft, due_at, place_id, client_id, business, phone,
+  - Todo item shape: `{id, kind, title, detail, link, draft, due_at, call_at, place_id, client_id, business, phone,
     lead_link, thread_link, can_send}`, where `can_send = kind in (escalation, call_time) && !!draft &&
-    messageIdFromDedupe(dedupe) !== null`
+    messageIdFromDedupe(dedupe) !== null`; `call_at` is `due_at` for a `call` todo whose dedupe is `call:<id>` (a
+    booked call, due at its slot) and null for everything else (stage 8's `call-outcome:<id>`, due 30 minutes after
+    the call, and `calls-day:<date>`, due 07:00 UK, are not call times)
   - Routes:
     - `GET /api/todo` → `loadBoard`
     - `GET /api/todo/count` → `{due, red}`
