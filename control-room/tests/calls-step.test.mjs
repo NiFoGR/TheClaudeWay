@@ -2,7 +2,7 @@
 // Run: node --test control-room/tests/calls-step.test.mjs
 import assert from "node:assert/strict";
 import test from "node:test";
-import { confirmCall, holdSlot, runCallsStep } from "../functions/_lib/calls-db.js";
+import { confirmCall, holdSlot, runCallsStep, updateCall } from "../functions/_lib/calls-db.js";
 import { STEPS } from "../functions/_lib/tick.js";
 import { fakeD1 } from "./helpers/fakeD1.mjs";
 
@@ -218,4 +218,69 @@ test("a run that stops part way: the next run still closes the call Todo and add
   assert.equal(await runCallsStep({ DB, now: D("2026-10-20T10:35:00Z") }), "released 0, today 0, outcome 1");
   assert.equal((await one(DB, "SELECT status FROM todos WHERE dedupe LIKE 'call:%'")).status, "done");
   assert.equal((await all(DB, "SELECT id FROM todos WHERE dedupe LIKE 'call-outcome:%'")).length, 1);
+});
+
+test("a prospect who opted out is never listed or asked about; Nik's test lead works like a real one", async () => {
+  const DB = await seeded([["test:nik", "Nik's Test Roofing", null, "Nik"]]);
+  const NOW = D("2026-10-19T19:00:00Z");
+  await confirmCall(DB, { place_id: "a", slot_at: D("2026-10-20T10:00:00Z"), now: NOW });
+  await confirmCall(DB, { place_id: "b", slot_at: D("2026-10-20T14:00:00Z"), now: NOW, byNik: true });       // 15:00 UK
+  await confirmCall(DB, { place_id: "test:nik", slot_at: D("2026-10-20T16:00:00Z"), now: NOW, byNik: true }); // 17:00 UK
+  // b opted out with the call still confirmed (an opt-out from before cancelOpenCalls existed)
+  await DB.prepare("UPDATE prospects SET stage = 'lost', lost_reason = 'opt_out' WHERE place_id = 'b'").run();
+  assert.equal(await runCallsStep({ DB, now: D("2026-10-20T06:00:00Z") }), "released 0, today 1, outcome 0");
+  assert.equal((await one(DB, "SELECT title FROM todos WHERE dedupe='calls-day:2026-10-20'")).title,
+    "Today's calls: 11:00 Mark (Diamond Kickboxing), 17:00 Nik (Nik's Test Roofing)");
+  assert.equal(await runCallsStep({ DB, now: D("2026-10-20T20:00:00Z") }), "released 0, today 0, outcome 2");
+  const asked = (await all(DB, "SELECT c.place_id FROM todos AS t JOIN calls AS c ON t.dedupe = 'call-outcome:' || c.id ORDER BY c.slot_at"))
+    .map((r) => r.place_id);
+  assert.deepEqual(asked, ["a", "test:nik"]);
+  // a bounce isn't an opt-out: a booked call was agreed by phone, so it is still listed
+  await DB.prepare("UPDATE prospects SET stage = 'lost', lost_reason = 'bounce' WHERE place_id = 'b'").run();
+  assert.equal(await runCallsStep({ DB, now: D("2026-10-20T20:05:00Z") }), "released 0, today 0, outcome 1");
+});
+
+test("today's open list stays true: a cancel or a new booking changes it, and it closes when no call is left", async () => {
+  const DB = await seeded([["c", "Green Leaf", null, "Jo"]]);
+  const NOW = D("2026-10-19T19:00:00Z");
+  const a = (await confirmCall(DB, { place_id: "a", slot_at: D("2026-10-20T10:00:00Z"), now: NOW })).call;
+  const b = (await confirmCall(DB, { place_id: "b", slot_at: D("2026-10-20T14:00:00Z"), now: NOW, byNik: true })).call;
+  assert.equal(await runCallsStep({ DB, now: D("2026-10-20T06:00:00Z") }), "released 0, today 1, outcome 0");
+  const title = async () => (await one(DB, "SELECT title, link, status FROM todos WHERE dedupe='calls-day:2026-10-20'"));
+  assert.equal((await title()).title, "Today's calls: 11:00 Mark (Diamond Kickboxing), 15:00 Sam (Smith Roofing)");
+  // Mark opts out at 08:00 UK (his call is cancelled): he is never listed again.
+  await updateCall(DB, a.id, "cancel", { now: D("2026-10-20T07:00:00Z") });
+  assert.equal(await runCallsStep({ DB, now: D("2026-10-20T07:05:00Z") }), "released 0, today 0, outcome 0");
+  assert.deepEqual({ ...(await title()) }, { title: "Today's calls: 15:00 Sam (Smith Roofing)", link: `/#/call/${b.id}`, status: "open" });
+  // Nik books Jo for 17:00 UK: added to the open list (the count stays 0: the list was already added today).
+  await confirmCall(DB, { place_id: "c", slot_at: D("2026-10-20T16:00:00Z"), now: D("2026-10-20T08:00:00Z"), byNik: true });
+  assert.equal(await runCallsStep({ DB, now: D("2026-10-20T08:05:00Z") }), "released 0, today 0, outcome 0");
+  assert.equal((await title()).title, "Today's calls: 15:00 Sam (Smith Roofing), 17:00 Jo (Green Leaf)");
+  // Both cancelled: the list is closed (dedupe kept, so it never comes back today).
+  for (const r of await all(DB, "SELECT id FROM calls WHERE status='confirmed'")) await updateCall(DB, r.id, "cancel", { now: D("2026-10-20T09:00:00Z") });
+  assert.equal(await runCallsStep({ DB, now: D("2026-10-20T09:05:00Z") }), "released 0, today 0, outcome 0");
+  assert.equal((await title()).status, "done");
+  await confirmCall(DB, { place_id: "c", slot_at: D("2026-10-20T17:00:00Z"), now: D("2026-10-20T09:10:00Z"), byNik: true });
+  assert.equal(await runCallsStep({ DB, now: D("2026-10-20T09:15:00Z") }), "released 0, today 0, outcome 0");
+  assert.equal((await title()).status, "done");
+  // A list Nik dismissed is left as he left it.
+  await DB.prepare("UPDATE todos SET status='dismissed' WHERE dedupe='calls-day:2026-10-20'").run();
+  assert.equal(await runCallsStep({ DB, now: D("2026-10-20T09:20:00Z") }), "released 0, today 0, outcome 0");
+  assert.equal((await title()).status, "dismissed");
+});
+
+test("an opted-out prospect's passed call: its call Todo is closed once, no outcome asked, and it never blocks others", async () => {
+  const DB = await seeded([["c", "Green Leaf", null, "Jo"], ["d", "Bright Spark", null, "Al"], ["e", "Red Van", null, "Bo"]]);
+  const NOW = D("2026-10-19T19:00:00Z");
+  const b = (await confirmCall(DB, { place_id: "b", slot_at: D("2026-10-20T08:00:00Z"), now: NOW, byNik: true })).call;
+  await DB.prepare("UPDATE prospects SET stage = 'lost', lost_reason = 'opt_out' WHERE place_id = 'b'").run();   // after the call
+  for (const [pid, t] of [["c", "09:00"], ["d", "10:00"], ["e", "11:00"]]) {
+    await confirmCall(DB, { place_id: pid, slot_at: D(`2026-10-20T${t}:00Z`), now: NOW, byNik: true });
+  }
+  assert.equal(await runCallsStep({ DB, now: D("2026-10-20T12:00:00Z"), budget: { left: () => 6 } }), "released 0, today 1, outcome 2");
+  assert.equal((await one(DB, `SELECT status FROM todos WHERE dedupe='call:${b.id}'`)).status, "done");
+  assert.equal(await one(DB, `SELECT id FROM todos WHERE dedupe='call-outcome:${b.id}'`), null);
+  assert.equal(await runCallsStep({ DB, now: D("2026-10-20T12:05:00Z"), budget: { left: () => 6 } }), "released 0, today 0, outcome 1");
+  assert.equal((await all(DB, "SELECT id FROM todos WHERE dedupe LIKE 'call-outcome:%'")).length, 3);
+  assert.equal(await runCallsStep({ DB, now: D("2026-10-20T12:10:00Z") }), "released 0, today 0, outcome 0");
 });
