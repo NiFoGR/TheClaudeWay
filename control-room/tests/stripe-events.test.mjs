@@ -3,6 +3,7 @@
 // `stripe` heartbeat feeds the Payments light. Run: node --test control-room/tests/stripe-events.test.mjs
 import assert from "node:assert/strict";
 import test from "node:test";
+import { countingDB } from "../functions/_lib/d1count.js";
 import { loadMoney } from "../functions/_lib/money.js";
 import { setSecret } from "../functions/_lib/settings.js";
 import { thanksPage } from "../functions/_lib/checkout.js";
@@ -119,7 +120,7 @@ test("replay", async () => {
     .map((t) => count(DB, `SELECT COUNT(*) AS n FROM ${t}`)).concat(count(DB, "SELECT COUNT(*) AS n FROM messages WHERE kind = 'system'")));
   const before = await counts();
 
-  const second = await deliver(DB, evt);
+  const second = await deliver(DB, evt, { now: new Date(NOW.getTime() + 60_000) }); // Stripe's resend, a minute later
   assert.equal(second.status, 200);
   assert.deepEqual(second.json, { received: true, duplicate: true });
   assert.deepEqual(await counts(), before);
@@ -135,11 +136,23 @@ test("replay", async () => {
   assert.equal(beat.last_at, "2026-10-19T10:01:00Z");
 });
 
-// Exactly Part B's payload (no subscription, no created: paid_on falls back to the time it arrived, a UK date)
+// Exactly Part B's payload (no subscription, no created: paid_on falls back to the time it arrived, a UK date). It is
+// the subscription's first invoice (billing_reason subscription_create): the build line is the checkout's build fee.
 const firstInvoice = {
-  id: "in_1", customer: "cus_1", amount_paid: 195000, charge: "ch_1",
+  id: "in_1", customer: "cus_1", amount_paid: 195000, charge: "ch_1", billing_reason: "subscription_create",
   lines: { data: [{ type: "invoiceitem", amount: 195000 }, { type: "subscription", amount: 0 }] },
 };
+
+test("one checkout event stays well inside D1's 50 queries per invocation", async () => {
+  const DB = await seed();
+  const c = countingDB(DB);
+  const res = await deliver(c.DB, event("evt_q", "checkout.session.completed", session()));
+  assert.equal(res.json.result, "client added: cl_cs_1");
+  assert.ok(c.used() <= 40, `used ${c.used()} D1 statements`); // + db()'s version read, with room to spare
+  const repeat = countingDB(DB);
+  await deliver(repeat.DB, event("evt_q", "checkout.session.completed", session()));
+  assert.ok(repeat.used() <= 3, `a duplicate used ${repeat.used()}`);
+});
 
 test("invoice first", async () => {
   const DB = await seed();
@@ -244,13 +257,105 @@ test("fee split pro rata, amounts add up to what was paid", async () => {
   const DB = await seed();
   const stripe = fakeStripe({ "GET charges/ch_5?expand[]=balance_transaction": { balance_transaction: { fee: 1001 } } });
   await deliver(DB, event("evt_split", "invoice.paid", {
-    id: "in_5", customer: "cus_1", amount_paid: 3, charge: "ch_5", created: CREATED,
+    id: "in_5", customer: "cus_1", amount_paid: 3, charge: "ch_5", created: CREATED, billing_reason: "subscription_create",
     lines: { data: [{ type: "invoiceitem", amount: 1 }, { type: "subscription", amount: 2 }] },
   }), { fetchImpl: stripe.fetchImpl });
   const rows = await all(DB, "SELECT id, amount_pence, fee_pence FROM payments ORDER BY id");
   assert.deepEqual(rows.map((r) => r.id), ["build:cus_1", "in_5:monthly"]);
   assert.equal(rows.reduce((s, r) => s + r.amount_pence, 0), 3);
   assert.equal(rows.reduce((s, r) => s + r.fee_pence, 0), 1001);
+});
+
+// Review fix: only the checkout's own build invoice is the build row. Any other one-off money from the same customer
+// (an invoice Nik raises in Stripe for extra work, an invoice item added to a monthly invoice, proration) is its own
+// `<invoice id>:oneoff` row under Other income, so it is counted and never overwrites the build fee's Stripe fee.
+const feeStripe = () => fakeStripe({
+  "GET charges/ch_1?expand[]=balance_transaction": { balance_transaction: { fee: 2950 } },
+  "GET charges/ch_2?expand[]=balance_transaction": { balance_transaction: { fee: 170 } },
+  "GET charges/ch_3?expand[]=balance_transaction": { balance_transaction: { fee: 1000 } },
+});
+const JAN_20 = Date.parse("2027-01-20T10:00:00Z") / 1000;
+const extraInvoice = {
+  id: "in_2", customer: "cus_1", amount_paid: 12000, charge: "ch_2", billing_reason: "manual", created: JAN_20,
+  status_transitions: { paid_at: JAN_20 }, lines: { data: [{ type: "invoiceitem", amount: 12000 }] },
+};
+
+test("a second one-off invoice for the same customer is its own payment; the build row keeps its fee", async () => {
+  const DB = await seed();
+  const stripe = feeStripe();
+  await deliver(DB, event("evt_cs", "checkout.session.completed", session()), { fetchImpl: stripe.fetchImpl });
+  await deliver(DB, event("evt_in1", "invoice.paid", firstInvoice), { fetchImpl: stripe.fetchImpl });
+  const res = await deliver(DB, event("evt_in2", "invoice.paid", extraInvoice), { fetchImpl: stripe.fetchImpl });
+  assert.equal(res.json.result, "recorded £120 from Smith Roofing");
+  const rows = await all(DB, "SELECT id, stripe_customer, name, category, amount_pence, fee_pence, paid_on FROM payments ORDER BY id");
+  assert.deepEqual(rows.map((r) => ({ ...r })), [
+    { id: "build:cus_1", stripe_customer: "cus_1", name: "Smith Roofing", category: "Website builds", amount_pence: 195000, fee_pence: 2950, paid_on: "2026-10-19" },
+    { id: "in_2:oneoff", stripe_customer: "cus_1", name: "Smith Roofing", category: "Other income", amount_pence: 12000, fee_pence: 170, paid_on: "2027-01-20" },
+  ]);
+
+  // the same invoices again under new event ids (Stripe can send one twice): still one build row and one £120
+  await deliver(DB, event("evt_in1_again", "invoice.paid", firstInvoice), { fetchImpl: stripe.fetchImpl });
+  await deliver(DB, event("evt_in2_again", "invoice.paid", extraInvoice), { fetchImpl: stripe.fetchImpl });
+  assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM payments"), 2);
+  const build = await one(DB, "SELECT amount_pence, fee_pence FROM payments WHERE id = 'build:cus_1'");
+  assert.deepEqual({ ...build }, { amount_pence: 195000, fee_pence: 2950 });
+  assert.equal((await one(DB, "SELECT amount_pence FROM payments WHERE id = 'in_2:oneoff'")).amount_pence, 12000);
+});
+
+test("a monthly invoice carrying an extra invoice item: a monthly row and a one-off row, the fee split pro rata", async () => {
+  const DB = await seed();
+  const stripe = feeStripe();
+  await deliver(DB, event("evt_cs", "checkout.session.completed", session()), { fetchImpl: stripe.fetchImpl });
+  await deliver(DB, event("evt_in1", "invoice.paid", firstInvoice), { fetchImpl: stripe.fetchImpl });
+  await deliver(DB, event("evt_in3", "invoice.paid", {
+    id: "in_3", parent: { subscription_details: { subscription: "sub_1" } }, billing_reason: "subscription_cycle",
+    amount_paid: 29900, charge: "ch_3", created: DEC_18, status_transitions: { paid_at: DEC_18 },
+    lines: { data: [{ type: "subscription", amount: 24900 }, { type: "invoiceitem", amount: 5000 }] },
+  }), { fetchImpl: stripe.fetchImpl });
+  const rows = await all(DB, "SELECT id, category, amount_pence, fee_pence FROM payments ORDER BY id");
+  assert.deepEqual(rows.map((r) => ({ ...r })), [
+    { id: "build:cus_1", category: "Website builds", amount_pence: 195000, fee_pence: 2950 },
+    { id: "in_3:monthly", category: "Monthly retainers", amount_pence: 24900, fee_pence: 833 },
+    { id: "in_3:oneoff", category: "Other income", amount_pence: 5000, fee_pence: 167 },
+  ]);
+});
+
+test("Website Only: its tagged build invoice is the build row, whichever of it and the checkout comes first", async () => {
+  const website = session({
+    mode: "payment", subscription: null, amount_total: 175000, metadata: { ...session().metadata, package: "website" },
+  });
+  const buildInvoice = {
+    id: "in_w", customer: "cus_1", amount_paid: 175000, charge: "ch_1", billing_reason: "manual",
+    metadata: { aetos_build: "1" }, lines: { data: [{ type: "invoiceitem", amount: 175000 }] },
+  };
+  for (const order of [["inv", "cs"], ["cs", "inv"]]) {
+    const DB = await seed();
+    const stripe = feeStripe();
+    for (const which of order) {
+      const evt = which === "cs" ? event("evt_cs", "checkout.session.completed", website) : event("evt_inv", "invoice.paid", buildInvoice);
+      assert.equal((await deliver(DB, evt, { fetchImpl: stripe.fetchImpl })).status, 200);
+    }
+    const rows = await all(DB, "SELECT id, category, amount_pence, fee_pence, name FROM payments");
+    assert.deepEqual(rows.map((r) => ({ ...r })), [
+      { id: "build:cus_1", category: "Website builds", amount_pence: 175000, fee_pence: 2950, name: "Smith Roofing" },
+    ], order.join(" then "));
+  }
+});
+
+test("a one-off invoice with no Stripe customer isn't a build fee: it is recorded against its invoice", async () => {
+  const DB = await seed();
+  const res = await deliver(DB, event("evt_nc", "invoice.paid", {
+    id: "in_7", amount_paid: 5000, billing_reason: "manual", customer_email: "someone@else.co.uk",
+    lines: { data: [{ type: "invoiceitem", amount: 5000 }] },
+  }));
+  assert.equal(res.json.result, "recorded £50 from someone@else.co.uk");
+  const row = await one(DB, "SELECT id, stripe_customer, category, amount_pence FROM payments");
+  assert.deepEqual({ ...row }, { id: "in_7:oneoff", stripe_customer: null, category: "Other income", amount_pence: 5000 });
+  // the checkout's own build invoice still needs a customer (its row id is build:<customer>)
+  const B = await seed();
+  const { customer, ...noCustomer } = firstInvoice;
+  assert.equal((await deliver(B, event("evt_nc2", "invoice.paid", noCustomer))).json.result,
+    "ignored: a build payment with no Stripe customer");
 });
 
 test("trial invoice", async () => {
@@ -618,4 +723,109 @@ test("checkout: the thanks page fails while sending, the webhook that follows qu
   assert.equal(system.length, 1);
   assert.ok(system[0].body.includes(`https://x.test/onboard/${token}`), system[0].body);
   assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM demo_events WHERE kind = 'ordered'"), 1);
+});
+
+// ---------------------------------------------------------------- Task 9 review: one email per invoice, whatever fails
+
+// DB whose first statement matching `re` fails (a passing D1 error); everything else is the real fake D1.
+function failFirst(DB, re) {
+  let failed = false;
+  return new Proxy(DB, {
+    get(target, prop) {
+      if (prop !== "prepare") return Reflect.get(target, prop);
+      return (sql) => {
+        if (!failed && re.test(sql)) {
+          failed = true;
+          throw new Error("D1_ERROR: Network connection lost.");
+        }
+        return target.prepare(sql);
+      };
+    },
+  });
+}
+
+test("card failed: an error after the email was queued doesn't email them twice on Stripe's retry", async () => {
+  const DB = await fulfilled();
+  // the email is queued, then closing the system-mailbox todo fails: the event answers 500 and Stripe retries it
+  const flaky = failFirst(DB, /UPDATE todos SET status = 'done'/);
+  const res = await deliver(flaky, event("evt_f1", "invoice.payment_failed", failedInvoice()), { now: DEC_18_NOW });
+  assert.equal(res.status, 500);
+  const retry = await deliver(flaky, event("evt_f1", "invoice.payment_failed", failedInvoice()), { now: DEC_18_NOW });
+  assert.equal(retry.status, 200);
+  assert.equal(retry.json.result, "marked payment failed, client emailed");
+  assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM messages WHERE subject = 'Your Aetos Websites payment didn''t go through'"), 1);
+  assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM todos WHERE dedupe = 'payment:failed:in_3'"), 1);
+});
+
+test("card failed, no mailbox: an error before the title is fixed is put right on Stripe's retry", async () => {
+  const DB = await fulfilled();
+  await DB.prepare("DELETE FROM mailboxes").run();
+  const flaky = failFirst(DB, /UPDATE todos SET title/);
+  const res = await deliver(flaky, event("evt_f1", "invoice.payment_failed", failedInvoice()), { now: DEC_18_NOW });
+  assert.equal(res.status, 500);
+  const retry = await deliver(flaky, event("evt_f1", "invoice.payment_failed", failedInvoice()), { now: DEC_18_NOW });
+  assert.equal(retry.status, 200);
+  assert.equal(retry.json.result, "marked payment failed (no mailbox: Nik sends the email)");
+  const payment = await one(DB, "SELECT * FROM todos WHERE dedupe = 'payment:failed:in_3'");
+  assert.ok(!payment.title.includes("emailed a link"), payment.title); // never says they were emailed
+  assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM todos WHERE dedupe = 'setup:client-mail:cl_cs_1:payment-failed:in_3'"), 1);
+});
+
+test("card failed again: what Setup shows as the last Stripe message never claims an email that didn't go", async () => {
+  const DB = await fulfilled();
+  await DB.prepare("UPDATE client_links SET email = NULL").run();
+  await deliver(DB, event("evt_f1", "invoice.payment_failed", failedInvoice()), { now: DEC_18_NOW });
+  const again = await deliver(DB, event("evt_f2", "invoice.payment_failed", failedInvoice({ attempt_count: 2 })),
+    { now: new Date("2026-12-21T10:05:00Z") });
+  assert.equal(again.status, 200);
+  assert.ok(!/emailed/.test(again.json.result), again.json.result);
+  assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM messages WHERE kind = 'system' AND subject LIKE 'Your Aetos%'"), 0);
+});
+
+test("card failed, cancellation, refund and abandoned checkout each stay well inside D1's 50 queries", async () => {
+  const DB = await fulfilled();
+  await insert(DB, "leads", {
+    place_id: "p2", name: "Green Leaf", trade: "landscaper", search_town: "Leeds",
+    first_seen_at: "2026-09-01T09:00:00Z", updated_at: "2026-09-01T09:00:00Z",
+  });
+  const events = [
+    event("evt_q1", "invoice.payment_failed", failedInvoice()),
+    event("evt_q2", "customer.subscription.deleted", { id: "sub_1", ended_at: at("2027-01-15T10:00:00Z") }),
+    event("evt_q3", "charge.refunded", { id: "ch_9", customer: "cus_1", amount_refunded: 24900 }),
+    event("evt_q4", "checkout.session.expired", { id: "cs_2", metadata: { place_id: "p2" } }),
+  ];
+  for (const evt of events) {
+    const c = countingDB(DB);
+    const res = await deliver(c.DB, evt, { now: DEC_18_NOW });
+    assert.equal(res.status, 200, evt.type);
+    assert.ok(c.used() <= 25, `${evt.type}: used ${c.used()} D1 statements`);
+  }
+});
+
+// Review fix: the free days are counted from when they paid, as Stripe counts them (the subscription is made when
+// the checkout completes), not from when the payment page was opened (session.created, up to 24 hours earlier).
+test("checkout webhook: the first charge is Stripe's trial_end; paid_on is when they paid, not when the page opened", async () => {
+  const opened = Date.parse("2026-11-01T23:50:00Z") / 1000; // Sun 23:50 GMT: the weekend page, the session made
+  const paidAt = new Date("2026-11-02T00:20:00Z"); // Mon 00:20: paid inside the 30-minute grace
+  const weekend = session({ created: opened, amount_total: 175000, metadata: { ...session().metadata, weekend: "1" } });
+  const paidEvent = (id) => ({ ...event(id, "checkout.session.completed", weekend), created: Math.floor(paidAt / 1000) });
+
+  // Stripe answers: its own trial_end is used, whatever the arithmetic says
+  const DB = await seed();
+  const trialEnd = Date.parse("2027-01-31T00:20:05Z") / 1000;
+  const stripe = fakeStripe({ "GET subscriptions/sub_1": { id: "sub_1", object: "subscription", trial_end: trialEnd } });
+  const res = await deliver(DB, paidEvent("evt_wk"), { fetchImpl: stripe.fetchImpl, now: paidAt });
+  assert.equal(res.json.result, "client added: cl_cs_1");
+  assert.deepEqual(stripe.calls.map((c) => `${c.method} ${c.path}`), ["GET subscriptions/sub_1"]);
+  assert.equal((await one(DB, "SELECT paid_on FROM clients")).paid_on, "2026-11-02");
+  assert.equal((await one(DB, "SELECT paid_on FROM payments WHERE id = 'build:cus_1'")).paid_on, "2026-11-02");
+  const body = (await one(DB, "SELECT body FROM messages WHERE kind = 'system'")).body;
+  assert.ok(body.includes("The first £249 is taken on Sunday 31 January 2027"), body);
+
+  // Stripe can't be asked (down, or no such route): the event's own time + 90 days, the same day Stripe charges
+  const B = await seed();
+  await deliver(B, paidEvent("evt_wk"), { now: new Date(paidAt.getTime() + 3 * 3600_000) });
+  assert.equal((await one(B, "SELECT paid_on FROM clients")).paid_on, "2026-11-02");
+  const fallback = (await one(B, "SELECT body FROM messages WHERE kind = 'system'")).body;
+  assert.ok(fallback.includes("The first £249 is taken on Sunday 31 January 2027"), fallback);
 });
