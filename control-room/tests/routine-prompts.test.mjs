@@ -85,3 +85,28 @@ test("README's weekly-kpis section says how to make and check the Routine", () =
   assert.match(README, /^\| `aetos-weekly-kpis` \| Weekly KPIs \| Sonnet \|.*\| Sunday 18:47 \| `routines\/weekly-kpis\.md`/m,
     "the table row");
 });
+
+test("weekly-kpis prompt's limits and review format match what the Control Room checks", async () => {
+  // The prompt's numbers come from _lib/kpis.js, and a review written the way it asks is counted the way the POST
+  // route counts it, so a change on either side can't drift without this failing.
+  const { MAX_SUGGESTIONS, MIN_SAMPLE, VIEW_WINDOW_DAYS, FORWARD_WINDOW_DAYS, countSuggestions } =
+    await import("../functions/_lib/kpis.js");
+  const PROMPT = read("routines/weekly-kpis.md");
+  assert.ok(PROMPT.includes(`at most ${MAX_SUGGESTIONS}, numbered`), "the suggestion limit is the server's");
+  assert.ok(PROMPT.includes(`fewer than ${MIN_SAMPLE} emails`), "early means fewer than MIN_SAMPLE emails");
+  assert.ok(PROMPT.includes(`opened the demo within ${VIEW_WINDOW_DAYS} days`), "the view window");
+  assert.ok(PROMPT.includes(`within ${FORWARD_WINDOW_DAYS} days of your reply`), "the moved-forward window");
+  assert.ok(readmeSection("weekly-kpis").includes(`fewer than ${MIN_SAMPLE} emails`), "README says the same");
+
+  const headings = ["## The week in one line", "## What worked", "## What didn't", "## Suggestions"];
+  for (const h of headings) assert.ok(PROMPT.includes(`\n${h}\n`), `the prompt lists the heading ${h}`);
+  const review = (suggestions) => [
+    "## The week in one line", "5 first emails, 2 demo views.",
+    "## What worked", "1. Follow-up 1 got the only reply.",   // a numbered line outside Suggestions doesn't count
+    "## What didn't", "Nothing clear yet: too early to tell.",
+    "## Suggestions", ...suggestions,
+  ].join("\n");
+  const three = ["1. Shorten follow-up 2.", "Out of 12 follow-up 2s, 0 got a reply.", "2. Reply faster.", "3. Weigh reach up."];
+  assert.equal(countSuggestions(review(three)), MAX_SUGGESTIONS);
+  assert.equal(countSuggestions(review(["None this week: nothing is clear yet."])), 0, "\"Write none\" counts as 0");
+});
