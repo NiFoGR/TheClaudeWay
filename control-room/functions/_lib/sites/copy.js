@@ -20,9 +20,14 @@ const ONE_LINE_MAX = 200;
 
 const pad = (n) => String(n).padStart(2, "0");
 
-/** One line of text: line breaks (and runs of spaces) become one space, trimmed, at most 200 characters. */
+/**
+ * One line of text: line breaks, control characters (NEL included) and runs of spaces become one space, trimmed, at
+ * most 200 characters (never half of an emoji's surrogate pair at the cut).
+ */
 export function oneLine(s) {
-  return String(s ?? "").replace(/\s+/g, " ").trim().slice(0, ONE_LINE_MAX).trim();
+  let out = String(s ?? "").replace(/[\s\u0000-\u001f\u007f-\u009f]+/g, " ").trim().slice(0, ONE_LINE_MAX);
+  if (/[\ud800-\udbff]$/.test(out)) out = out.slice(0, -1);
+  return out.trim();
 }
 
 // A link for a message: whitespace removed, never cut short (a long Google Maps link must still work).
@@ -152,7 +157,7 @@ function needDomain(domain) {
  * route to return as a 400. The "Your email keeps working" sentence is left out when emailOnIt is "no".
  */
 export function nameserverEmail({ first, domain, registrar, ns, emailOnIt, nik } = {}) {
-  const servers = [...new Set((Array.isArray(ns) ? ns : []).map(oneLine).filter(Boolean))];
+  const servers = [...new Set((Array.isArray(ns) ? ns : []).map((n) => oneLine(n).toLowerCase()).filter(Boolean))];
   if (servers.length !== 2) {
     throw new Error("The nameserver email needs Cloudflare's two nameservers: paste them on the Site page first.");
   }

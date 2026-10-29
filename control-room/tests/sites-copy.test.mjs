@@ -157,3 +157,17 @@ test("domain emails refuse to go out incomplete", () => {
   assert.throws(() => cnameEmail({ ...cn, pagesHost: "" }), /Pages address/);
   assert.throws(() => cnameEmail({ ...cn, domain: "" }), /domain/);
 });
+
+test("oneLine also strips control characters and never leaves half an emoji at the cut", () => {
+  assert.equal(oneLine("Dave\u0085Bcc: x\u0000y\u001b"), "Dave Bcc: x y");
+  const cut = oneLine(`${"x".repeat(199)}\u{1F600}`);
+  assert.equal(cut, "x".repeat(199));
+  assert.doesNotMatch(cut, /[\ud800-\udfff]/);
+});
+
+test("nameserverEmail: the same nameserver in another case is not two nameservers", () => {
+  const args = { first: "John", domain: "smithroofing.co.uk", ns: ["ADA.ns.cloudflare.com", "ada.ns.cloudflare.com"], nik: "Nik" };
+  assert.throws(() => nameserverEmail(args), /two nameservers/);
+  const ok = nameserverEmail({ ...args, ns: ["ADA.NS.CLOUDFLARE.COM", "bob.ns.cloudflare.com"] });
+  assert.match(ok.body, /\n\nada\.ns\.cloudflare\.com\nbob\.ns\.cloudflare\.com\n\n/);
+});
