@@ -4,8 +4,8 @@
 // - One call per UK day. The check is made twice: canHold on the rows read, then again inside the write (an INSERT or
 //   UPDATE guarded by NOT EXISTS), so two confirms racing for the same day can't both land. Nik's own bookings
 //   (byNik) are never refused for a taken day: they get a warning instead.
-// - One live call per prospect: a new offer releases their earlier offers; a booking cancels every other offered or
-//   confirmed call of theirs (and closes that call's Todo).
+// - One live call per prospect: a new offer releases their earlier offers; a booking cancels their other offers and
+//   booked calls still ahead (and closes those Todos). A booked call whose time has passed stays for its outcome.
 // - Reply drill calls (place_id "drill:…", Task 17) are practice: they never take a day from anyone, aren't in
 //   liveCalls, and a drill booking adds no `call` Todo. "test:" leads (Nik's own test lead) work like real ones.
 // - Every calls write is one DB.batch, with the closing of that call's Todos in it. A call's Todos (`call:<id>`,
@@ -16,7 +16,7 @@
 import { callTodoTitle, canHold, offerExpired, OFFER_HOLD_HOURS } from "./calls.js";
 import { queueMessage } from "./mail/outbox.js";
 import { businessName } from "./mail/rules.js";
-import { applyStageEvent } from "./prospects.js";
+import { applyStageEvent, isSuppressed } from "./prospects.js";
 import { buildReply } from "./replies.js";
 import { getSetting } from "./settings.js";
 import { addTodo } from "./todo.js";
@@ -36,10 +36,15 @@ const NO_CALL = "That call isn't in the database.";
 const UNKNOWN_ACTION = "Unknown action.";
 const EMPTY_MESSAGE = "Couldn't save: write something first.";
 const NO_THREAD = "Couldn't send: there's no email thread with them yet.";
+const NO_ADDRESS = "Couldn't send: there's no email address for them. Add it to the lead, then try again.";
 const NO_MAILBOX = "Couldn't send: this thread has no mailbox. Add one on Setup → Mailboxes, then try again.";
 const CHANGED = "That call changed while you were saving. Reload the page and try again.";
 const PASSED = "That slot has passed or is under 30 minutes away.";
 const DRILL_NOT_SENT = "drill: not sent";
+// The send step cancels a reply to a do-not-email address without a word, so it is refused here, before the call changes.
+const SUPPRESSED_WHY = { opt_out: "they opted out", bounce: "their address bounced" };
+const suppressedText = (to, why) => `Couldn't send: ${to} is on the do-not-email list (${SUPPRESSED_WHY[why] ?? why}). `
+  + "Nothing was sent and the call wasn't changed: save it without an email.";
 
 // What each of Nik's actions does: the status it sets, the statuses it may start from, and the stage event it fires.
 const ACTIONS = {
@@ -112,6 +117,10 @@ const CLOSE_TODOS_SQL = `UPDATE todos SET status = 'done', done_at = ?1
   WHERE status = 'open' AND dedupe IN (SELECT 'call:' || value FROM json_each(?2) UNION ALL SELECT 'call-outcome:' || value FROM json_each(?2))
     AND EXISTS (SELECT 1 FROM calls WHERE id = ?3 AND status = ?4)`;
 
+// Another booked call of this prospect still ahead (?1 place_id, ?2 the call being changed, ?3 now).
+const OTHER_CALL_AHEAD_SQL = `SELECT 1 AS booked FROM calls
+  WHERE place_id = ?1 AND id <> ?2 AND status = 'confirmed' AND slot_at > ?3 LIMIT 1`;
+
 const callRow = (fields) => ({ phone: null, note: "", ...fields });
 
 /** Every call of this prospect, newest first. */
@@ -171,7 +180,7 @@ export async function holdSlot(DB, { place_id, slot_at, now } = {}) {
  * Book a call. Claude's confirms (and the reply route's) need one of the slots, at least 30 minutes ahead, on a day
  * no other prospect holds or has booked; their own offer of that slot becomes the booking, even after its hold ran
  * out. Nik's (byNik) can be any future time, and a taken day gives `warning` instead of a refusal. The phone is the
- * one given, else the lead's. Every other offered or confirmed call of theirs is cancelled; the `call:<id>` Todo is
+ * one given, else the lead's. Their other offers and booked calls still ahead are cancelled; the `call:<id>` Todo is
  * added (due at the call) and the prospect moves to call_booked. Confirming the same time again changes nothing
  * (but a new phone number).
  */
@@ -242,15 +251,24 @@ export async function confirmCall(DB, { place_id, slot_at, phone = null, now, by
         WHERE id = ?id AND place_id = ?pid AND slot_at = ?slot AND status = 'offered'${guard}`, params)
     : prepare(DB, `INSERT INTO calls (id, place_id, slot_at, status, phone, note, created_at, updated_at)
         SELECT ?id, ?pid, ?slot, 'confirmed', ?phone, '', ?now, ?now WHERE 1${guard}`, params);
-  const replaced = own.filter((c) => c.id !== id && c.status === "confirmed").map((c) => c.id);
+  // Their other calls still ahead are replaced (offers, and a booked call being moved). A booked call whose time has
+  // passed is left as it is: it may have happened, and Nik still records how it went (and file 11 counts it).
+  const replaced = own.filter((c) => c.id !== id && c.status === "confirmed" && c.slot_at > stamp).map((c) => c.id);
   const [written] = await DB.batch([
     write,
     DB.prepare(CLOSE_TODOS_SQL).bind(stamp, JSON.stringify(replaced), id, "confirmed"),
     DB.prepare(`UPDATE calls SET status = 'cancelled', updated_at = ?1
-      WHERE place_id = ?2 AND status IN ('offered', 'confirmed') AND id <> ?3
+      WHERE place_id = ?2 AND id <> ?3 AND (status = 'offered' OR (status = 'confirmed' AND slot_at > ?1))
         AND EXISTS (SELECT 1 FROM calls WHERE id = ?3 AND status = 'confirmed')`).bind(stamp, placeId, id),
   ]);
-  if (!(written.meta.changes > 0)) return { ok: false, reason: DAY_TAKEN };
+  if (!(written.meta.changes > 0)) {
+    // Their offer was released (the calls step, its hold ran out) between the read and the write: booking it is still
+    // allowed, so read again. The offer is no longer 'offered' then, so this goes the INSERT way and never loops.
+    if (offer && (await DB.prepare("SELECT status FROM calls WHERE id = ?").bind(offer.id).first("status")) !== "offered") {
+      return confirmCall(DB, { place_id, slot_at, phone, now, byNik });
+    }
+    return { ok: false, reason: DAY_TAKEN };
+  }
 
   const call = offer
     ? { ...offer, status: "confirmed", phone: number, created_at: stamp, updated_at: stamp }
@@ -297,7 +315,8 @@ async function nikReply(DB, placeId, body, at) {
  * Nik's actions on a call: cancel (offered or confirmed → cancelled; a booked one moves the stage back to replied),
  * done, no_show (stage back to replied), ordering (done, and `message` — the order link — goes to them as Nik's reply
  * in the thread), lost (done; stage lost, lost_reason call). `note` is kept on the call (blank keeps the old one); a
- * cancel's optional `message` is sent the same way. Every action closes `call:<id>` and `call-outcome:<id>`.
+ * cancel's optional `message` is sent the same way. Every action closes `call:<id>` and `call-outcome:<id>`. A message
+ * with no address, or to one on the do-not-email list, is refused before anything changes.
  */
 export async function updateCall(DB, id, action, { note = "", message = "", now } = {}) {
   const at = nowDate(now, "updateCall");
@@ -318,6 +337,12 @@ export async function updateCall(DB, id, action, { note = "", message = "", now 
   if (text) {
     const built = await nikReply(DB, call.place_id, text, at);
     if (built.reason) return { ok: false, reason: built.reason };
+    // Checked before the call changes: queueMessage refuses a message with nobody to send it to, and by then the
+    // call would already be closed with Nik's message lost.
+    const to = String(built.row.to_addr ?? "").trim();
+    if (!to) return { ok: false, reason: NO_ADDRESS };
+    const why = isDrill(call.place_id) ? null : await isSuppressed(DB, to);
+    if (why) return { ok: false, reason: suppressedText(to, why) };
     reply = built.row;
   }
 
@@ -331,9 +356,14 @@ export async function updateCall(DB, id, action, { note = "", message = "", now 
   if (!(updated.meta.changes > 0)) return { ok: false, reason: CHANGED };
 
   if (reply) await queueMessage(DB, reply);
-  // Cancelling an offer that was never booked leaves the stage alone.
-  if (rule.event && !(action === "cancel" && call.status === "offered")) {
-    await applyStageEvent(DB, call.place_id, rule.event, at, rule.lost_reason ? { lost_reason: rule.lost_reason } : {});
+  // Cancelling an offer that was never booked leaves the stage alone, and so does cancelling (or a no answer on) a
+  // call when another booked call of theirs is still ahead: they are still call_booked.
+  let event = rule.event && !(action === "cancel" && call.status === "offered") ? rule.event : null;
+  if (event === "call_cancelled" && (await DB.prepare(OTHER_CALL_AHEAD_SQL).bind(call.place_id, call.id, stamp).first("booked"))) {
+    event = null;
+  }
+  if (event) {
+    await applyStageEvent(DB, call.place_id, event, at, rule.lost_reason ? { lost_reason: rule.lost_reason } : {});
   }
   return { ok: true };
 }
@@ -369,22 +399,24 @@ function whoFor(row) {
   return name && firm ? `${name} (${firm})` : name || firm || "them";
 }
 
-// Confirmed calls (no drills) with their lead's name and greeting name; each use adds its own slot_at filter. A call of
-// a prospect who opted out is never listed (their opt-out cancels it: cancelOpenCalls; this covers a call left
-// confirmed by an opt-out from before that).
-const CALLS_WITH_NAMES = `SELECT c.id, c.place_id, c.slot_at, l.name, p.greet_name, COALESCE(c.phone, l.phone) AS phone
-  FROM calls AS c LEFT JOIN leads AS l ON l.place_id = c.place_id LEFT JOIN prospects AS p ON p.place_id = c.place_id
-  WHERE c.status = 'confirmed' AND substr(c.place_id, 1, ${DRILL.length}) <> '${DRILL}'
-    AND NOT (COALESCE(p.stage, '') = 'lost' AND COALESCE(p.lost_reason, '') = 'opt_out')`;
+// A call of a prospect who opted out (their opt-out cancels calls ahead: cancelOpenCalls; this covers one left confirmed
+// by an opt-out from before that, or one that came after the call's time).
+const OPTED_OUT = "(COALESCE(p.stage, '') = 'lost' AND COALESCE(p.lost_reason, '') = 'opt_out')";
+// The calls the step lists and asks about (alias c, prospects p): confirmed, no drills, no opted-out prospects.
+const LISTED = `c.status = 'confirmed' AND substr(c.place_id, 1, ${DRILL.length}) <> '${DRILL}' AND NOT ${OPTED_OUT}`;
+const CALLS_WITH_NAMES = `SELECT c.id, c.place_id, c.slot_at, l.name, p.greet_name, ${OPTED_OUT} AS opted_out
+  FROM calls AS c LEFT JOIN leads AS l ON l.place_id = c.place_id LEFT JOIN prospects AS p ON p.place_id = c.place_id`;
 
 /**
  * The tick's `calls` step: (1) releases offers whose hold ran out (48 hours, or the slot time if sooner: offerExpired's
  * rule, in SQL); (2) from 07:00 UK, once a day, when any confirmed calls are today, adds the `call` Todo
- * "Today's calls: 11:00 Mark (Diamond Kickboxing)" (dedupe calls-day:<YYYY-MM-DD>, due 07:00 UK), and closes an
- * earlier day's list left open; (3) 30 minutes
- * after a confirmed call's time, adds "How did the call with Mark (Diamond Kickboxing) go?" (dedupe
- * call-outcome:<id>, due then, linking to the call page) and closes its `call:<id>` Todo. At most 3 outcomes a run,
- * and fewer when ctx.budget is short. Drill calls get no Todos. Returns "released 1, today 1, outcome 0".
+ * "Today's calls: 11:00 Mark (Diamond Kickboxing)" (dedupe calls-day:<YYYY-MM-DD>, due 07:00 UK). While it is open it
+ * stays true: a call cancelled (or opted out, or recorded) later that day drops out of its title, and it is closed when
+ * none is left, or once the day is over; (3) 30 minutes after a confirmed call's time, adds "How did the call with Mark
+ * (Diamond Kickboxing) go?" (dedupe call-outcome:<id>, due then, linking to the call page) and closes its `call:<id>`
+ * Todo. At most 3 outcomes a run, and fewer when ctx.budget is short. Drill calls and opted-out prospects' calls get
+ * no Todos (an opted-out prospect's passed call only has its `call:<id>` Todo closed). Returns
+ * "released 1, today 1, outcome 0". At most 9 D1 queries.
  */
 export async function runCallsStep(ctx = {}) {
   const { DB, budget } = ctx;
@@ -396,40 +428,56 @@ export async function runCallsStep(ctx = {}) {
     "UPDATE calls SET status = 'cancelled', updated_at = ?1 WHERE status = 'offered' AND (created_at <= ?2 OR slot_at <= ?1)",
   ).bind(stamp, holdCutoff(at)).run();
 
-  // 2. Today's calls, once a day from 07:00 UK (read only while the day's Todo isn't there yet). An earlier day's
-  // list still open is closed first (dedupe kept), so yesterday's "Today's calls" never sits on the board as overdue.
+  // 2. Today's calls, once a day from 07:00 UK. Closed first (dedupe kept): an earlier day's list, so yesterday's
+  // "Today's calls" never sits on the board as overdue, and today's when no listed call is left today.
   const day = ukDate(at);
-  const dedupe = `calls-day:${day}`;
+  const dedupe = `${DAY_KEY}${day}`;
+  const [d1, d2] = ukDayBounds(at);
   await DB.prepare(`UPDATE todos SET status = 'done', done_at = ?1
-    WHERE status = 'open' AND substr(dedupe, 1, ${DAY_KEY.length}) = '${DAY_KEY}' AND dedupe < ?2`).bind(stamp, dedupe).run();
+    WHERE status = 'open' AND substr(dedupe, 1, ${DAY_KEY.length}) = '${DAY_KEY}'
+      AND (dedupe < ?2 OR (dedupe = ?2 AND NOT EXISTS (SELECT 1 FROM calls AS c LEFT JOIN prospects AS p ON p.place_id = c.place_id
+        WHERE ${LISTED} AND c.slot_at >= ?3 AND c.slot_at < ?4)))`).bind(stamp, dedupe, d1, d2).run();
   let today = 0;
   if (ukParts(at).hh >= DAY_TODO_FROM_HOUR) {
-    const [d1, d2] = ukDayBounds(at);
-    const { results } = await DB.prepare(`${CALLS_WITH_NAMES} AND c.slot_at >= ?1 AND c.slot_at < ?2
-      AND NOT EXISTS (SELECT 1 FROM todos WHERE dedupe = ?3) ORDER BY c.slot_at, c.id`).bind(d1, d2, dedupe).all();
+    const { results } = await DB.prepare(`SELECT k.*, t.status AS day_status, t.title AS day_title, t.link AS day_link
+      FROM (${CALLS_WITH_NAMES} WHERE ${LISTED} AND c.slot_at >= ?1 AND c.slot_at < ?2) AS k
+      LEFT JOIN todos AS t ON t.dedupe = ?3 ORDER BY k.slot_at, k.id`).bind(d1, d2, dedupe).all();
     if (results.length) {
       const list = results.map((c) => {
         const { hh, mm } = ukParts(toDate(c.slot_at));
         return `${pad2(hh)}:${pad2(mm)} ${whoFor(c)}`;
       });
-      const added = await addTodo(DB, {
-        kind: "call",
-        title: `Today's calls: ${list.join(", ")}`,
-        link: `/#/call/${results[0].id}`,
-        due_at: ukToUtc(day, `${pad2(DAY_TODO_FROM_HOUR)}:00`),
-        dedupe,
-      });
-      if (added) today = 1;
+      const title = `Today's calls: ${list.join(", ")}`;
+      const link = `/#/call/${results[0].id}`;
+      const { day_status: status, day_title: shown, day_link: linked } = results[0];
+      if (status == null) {
+        const added = await addTodo(DB, {
+          kind: "call",
+          title,
+          link,
+          due_at: ukToUtc(day, `${pad2(DAY_TODO_FROM_HOUR)}:00`),
+          dedupe,
+        });
+        if (added) today = 1;
+      } else if (status === "open" && (shown !== title || linked !== link)) {
+        // A call booked, cancelled or recorded since: the open list is kept true (a dismissed or done one stays so).
+        await DB.prepare("UPDATE todos SET title = ?1, link = ?2 WHERE dedupe = ?3 AND status = 'open'")
+          .bind(title, link, dedupe).run();
+      }
     }
   }
 
-  // 3. Outcomes: the select, the close, one addTodo each, and one query kept for the tick's closing beat.
+  // 3. Outcomes: the select, the close, one addTodo each, and one query kept for the tick's closing beat. An opted-out
+  // prospect's passed call is picked once, while its `call:<id>` Todo is open, only to close that Todo.
   const room = budget && typeof budget.left === "function" ? budget.left() - 3 : OUTCOME_MAX;
   const limit = Math.max(0, Math.min(OUTCOME_MAX, room));
   let outcome = 0;
   if (limit > 0) {
-    const { results } = await DB.prepare(`${CALLS_WITH_NAMES} AND c.slot_at <= ?1
-      AND NOT EXISTS (SELECT 1 FROM todos WHERE dedupe = 'call-outcome:' || c.id) ORDER BY c.slot_at, c.id LIMIT ?2`)
+    const { results } = await DB.prepare(`${CALLS_WITH_NAMES}
+      WHERE c.status = 'confirmed' AND substr(c.place_id, 1, ${DRILL.length}) <> '${DRILL}' AND c.slot_at <= ?1
+        AND NOT EXISTS (SELECT 1 FROM todos WHERE dedupe = 'call-outcome:' || c.id)
+        AND (NOT ${OPTED_OUT} OR EXISTS (SELECT 1 FROM todos WHERE dedupe = 'call:' || c.id AND status = 'open'))
+      ORDER BY c.slot_at, c.id LIMIT ?2`)
       .bind(iso(new Date(at.getTime() - OUTCOME_AFTER_MIN * 60000)), limit).all();
     // Their `call:<id>` Todos are closed first, keeping the dedupe as every other calls write here does: if the run
     // stops before an outcome Todo is added, that call is simply picked up again next run (its close is a no-op).
@@ -439,6 +487,7 @@ export async function runCallsStep(ctx = {}) {
         .bind(stamp, JSON.stringify(results.map((c) => c.id))).run();
     }
     for (const c of results) {
+      if (c.opted_out) continue;
       const added = await addTodo(DB, {
         kind: "call",
         title: `How did the call with ${whoFor(c)} go?`,

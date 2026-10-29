@@ -309,3 +309,83 @@ test("cancelOpenCalls: every offered or confirmed call still ahead is cancelled 
   assert.equal((await one(DB, "SELECT stage FROM prospects WHERE place_id = 'a'")).stage, "replied"); // call_cancelled
   assert.equal(await cancelOpenCalls(DB, "a", "again", D("2026-10-21T08:05:00Z")), 0);
 });
+
+test("booking a new call after one that has happened leaves the old call for its outcome", async () => {
+  const DB = await seeded();
+  const tue = await confirmCall(DB, { place_id: "a", slot_at: D("2026-10-20T10:00:00Z"), phone: "1", now: D("2026-10-19T08:00:00Z") });
+  await insert(DB, "todos", {
+    id: "o1", kind: "call", place_id: "a", title: "How did the call go?", dedupe: `call-outcome:${tue.call.id}`,
+    created_at: EARLIER,
+  });
+  // Tuesday 14:00 UK: they agreed on the call to talk again on Friday, and Nik books it before recording Tuesday's
+  const fri = await confirmCall(DB, { place_id: "a", slot_at: D("2026-10-23T10:00:00Z"), phone: "1", now: D("2026-10-20T13:00:00Z"), byNik: true });
+  assert.equal(fri.ok, true);
+  assert.equal((await one(DB, "SELECT status FROM calls WHERE id = ?", tue.call.id)).status, "confirmed");
+  assert.equal((await one(DB, "SELECT status FROM todos WHERE id = 'o1'")).status, "open");
+  // No answer on Tuesday's: the Friday call is still booked, so the stage stays call_booked
+  assert.deepEqual(await updateCall(DB, tue.call.id, "no_show", { now: D("2026-10-20T13:05:00Z") }), { ok: true });
+  assert.equal((await one(DB, "SELECT stage FROM prospects WHERE place_id='a'")).stage, "call_booked");
+  assert.equal((await one(DB, "SELECT status FROM calls WHERE id = ?", fri.call.id)).status, "confirmed");
+  // Cancelling the Friday call (nothing else ahead) moves it back
+  await updateCall(DB, fri.call.id, "cancel", { now: D("2026-10-20T13:10:00Z") });
+  assert.equal((await one(DB, "SELECT stage FROM prospects WHERE place_id='a'")).stage, "replied");
+});
+
+test("a message with nobody to send it to is refused before the call changes", async () => {
+  const DB = await seeded();
+  const c = await confirmCall(DB, { place_id: "c", slot_at: D("2026-10-23T10:00:00Z"), phone: null, now: D("2026-10-20T08:00:00Z") });
+  assert.equal(c.call.phone, null);
+  assert.equal((await one(DB, `SELECT title FROM todos WHERE dedupe='call:${c.call.id}'`)).title, "Call Smith Roofing Fri 11:00 · no number yet");
+  await DB.prepare("UPDATE prospects SET email = '' WHERE place_id='c'").run();
+  assert.deepEqual(await updateCall(DB, c.call.id, "ordering", { message: "Link", now: D("2026-10-23T10:40:00Z") }),
+    { ok: false, reason: "Couldn't send: there's no email address for them. Add it to the lead, then try again." });
+  assert.equal((await one(DB, "SELECT status FROM calls WHERE id=?", c.call.id)).status, "confirmed");
+  assert.equal((await one(DB, `SELECT status FROM todos WHERE dedupe='call:${c.call.id}'`)).status, "open");
+});
+
+test("a message to an address on the do-not-email list is refused before the call changes", async () => {
+  const DB = await seeded();
+  const c = await confirmCall(DB, { place_id: "a", slot_at: D("2026-10-23T10:00:00Z"), phone: null, now: D("2026-10-20T08:00:00Z") });
+  await insert(DB, "suppression", { value: "mark@greenleaf.co.uk", kind: "email", reason: "opt_out", created_at: EARLIER });
+  assert.deepEqual(await updateCall(DB, c.call.id, "ordering", { message: "Link", now: D("2026-10-23T10:40:00Z") }), {
+    ok: false,
+    reason: "Couldn't send: mark@greenleaf.co.uk is on the do-not-email list (they opted out). Nothing was sent and the call wasn't changed: save it without an email.",
+  });
+  assert.equal((await one(DB, "SELECT status FROM calls WHERE id=?", c.call.id)).status, "confirmed");
+  assert.equal((await one(DB, `SELECT status FROM todos WHERE dedupe='call:${c.call.id}'`)).status, "open");
+  assert.equal((await one(DB, "SELECT COUNT(*) n FROM messages WHERE kind='reply'")).n, 0);
+  // the same call can still be recorded without an email
+  assert.deepEqual(await updateCall(DB, c.call.id, "done", { note: "Ordering by phone", now: D("2026-10-23T10:41:00Z") }), { ok: true });
+});
+
+test("their own offer can still be booked after its hold ran out, released by the calls step or not", async () => {
+  const DB = await seeded();
+  const held = await holdSlot(DB, { place_id: "a", slot_at: D("2026-10-27T11:00:00Z"), now: D("2026-10-20T08:00:00Z") });
+  const late = await confirmCall(DB, { place_id: "a", slot_at: D("2026-10-27T11:00:00Z"), phone: null, now: D("2026-10-25T08:00:00Z") });
+  assert.equal(late.ok, true); assert.equal(late.call.id, held.call.id);                       // not released yet
+  const held2 = await holdSlot(DB, { place_id: "b", slot_at: D("2026-10-28T11:00:00Z"), now: D("2026-10-20T08:00:00Z") });
+  await DB.prepare("UPDATE calls SET status = 'cancelled' WHERE id = ?").bind(held2.call.id).run(); // released by the step
+  const again = await confirmCall(DB, { place_id: "b", slot_at: D("2026-10-28T11:00:00Z"), phone: null, now: D("2026-10-25T08:00:00Z") });
+  assert.equal(again.ok, true); assert.notEqual(again.call.id, held2.call.id);
+  assert.equal((await one(DB, "SELECT COUNT(*) n FROM calls WHERE status = 'confirmed'")).n, 2);
+});
+
+test("an offer released by the calls step between the read and the write is still booked", async () => {
+  const DB = await seeded();
+  const held = await holdSlot(DB, { place_id: "a", slot_at: D("2026-10-27T11:00:00Z"), now: D("2026-10-20T08:00:00Z") });
+  let release = true;
+  const racing = {
+    prepare: (sql) => DB.prepare(sql),
+    async batch(stmts) {
+      if (release) {
+        release = false;
+        await DB.prepare("UPDATE calls SET status = 'cancelled' WHERE id = ?").bind(held.call.id).run();
+      }
+      return DB.batch(stmts);
+    },
+  };
+  const c = await confirmCall(racing, { place_id: "a", slot_at: D("2026-10-27T11:00:00Z"), phone: null, now: D("2026-10-25T08:00:00Z") });
+  assert.equal(c.ok, true); assert.notEqual(c.call.id, held.call.id);
+  assert.deepEqual((await callsFor(DB, "a")).map((r) => r.status), ["confirmed", "cancelled"]);
+  assert.equal((await one(DB, "SELECT COUNT(*) n FROM todos WHERE kind = 'call' AND status = 'open'")).n, 1);
+});
