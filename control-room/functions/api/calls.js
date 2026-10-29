@@ -7,11 +7,13 @@
 // _lib/replies-db.js), which closes its call_time Todo; it goes straight away (dispatchDue, replies only, one email) in
 // waitUntil. 200 {ok, call, label, warning?, reply?}; 422 {error} "Pick a time in the future." and the other plain-English
 // refusals, 404 a lead that isn't there. The call is booked before the email is written: when only the email fails,
-// the answer is that 422 with `call`, and pressing again books nothing new and sends once. Behind the login
+// the answer is that 422 with `call`, and pressing again books nothing new and sends once. A lead with another
+// escalation or call_time Todo still open stays needs_nik (keepNeedsNik). Behind the login
 // (_middleware.js). Tested in tests/calls-api.test.mjs.
 import { nextFreeSlots, slotLabel, takenFrom } from "../_lib/calls.js";
 import { callsFor, confirmCall, liveCalls } from "../_lib/calls-db.js";
 import { dispatchDue } from "../_lib/mail/outbox.js";
+import { applyStageEvent } from "../_lib/prospects.js";
 import { sendAsNik } from "../_lib/replies-db.js";
 import { errorText } from "../_lib/tick.js";
 import { bad, db, iso, json } from "../_lib/util.js";
@@ -25,6 +27,18 @@ const PHONE_MAX = 40; // characters
 const PHONE_LONG = `That phone number is too long (${PHONE_MAX} characters max).`;
 const MESSAGE_MAX = 20000; // characters: sendAsNik's limit, checked before anything is booked
 const fmtCount = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+
+// While any escalation or call_time Todo of a lead is open its stage stays needs_nik (replies-db.js's NIK_KINDS rule), so
+// Claude never answers in a thread Nik still has to deal with. Booking moves a needs_nik lead to call_booked
+// (call_confirmed), so it goes back to needs_nik while one is still open; replies-db's nikHandled books it again once
+// he has dealt with the last. Only for a lead that was needs_nik before the booking.
+const STAGE_SQL = "SELECT stage FROM prospects WHERE place_id = ?";
+const NIK_OPEN_SQL = `SELECT COUNT(*) AS n FROM todos WHERE place_id = ? AND status = 'open' AND kind IN ('escalation', 'call_time')`;
+async function keepNeedsNik(DB, placeId, wasStage, at) {
+  if (wasStage !== "needs_nik") return;
+  if (!(Number(await DB.prepare(NIK_OPEN_SQL).bind(placeId).first("n")) > 0)) return;
+  await applyStageEvent(DB, placeId, "escalate", at);
+}
 
 const text = (value) => (typeof value === "string" ? value.trim() : "");
 const withLabel = (call) => ({ ...call, label: slotLabel(call.slot_at) });
@@ -73,13 +87,18 @@ export async function onRequestPost(context) {
     return bad(NO_EMAIL, 422);
   }
 
+  const wasStage = placeId ? await DB.prepare(STAGE_SQL).bind(placeId).first("stage") : null;
   const booked = await confirmCall(DB, { place_id: placeId, slot_at: input.at, phone, now: at, byNik: true });
   if (!booked.ok) return bad(booked.reason, booked.reason === NO_LEAD ? 404 : 422);
   const out = { ok: true, call: booked.call, label: slotLabel(booked.call.slot_at) };
   if (booked.warning) out.warning = booked.warning;
-  if (!messageId) return json(out);
+  if (!messageId) {
+    await keepNeedsNik(DB, placeId, wasStage, at);
+    return json(out);
+  }
 
   const sent = await sendAsNik(DB, { message_id: messageId, body: message, now: at });
+  await keepNeedsNik(DB, placeId, wasStage, at);
   if (sent.status !== 200) {
     return json({ error: `The call is booked, but the email wasn't sent. ${sent.body.error}`, call: booked.call }, sent.status);
   }

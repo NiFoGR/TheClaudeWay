@@ -331,3 +331,82 @@ test("Too-long words are refused before anything is booked or changed", async ()
   assert.equal((await note.json()).error, "Couldn't save: that note is too long (20,001 characters, 20,000 max).");
   assert.equal((await one(DB, "SELECT status FROM calls WHERE id = ?", id)).status, "confirmed");
 });
+
+test("Book and send from the call-time card in a needs_nik thread: call_booked, and within the D1 budget", async () => {
+  const DB = await seeded();
+  await DB.prepare("UPDATE prospects SET stage = 'needs_nik' WHERE place_id = 'a'").run();
+  const { countingDB } = await import("../functions/_lib/d1count.js");
+  const counter = countingDB(DB);
+  const waits = [];
+  const res = await calls.onRequestPost({
+    request: new Request(`${ORIGIN}/api/calls`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ place_id: "a", at: "2026-10-22T14:00:00Z", phone: "07700 900123", message: "Thursday at 3pm works. I'll ring you then. Thank you.", message_id: "m6" }),
+    }),
+    env: { DB: counter.DB },
+    params: {},
+    now: NOW,
+    waitUntil: (p) => waits.push(p),
+  });
+  assert.equal(res.status, 200);
+  await Promise.all(waits);
+  assert.ok(counter.used() <= 50, `used ${counter.used()} D1 statements`);
+  assert.equal((await one(DB, "SELECT stage FROM prospects WHERE place_id='a'")).stage, "call_booked");
+  assert.equal((await one(DB, "SELECT status FROM todos WHERE dedupe='call_time:m6'")).status, "done");
+  const id = (await res.json()).call.id;
+  const pageCounter = countingDB(DB);
+  const page = await callId.onRequestGet({ request: new Request(`${ORIGIN}/api/calls/${id}`), env: { DB: pageCounter.DB }, params: { id }, now: NOW });
+  assert.equal(page.status, 200);
+  assert.ok(pageCounter.used() <= 10, `used ${pageCounter.used()} D1 statements`);
+});
+
+test("POST /api/calls/:id: No answer and Not for them move the stage (Part A outcomes); a booking with no number says so", async () => {
+  const DB = await seeded();
+  await DB.prepare("UPDATE leads SET phone = NULL WHERE place_id = 'a'").run();
+  const { ctx } = harness(DB);
+  const after = new Date("2026-10-23T10:40:00Z");
+  // No number anywhere: booked with phone NULL, the Todo says "no number yet", the call box has no phone to offer.
+  const booked = await (await calls.onRequestPost(ctx("/api/calls", { place_id: "a", at: "2026-10-23T10:00:00Z", phone: "  " }))).json();
+  assert.equal(booked.call.phone, null);
+  assert.match((await one(DB, "SELECT title FROM todos WHERE dedupe = ?", `call:${booked.call.id}`)).title, / · no number yet$/);
+  assert.equal((await (await calls.onRequestGet(ctx("/api/calls?place_id=a"))).json()).phone, null);
+  // No answer: no_show, stage back to replied (call_cancelled), the call Todo closed
+  const noShow = await callId.onRequestPost(ctx(`/api/calls/${booked.call.id}`, { action: "no_show" }, { id: booked.call.id }, after));
+  assert.equal(noShow.status, 200);
+  assert.equal((await one(DB, "SELECT status FROM calls WHERE id = ?", booked.call.id)).status, "no_show");
+  assert.equal((await one(DB, "SELECT stage FROM prospects WHERE place_id='a'")).stage, "replied");
+  assert.equal((await one(DB, "SELECT status FROM todos WHERE dedupe = ?", `call:${booked.call.id}`)).status, "done");
+  assert.equal((await all(DB, "SELECT id FROM messages WHERE kind='reply'")).length, 0);
+  // Not for them: done, stage lost with lost_reason 'call', the note kept
+  const again = await (await calls.onRequestPost(ctx("/api/calls", { place_id: "a", at: "2026-10-24T10:00:00Z", phone: "07700 900123" }, {}, after))).json();
+  const lost = await callId.onRequestPost(ctx(`/api/calls/${again.call.id}`, { action: "lost", note: "Has a nephew doing it" }, { id: again.call.id }, new Date("2026-10-24T10:40:00Z")));
+  assert.equal(lost.status, 200);
+  assert.deepEqual({ ...(await one(DB, "SELECT status, note FROM calls WHERE id = ?", again.call.id)) }, { status: "done", note: "Has a nephew doing it" });
+  assert.deepEqual({ ...(await one(DB, "SELECT stage, lost_reason FROM prospects WHERE place_id='a'")) }, { stage: "lost", lost_reason: "call" });
+  assert.equal((await one(DB, "SELECT status FROM todos WHERE dedupe = ?", `call:${again.call.id}`)).status, "done");
+});
+
+test("Booking in a needs_nik thread with another of Nik's Todos open keeps it needs_nik until he deals with that one", async () => {
+  const { dismissTodo } = await import("../functions/_lib/replies-db.js");
+  const DB = await seeded();
+  await DB.prepare("UPDATE prospects SET stage = 'needs_nik' WHERE place_id = 'a'").run();
+  await addTodo(DB, {
+    kind: "escalation", title: "Diamond Kickboxing needs you: Claude's draft is ready", link: "/#/replies/a", place_id: "a",
+    due_at: "2026-10-21T08:05:00Z", dedupe: "escalation:m7",
+  });
+  const { ctx } = harness(DB);
+  const res = await calls.onRequestPost(ctx("/api/calls", { place_id: "a", at: "2026-10-22T14:00:00Z", message: "Thursday at 3pm works. I'll ring you then. Thank you.", message_id: "m6" }));
+  assert.equal(res.status, 200);
+  assert.equal((await one(DB, "SELECT status FROM todos WHERE dedupe='call_time:m6'")).status, "done");
+  assert.equal((await one(DB, "SELECT status FROM calls")).status, "confirmed");
+  // the escalation is still open, so Claude still can't answer in this thread
+  assert.equal((await one(DB, "SELECT stage FROM prospects WHERE place_id='a'")).stage, "needs_nik");
+  // a booking by hand (no email) in that thread: the same
+  const byHand = await calls.onRequestPost(ctx("/api/calls", { place_id: "a", at: "2026-10-23T10:00:00Z" }));
+  assert.equal(byHand.status, 200);
+  assert.equal((await one(DB, "SELECT stage FROM prospects WHERE place_id='a'")).stage, "needs_nik");
+  // Nik dismisses the escalation: the booked call takes the stage back to call_booked
+  const esc = await one(DB, "SELECT id FROM todos WHERE dedupe='escalation:m7'");
+  assert.equal((await dismissTodo(DB, { todo_id: esc.id, now: NOW })).status, 200);
+  assert.equal((await one(DB, "SELECT stage FROM prospects WHERE place_id='a'")).stage, "call_booked");
+});
