@@ -88,6 +88,9 @@ test("stripeApi errors are plain English", async () => {
     return true;
   });
   await assert.rejects(stripeApi("sk_test_x", "POST", "odd", {}, fetchImpl), (e) => e.status === 500 && /^Stripe answered 500/.test(e.message));
+  // a 403 anywhere but webhook_endpoints keeps Stripe's own words (the webhook text would be untrue there)
+  const { fetchImpl: perm } = fakeStripe({ "POST checkout/sessions": { status: 403, error: "This key can't create Checkout Sessions" } });
+  await assert.rejects(stripeApi("rk_test_x", "POST", "checkout/sessions", {}, perm), (e) => e.status === 403 && e.message === "Stripe: This key can't create Checkout Sessions");
   // network failure
   const down = async () => { throw new TypeError("fetch failed"); };
   await assert.rejects(stripeApi("sk_test_x", "GET", "balance", null, down), (e) => e.message === "Couldn't reach Stripe. Try again in a minute.");

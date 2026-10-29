@@ -15,7 +15,7 @@ export async function onRequestPatch({ request, env, params }) {
     const link = await DB.prepare("SELECT stripe_subscription FROM client_links WHERE client_id = ?").bind(params.id).first();
     if (body.cancelled_on && link?.stripe_subscription) {
       try {
-        await stripeApi((await stripeKey(env, DB))?.key, "DELETE", `subscriptions/${link.stripe_subscription}`);
+        await stripeApi((await stripeKey(env, DB))?.key, "DELETE", `subscriptions/${encodeURIComponent(link.stripe_subscription)}`);
       } catch (e) {
         if (!/No such subscription|canceled/i.test(e.message)) return bad(`Couldn't cancel their card payments in Stripe: ${e.message}`, 502);
       }

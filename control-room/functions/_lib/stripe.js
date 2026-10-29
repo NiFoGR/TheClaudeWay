@@ -183,14 +183,14 @@ async function createEndpoint(key, url, fetchImpl) {
 
 /**
  * Setup's Connect Stripe: check the key's shape, delete the endpoint we made earlier with this same key (Connect
- * Stripe's, and the old payment-link setup's), make the webhook (STRIPE_VERSION, the six WEBHOOK_EVENTS) at
- * {origin}/api/stripe/webhook, then save secret:stripe_key (only a key typed on Setup; without one, the saved key or
- * Cloudflare's STRIPE_SECRET_KEY is used), secret:stripe_webhook and the setting "stripe:webhook" =
- * JSON {id, url, events, mode, key_id, created_at}, close the setup:stripe todo and set the `stripe` heartbeat
- * good (pressing Connect Stripe is the red light's fix). Nothing is saved when any Stripe call fails; only when the
- * old endpoint was deleted and making the new one then failed, the "stripe:webhook" setting naming the deleted one is
- * removed, so the card and the light say "not connected" instead of "connected ✓". Throws an Error with Part A's
- * plain-English text (never the key).
+ * Stripe's, and the old payment-link setup's; one made with another key is tried too, quietly), make the webhook
+ * (STRIPE_VERSION, the six WEBHOOK_EVENTS) at {origin}/api/stripe/webhook, then save secret:stripe_key (only a key
+ * typed on Setup; without one, the saved key or Cloudflare's STRIPE_SECRET_KEY is used), secret:stripe_webhook and
+ * the setting "stripe:webhook" = JSON {id, url, events, mode, key_id, created_at}, close the setup:stripe todo and
+ * set the `stripe` heartbeat good (pressing Connect Stripe is the red light's fix). Nothing is saved when any Stripe
+ * call fails; only when the old endpoint was deleted and making the new one then failed, the "stripe:webhook"
+ * setting naming the deleted one is removed, so the card and the light say "not connected" instead of
+ * "connected ✓". Throws an Error with Part A's plain-English text (never the key).
  */
 export async function connectStripe(DB, env, { key, origin } = {}, { fetchImpl = fetch } = {}) {
   const typed = typeof key === "string" ? key.trim() : "";
@@ -211,10 +211,25 @@ export async function connectStripe(DB, env, { key, origin } = {}, { fetchImpl =
   const key_id = await keyId(use);
   const saved = parseJson(await getText(DB, "stripe:webhook"), null);
   const legacy = parseJson(await getText(DB, "stripe"), null);
+  // Ours for this key: must go (a 404 means already deleted). One made with another key may be on this same account
+  // (e.g. the old setup's sk_test_… in Cloudflare, now an rk_test_… pasted here): its secret is replaced below, so
+  // left alone it would keep sending messages that fail the signature check. Try it too, ignoring any error (an
+  // endpoint id is unique across Stripe, so another account's just answers 404).
   const old = new Set();
-  if (saved?.id && saved.key_id === key_id) old.add(String(saved.id));
-  if (legacy?.webhook?.id && legacy.key === key_id) old.add(String(legacy.webhook.id));
+  const other = new Set();
+  for (const [id, made] of [[saved?.id, saved?.key_id], [legacy?.webhook?.id, legacy?.key]]) {
+    if (id) (made === key_id ? old : other).add(String(id));
+  }
   for (const id of old) await deleteEndpoint(use, id, fetchImpl);
+  for (const id of other) {
+    if (old.has(id)) continue;
+    try {
+      await stripeApi(use, "DELETE", `webhook_endpoints/${encodeURIComponent(id)}`, null, fetchImpl);
+      old.add(id);
+    } catch {
+      // not on this account, or already gone: nothing to tidy
+    }
+  }
 
   const url = `${base}/api/stripe/webhook`;
   let hook;
