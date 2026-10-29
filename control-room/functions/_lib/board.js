@@ -230,12 +230,13 @@ export function pipelineColumns(rows, now) {
 // ---------------------------------------------------------------- clients
 
 const GUARANTEE_DAYS = 90;
+const NOT_FOUND_RANK = 21; // lead-manager/aetos_leads/maprank.py NOT_FOUND
 const PHASES = Object.freeze({ sent: "onboarding", submitted: "building", building: "building", review: "building", live: "live" });
 const PHASE_RANK = Object.freeze({ building: 0, onboarding: 1, live: 2 });
 
 // The Monthly line, by clientStatus key. Stage 11 adds `working_free` here; a key not listed gives no line.
 const MONTHLY_WORDS = Object.freeze({
-  free: (status) => `Free until ${ukShortDate(status.firstCharge)}`,
+  free: (status) => (ukShortDate(status.firstCharge) ? `Free until ${ukShortDate(status.firstCharge)}` : null),
   paying: (status, c) => `${formatPounds(Number(c.monthly_pence) || 0)} a month`,
   "one-off": () => "Website only",
 });
@@ -265,7 +266,10 @@ export function rankWords(row, now) {
   }
   const top3 = Math.round(Number(r.top3_pct) || 0);
   const avg = Number(r.avg_rank);
-  const words = `Top 3 in ${top3}% of their area · average position ${Number.isFinite(avg) ? avg.toFixed(1) : "–"}`;
+  // A business found at no grid point averages NOT_FOUND (21, maprank.py), which is no real position: the Map Rank
+  // page shows it as "20+", and so does the card.
+  const position = !Number.isFinite(avg) ? "–" : avg >= NOT_FOUND_RANK ? "20+" : avg.toFixed(1);
+  const words = `Top 3 in ${top3}% of their area · average position ${position}`;
   const checked = pastWhen(r.rank_updated_at, now);
   return {
     rank: checked ? `${words} · checked ${checked}` : words,
@@ -299,7 +303,7 @@ function clientCard(row, status, today, todayStr, now) {
   const { build, late } = buildLine(row, phase, today, now);
   const card_failed = Boolean(row.failed_on);
   const monthly = card_failed
-    ? `Card failed ${ukShortDate(String(row.failed_on).slice(0, 10))}`
+    ? `Card failed ${ukShortDate(String(row.failed_on).slice(0, 10))}`.trim()
     : (Object.hasOwn(MONTHLY_WORDS, status.key) ? MONTHLY_WORDS[status.key](status, row) : null);
   const guarantee = Number(row.monthly_pence) > 0 && row.live_at ? guaranteeWords(row.live_at, todayStr) : null;
   const { rank, rank_link } = rankWords(row, now);

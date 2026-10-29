@@ -123,6 +123,10 @@ test("last event: the newest of view, reply and outbound, by kind", () => {
   assert.equal(lastEvent({ place_id: "x", stage: "lost", lost_reason: "sequence_done", stage_at: "2026-10-20T08:00:00Z" }, NOW),
     "No reply to any email · 2 days ago");
   assert.equal(lastEvent({ place_id: "x", stage: "lost", lost_reason: "toString", stage_at: "2026-10-20T08:00:00Z" }, NOW), "Lost · 2 days ago");
+  // Lost wins over a newer reply, view or email, and over a confirmed call left on the row.
+  assert.equal(lastEvent({ place_id: "x", stage: "lost", lost_reason: "not_now", stage_at: "2026-10-20T08:00:00Z",
+    last_inbound_at: "2026-10-22T09:00:00Z", views: 3, last_view_at: "2026-10-22T10:00:00Z", last_out_at: "2026-10-22T11:00:00Z",
+    last_out_kind: "reply", last_out_author: "claude", call_at: "2026-10-23T10:00:00Z" }, NOW), "Not right now · 2 days ago");
 });
 
 test("next line only for emailed and viewed with a time set; a missing step is 0", () => {
@@ -131,6 +135,9 @@ test("next line only for emailed and viewed with a time set; a missing step is 0
   assert.equal(nl({ followup_step: 8, next_followup_at: "2026-10-27T07:00:00Z" }), "Next email Tue 27 Oct");
   assert.equal(nl({ followup_step: 9, next_followup_at: "2026-10-22T15:00:00Z", last_out_step: 9 }), "No more emails · closes today");
   assert.equal(nl({ followup_step: 3, next_followup_at: null }), null);
+  assert.equal(nl({ followup_step: null, next_followup_at: "2026-10-23T07:00:00Z" }), "Next email tomorrow");
+  assert.equal(nextLine({ place_id: "x", stage: "viewed", followup_step: 9, last_out_step: 8,
+    next_followup_at: "2026-10-29T08:15:00Z" }, NOW), "No more emails · closes Thu 29 Oct");
   for (const stage of ["ready", "replied", "needs_nik", "call_booked", "won", "lost"]) {
     assert.equal(nextLine({ place_id: "x", stage, followup_step: 2, next_followup_at: "2026-10-23T07:00:00Z" }, NOW), null, stage);
   }
@@ -248,6 +255,11 @@ test("rank words and link", () => {
   assert.deepEqual(rankWords({ place_id: "lp1" }, NOW), { rank: "No Map Rank scan yet", rank_link: "/#/maprank" });
   assert.deepEqual(rankWords({ place_id: "a b&c", scan_id: "s/2", top3_pct: 0, avg_rank: 11, rank_updated_at: "2026-10-01T06:00:00Z" }, NOW),
     { rank: "Top 3 in 0% of their area · average position 11.0 · checked 1 Oct", rank_link: "/#/maprank?scan=s%2F2&biz=a%20b%26c" });
+  // Not found anywhere on the grid: maprank.py averages that as 21, which the Map Rank page shows as "20+".
+  assert.equal(rankWords({ place_id: "lp1", scan_id: "s3", top3_pct: 0, avg_rank: 21, rank_updated_at: "2026-10-22T06:00:00Z" }, NOW).rank,
+    "Top 3 in 0% of their area · average position 20+ · checked today");
+  assert.equal(rankWords({ place_id: "lp1", scan_id: "s3", top3_pct: 0, avg_rank: 20.98, rank_updated_at: "2026-10-22T06:00:00Z" }, NOW).rank,
+    "Top 3 in 0% of their area · average position 21.0 · checked today");
 });
 
 test("clients: stopped only in past, failed card needs attention, empty input", () => {
@@ -264,4 +276,22 @@ test("clients: stopped only in past, failed card needs attention, empty input", 
   assert.deepEqual(cards.map((c) => [c.client_id, c.attention, c.card_failed, c.monthly]),
     [["c3", true, true, "Card failed 20 Oct"], ["c2", false, false, "£249 a month"]]);
   assert.deepEqual([cards[0].name, cards[0].place_id], ["Ash", "lp3"]);
+  // An unreadable stored date never leaves a dangling "Free until " or "Card failed ".
+  const odd = clientCards([client("c1", "Odd", "full", "not a date", 60), client("c2", "Odd2", "full", "2026-01-01", 60,
+    { failed_on: "garbage" })], NOW).cards;
+  assert.deepEqual(odd.map((c) => c.monthly), ["Card failed", null]);
+});
+
+test("client order: building by due date, then onboarding, then live by name (not by due date)", () => {
+  const rows = [
+    client("c1", "Alpha Live", "full", "2026-09-01", 60, { ob_status: "live", due_live_at: "2026-09-20T16:00:00Z", live_at: "2026-09-20T09:00:00Z" }),
+    client("c2", "beta Live", "full", "2026-09-01", 60, { ob_status: "live", due_live_at: "2026-09-10T16:00:00Z", live_at: "2026-09-10T09:00:00Z" }),
+    client("c3", "Zulu Build", "full", "2026-10-20", 60, { ob_status: "building", due_live_at: "2026-10-25T16:00:00Z" }),
+    client("c4", "Able Build", "full", "2026-10-20", 60, { ob_status: "submitted", due_live_at: "2026-10-27T16:00:00Z" }),
+    client("c5", "Mid Onboard", "full", "2026-10-21", 60, { ob_status: "sent", ob_created_at: "2026-10-21T09:00:00Z" }),
+    client("c6", "Late Build", "full", "2026-10-10", 60, { ob_status: "building", due_live_at: "2026-10-21T16:00:00Z" }),
+  ];
+  const { cards } = clientCards(rows, NOW);
+  assert.deepEqual(cards.map((c) => c.client_id), ["c6", "c3", "c4", "c5", "c1", "c2"]);
+  assert.deepEqual(cards.map((c) => c.attention), [true, false, false, false, false, false]);
 });
