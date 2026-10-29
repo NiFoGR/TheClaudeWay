@@ -13,6 +13,7 @@
 
 import { h, shortName } from "../demo/text.js";
 import { ukParts } from "../ukTime.js";
+import { cardQr } from "./card.js";
 import { checkReviewLink } from "./copy.js";
 import { ukShortDay } from "./countdown.js";
 import { canonicalHost, underOurDomain } from "./hosts.js";
@@ -20,14 +21,19 @@ import { toE164UK } from "./jsonld.js";
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{16,128}$/;
 // One address (it becomes an email's To): no spaces, quotes or list separators; an apostrophe is fine before the @.
-const EMAIL_RE = /^[^\s@<>"(),;:[\]\\]+@[^\s@<>"'(),;:[\]\\]+\.[^\s@<>"'(),;:[\]\\]+$/;
+// The domain is dot-separated labels, none empty, ending in a TLD of 2+ characters.
+const EMAIL_RE = /^[^\s@<>"(),;:[\]\\]+@(?:[^\s@<>"'(),;:[\]\\.]+\.)+[^\s@<>"'(),;:[\]\\.]{2,}$/;
 const MAX_AREAS = 20;
+// A service or town is a page name: its H1 (10–70 characters, section 5) must contain it, and the home H1 carries the
+// trade and the town together, so one longer than this could never pass the content check. research.js caps the
+// research copy's services and areas at the same 40.
+const NAME_MAX = 40;
 const ABOUT_MAX = 1500;
 const NOTES_MAX = 2000;
 const FIRST_YEAR = 1950;
 const DUE_MS = 168 * 3600000;
 
-/** Every message the form shows (section 4, exact copy; the last six are not in section 4: see the stage report). */
+/** Every message the form shows (section 4, exact copy; can_login onwards are not in section 4: see the stage report). */
 export const FORM_ERRORS = Object.freeze({
   summary: "A few things to fix before we can start:",
   name: "Please add your business name.",
@@ -52,6 +58,12 @@ export const FORM_ERRORS = Object.freeze({
   started: (year) => `Please type the year you started as 4 digits, between ${FIRST_YEAR} and ${year}.`,
   about: "Please keep your About text to 1,500 characters.",
   notes: "Please keep this to 2,000 characters.",
+  service_long: `Please keep each service to ${NAME_MAX} characters, like "Roof repairs". Untick the long one and add it again as shorter, separate services.`,
+  // In the page script, under Services, when the Add a service box holds a longer one (it isn't added).
+  service_add_long: `Please keep each service to ${NAME_MAX} characters, like "Roof repairs". Add more as separate services.`,
+  // A Google link whose QR wouldn't fit the printed review card (cardQr): the short g.page link always does.
+  review_link_long: "That review link is too long to print on your review cards. Use the short link from your Google Business Profile (tap 'Get more reviews'), or leave it empty and we'll find it.",
+  area_long: `Please keep each town or area to ${NAME_MAX} characters.`,
 });
 
 const BAD_TOKEN = "This link isn't valid. Check the link in our email, or reply to it and we'll send a new one.";
@@ -188,7 +200,9 @@ export function validateForm(form, { package: pkg = "full", now = new Date() } =
   need(f.business.show_address, "business.show_address", E.show_address);
   need(trim(f.business.legal_line), "business.legal_line", E.legal_line);
   need(EMAIL_RE.test(trim(f.business.leads_email)), "business.leads_email", E.leads_email);
-  need(f.services.some((s) => s.on && trim(s.name)), "services", E.services);
+  const ticked = f.services.filter((s) => s.on && trim(s.name));
+  if (!ticked.length) errors.services = E.services;
+  else if (ticked.some((s) => trim(s.name).replace(/\s+/g, " ").length > NAME_MAX)) errors.services = E.service_long;
   need(f.free_quotes, "free_quotes", E.free_quotes);
   need(f.emergency, "emergency", E.emergency);
 
@@ -201,6 +215,7 @@ export function validateForm(form, { package: pkg = "full", now = new Date() } =
   const areas = distinctAreas(f.areas);
   if (!areas.length) errors.areas = E.areas;
   else if (areas.length > MAX_AREAS) errors.areas = E.areas_max;
+  else if (areas.some((a) => a.length > NAME_MAX)) errors.areas = E.area_long;
 
   need(f.about.length <= ABOUT_MAX, "about", E.about);
 
@@ -220,7 +235,10 @@ export function validateForm(form, { package: pkg = "full", now = new Date() } =
   if (fullPackage(pkg)) {
     need(f.gbp.has, "gbp.has", E.gbp);
     const link = trim(f.review_link);
-    need(!link || checkReviewLink(link).ok, "review_link", E.review_link);
+    const checked = link ? checkReviewLink(link) : { ok: true };
+    need(checked.ok, "review_link", E.review_link);
+    // It goes on the printed QR card: one the card couldn't print is refused here, not found out after go-live.
+    if (checked.ok && link && !cardQr(checked.url)) errors.review_link = E.review_link_long;
   }
 
   need(f.notes.length <= NOTES_MAX, "notes", E.notes);
@@ -374,7 +392,8 @@ function onboardScript(token) {
   return `<script>
 (function () {
   "use strict";
-  var SAVE = ${save}, SUBMIT = ${submit}, DEBOUNCE = 1500, DUE_MS = ${DUE_MS};
+  var SAVE = ${save}, SUBMIT = ${submit}, DEBOUNCE = 1500, DUE_MS = ${DUE_MS}, NAME_MAX = ${NAME_MAX};
+  var SVC_LONG = ${JSON.stringify(FORM_ERRORS.service_add_long)};
   var MSG = { saving: "Saving…", saved: "Saved ✓", offline: "Couldn't save. Check your connection: your answers are still here.",
     big: "Couldn't save: that's more than we can take. Please shorten your longest answers.",
     sendFail: "Couldn't send. Check your connection: your answers are still here." };
@@ -430,9 +449,16 @@ function onboardScript(token) {
     var g = $("[name='gbp.has']:checked", form);
     ["yes", "no", "not_sure"].forEach(function (v) { var el = $("#gbp-" + v); if (el) el.hidden = !(g && g.value === v); });
   }
+  function svcErr(text) { var el = $("[data-err='services']", form); if (el) { el.textContent = text; el.hidden = !text; } }
+  // false when the box holds a service too long for a page name: it stays in the box with the message under Services
   function addService() {
-    var input = $("#svc-add"), name = input.value.trim();
-    if (!name) return;
+    var input = $("#svc-add"), name = input.value.replace(/\\s+/g, " ").trim();
+    if (!name) return true;
+    if (name.length > NAME_MAX) { svcErr(SVC_LONG); return false; }
+    svcErr("");
+    // one they already have is ticked again, not added twice
+    var same = $$(".svc input", form).filter(function (el) { return el.getAttribute("data-name").trim().toLowerCase() === name.toLowerCase(); })[0];
+    if (same) { same.checked = true; input.value = ""; changed(); return true; }
     var i = $$(".svc input", form).length;
     var label = document.createElement("label"), box = document.createElement("input");
     label.className = "opt svc"; label.htmlFor = "svc-" + i;
@@ -441,6 +467,7 @@ function onboardScript(token) {
     label.appendChild(box); label.appendChild(document.createTextNode(" " + name));
     $("#svc-list").appendChild(label);
     input.value = ""; changed();
+    return true;
   }
   function addArea() {
     var input = $("#area-add");
@@ -484,8 +511,9 @@ function onboardScript(token) {
   }
   function send() {
     if (sending) return;
-    // a service or town typed but not yet added still counts
-    addService(); addArea();
+    // a service or town typed but not yet added still counts (a service too long stops Send: it says why)
+    var svcOk = addService(); addArea();
+    if (!svcOk) { $("#svc-add").focus && $("#svc-add").focus(); return; }
     if (timer) { clearTimeout(timer); timer = null; }
     sending = true;
     var btn = $("#send"); btn.disabled = true;
@@ -553,7 +581,7 @@ ${textField("business.leads_email", "Where should website enquiries go?", b.lead
 <div id="svc-list">
 ${f.services.map(serviceRow).join("\n")}
 </div>
-<div class="row"><input type="text" id="svc-add" placeholder="Add a service" aria-label="Add a service"><button type="button" class="btn-line" id="svc-btn">Add</button></div>
+<div class="row"><input type="text" id="svc-add" maxlength="${NAME_MAX}" placeholder="Add a service" aria-label="Add a service"><button type="button" class="btn-line" id="svc-btn">Add</button></div>
 ${errLine("services", errs)}
 </fieldset>
 ${radios("free_quotes", "Do you give free quotes?", YES_NO, f.free_quotes, errs)}

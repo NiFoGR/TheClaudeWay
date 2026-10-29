@@ -554,3 +554,95 @@ test("validateForm: towns once each, emails with an apostrophe, no header tricks
   }
   assert.deepEqual(formDefaults({ research: { copy: { areas: ["Swindon", "swindon", "Wroughton"] } } }).areas, ["Swindon", "Wroughton"]);
 });
+
+test("validateForm: a service or town too long for a page heading is refused (section 5: H1 ≤ 70 must contain it)", () => {
+  const f = goodForm();
+  f.services.push({ name: "Roof repairs, guttering, fascias, soffits and chimney work", on: true, own: true });
+  assert.equal(validateForm(f, { package: "full" }).errors.services,
+    'Please keep each service to 40 characters, like "Roof repairs". Untick the long one and add it again as shorter, separate services.');
+  f.services.at(-1).on = false; // an unticked one gets no page: fine
+  assert.equal(validateForm(f, { package: "full" }).ok, true);
+  f.services.push({ name: "x".repeat(40), on: true, own: true });
+  assert.equal(validateForm(f, { package: "full" }).ok, true);
+  f.areas.push("Swindon, Wroughton, Highworth, Purton and the villages");
+  assert.equal(validateForm(f, { package: "full" }).errors.areas, "Please keep each town or area to 40 characters.");
+  f.areas[f.areas.length - 1] = "Stratton  St Margaret"; // spaces collapse
+  assert.equal(validateForm(f, { package: "full" }).ok, true);
+});
+
+test("validateForm: an email domain with an empty part or a one-letter ending is refused", () => {
+  const f = goodForm();
+  for (const bad of ["a@b..co", "a@.co.uk", "a@b.c", "a@b.co.", "a@b"]) {
+    f.business.email = bad;
+    assert.equal(validateForm(f, { package: "full" }).errors["business.email"], "Please add an email for customers.", bad);
+  }
+  for (const good of ["info@smithroofing.co.uk", "mark.smith+site@mail.example.com", "o'neill@bt.com"]) {
+    f.business.email = good;
+    assert.equal(validateForm(f, { package: "full" }).errors["business.email"], undefined, good);
+  }
+});
+
+test("the page script: adding a service they already have ticks it instead of adding it twice", async () => {
+  const form = goodForm();
+  form.services[0].on = false;
+  const p = runPage(renderOnboard({ token: TOKEN, form, first: null, package: "full" }));
+  const svc = p.doc.querySelector("#svc-add");
+  svc.value = "  roof   REPAIRS ";
+  fire(p.doc.querySelector("#svc-btn"), "click");
+  await p.tick(1500);
+  const saved = p.posts.at(-1).body;
+  assert.deepEqual(saved.services, [{ name: "Roof repairs", on: true, own: false }, { name: "Flat roofs", on: true, own: false }]);
+  assert.equal(svc.value, "");
+});
+
+test("validateForm: a review link too long for the printed QR card is refused with the short-link hint", () => {
+  const f = goodForm();
+  // a long Google Maps link: a Google link (passes checkReviewLink) but its QR is too dense for the card
+  f.review_link = `https://www.google.com/maps/place/Smith+Roofing/@51.5,-1.7,17z/data=${"x".repeat(700)}`;
+  assert.equal(validateForm(f, { package: "full" }).errors.review_link, FORM_ERRORS.review_link_long);
+  assert.equal(FORM_ERRORS.review_link_long,
+    "That review link is too long to print on your review cards. Use the short link from your Google Business Profile (tap 'Get more reviews'), or leave it empty and we'll find it.");
+  f.review_link = "https://g.page/r/CabcDEF123/review";
+  assert.equal(validateForm(f, { package: "full" }).ok, true);
+  // Website Only has no review link question
+  f.review_link = `https://www.google.com/maps/place/x/data=${"x".repeat(700)}`;
+  assert.equal(validateForm(f, { package: "website" }).errors.review_link, undefined);
+});
+
+test("validateForm: a 41-character own service says how to fix it; unticked it is fine", () => {
+  const f = goodForm();
+  f.services.push({ name: "x".repeat(41), on: true, own: true });
+  assert.equal(validateForm(f, { package: "full" }).errors.services, FORM_ERRORS.service_long);
+  assert.equal(FORM_ERRORS.service_long,
+    'Please keep each service to 40 characters, like "Roof repairs". Untick the long one and add it again as shorter, separate services.');
+  f.services.at(-1).on = false;
+  assert.equal(validateForm(f, { package: "full" }).errors.services, undefined);
+  assert.equal(validateForm(f, { package: "full" }).ok, true);
+});
+
+test("the page script: the Add a service box takes at most 40 characters and never adds a longer one", async () => {
+  const html = renderOnboard({ token: TOKEN, form: goodForm(), first: null, package: "full" });
+  assert.match(html, /<input type="text" id="svc-add" maxlength="40"/);
+  const p = runPage(html);
+  const before = p.doc.querySelectorAll(".svc input").length;
+  const svc = p.doc.querySelector("#svc-add");
+  // pasted text can get past maxlength in some browsers; spaces collapse first, so 40 after collapsing is fine
+  svc.value = "  " + "y".repeat(41) + " ";
+  fire(p.doc.querySelector("#svc-btn"), "click");
+  assert.equal(p.doc.querySelectorAll(".svc input").length, before, "not added");
+  assert.equal(svc.value, "  " + "y".repeat(41) + " ", "their text stays in the box");
+  const err = p.doc.querySelector("[data-err='services']");
+  assert.equal(err.hidden, false);
+  assert.equal(err.textContent, FORM_ERRORS.service_add_long);
+  assert.equal(FORM_ERRORS.service_add_long, 'Please keep each service to 40 characters, like "Roof repairs". Add more as separate services.');
+  // Send doesn't add it either, and doesn't send without it
+  fire(p.doc.querySelector("#send"), "click");
+  await p.tick(0);
+  assert.equal(p.posts.filter((x) => /submit$/.test(x.url)).length, 0);
+  assert.equal(p.doc.querySelectorAll(".svc input").length, before);
+  // a 40-character one (after the spaces collapse) is added and the message goes
+  svc.value = " " + "z".repeat(20) + "   " + "z".repeat(19) + " ";
+  fire(p.doc.querySelector("#svc-btn"), "click");
+  assert.equal(p.doc.querySelectorAll(".svc input").length, before + 1);
+  assert.equal(err.hidden, true);
+});
