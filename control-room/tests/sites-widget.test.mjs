@@ -224,3 +224,33 @@ test("it still works when sessionStorage throws", async () => {
   assert.match(sent[0].sid, /^[a-z0-9]{16,40}$/);
   assert.ok(texts(document.body).some((t) => t.includes("didn't go through")), "a failed send says so");
 });
+
+test("it sends the page path for site_leads.page, and an input under 16 px never makes iPhones zoom", async () => {
+  assert.ok(js.includes("font:inherit;font-size:16px"), "the message box is 16 px");
+  const { document, els } = fakeDom();
+  const sent = [];
+  const fetch = async (url, opts) => { sent.push(JSON.parse(opts.body)); return { ok: true, json: async () => ({ reply: "Yes." }) }; };
+  const window = { location: { pathname: "/services/roof-repairs" }, crypto: { getRandomValues: (a) => a.fill(3) } };
+  new Function("window", "document", "fetch", js)(window, document, fetch);
+  els.find((e) => e.textContent === "Questions? Ask us").listeners.click[0]({});
+  els.find((e) => e.tagName === "INPUT").value = "Do you do Swindon?";
+  await els.find((e) => e.tagName === "FORM").listeners.submit[0]({ preventDefault() {} });
+  assert.equal(sent[0].page, "/services/roof-repairs");
+});
+
+test("a send that never answers gives up after 20 s and unlocks the input", async () => {
+  const { document, els } = fakeDom();
+  const timers = [];
+  const fakeSetTimeout = (fn, ms) => { timers.push(ms); queueMicrotask(fn); return timers.length; };
+  const cleared = [];
+  const never = () => new Promise(() => {});
+  new Function("window", "document", "fetch", "setTimeout", "clearTimeout", js)({}, document, never, fakeSetTimeout, (id) => cleared.push(id));
+  els.find((e) => e.textContent === "Questions? Ask us").listeners.click[0]({});
+  const input = els.find((e) => e.tagName === "INPUT");
+  input.value = "Hello?";
+  await els.find((e) => e.tagName === "FORM").listeners.submit[0]({ preventDefault() {} });
+  assert.deepEqual(timers, [20000]);
+  assert.equal(input.disabled, false, "the input is usable again");
+  assert.ok(texts(document.body).some((t) => t.includes("didn't go through")));
+  assert.equal(cleared.length, 1, "the timer is cleared");
+});

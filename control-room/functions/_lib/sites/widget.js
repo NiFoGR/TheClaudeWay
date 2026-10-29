@@ -3,7 +3,8 @@
 // "Questions? Ask us" sits bottom-right (bottom-left under 900 px, above the mobile call bar, so it never covers the
 // call button); the panel's DOM is built only when it's first opened. Every message is shown with textContent, never
 // as HTML. The session id is random and kept in sessionStorage (wrapped in try/catch: private windows can throw). It
-// sends the last 6 turns. The only values from outside are the business name and the first 3 services, injected as
+// sends the last 6 turns, and the page path (site_leads.page); a send with no answer in 20 s gives up so the input
+// never stays locked. The only values from outside are the business name and the first 3 services, injected as
 // JSON with every "<" escaped, so a name like "</script>" can't end the script or add markup.
 
 const NAME_MAX = 120;
@@ -50,7 +51,8 @@ var N=${js(name)},V=${js(named)};
 var T=N?N+" \\u00b7 virtual assistant":"Virtual assistant",HI="Hi! I'm "+(N?N+"'s":"the")+" virtual assistant. Ask me about "+
 (V.length?V.join(", "):"what we do")+" or the areas we cover"+
 ". If you'd like a call back, just leave your name and number.";
-var K="aetos-chat-sid",S=null,H=[],busy=false,panel,log,input,send,btn;
+var K="aetos-chat-sid",S=null,H=[],busy=false,P,panel,log,input,send,btn;
+try{P=String(window.location.pathname)}catch(e){}
 if(document.getElementById("ae-chat-btn"))return;
 function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text)e.textContent=text;return e}
 function gen(){var a="abcdefghijklmnopqrstuvwxyz0123456789",s="",b=null;
@@ -71,7 +73,7 @@ function css(){var st=document.createElement("style");st.textContent=
 ".ae-a{align-self:flex-start;background:#fff;border:1px solid #e2e2e5}"+
 ".ae-u{align-self:flex-end;background:var(--main,#1a1c20);color:#fff}"+
 ".ae-f{display:flex;gap:8px;padding:10px 10px 6px;border-top:1px solid #e2e2e5}"+
-".ae-f input{flex:1;min-width:0;padding:10px;border:1px solid #c8c8cd;border-radius:8px;font:inherit;color:inherit;background:#fff}"+
+".ae-f input{flex:1;min-width:0;padding:10px;border:1px solid #c8c8cd;border-radius:8px;font:inherit;font-size:16px;color:inherit;background:#fff}"+
 ".ae-f button{padding:10px 14px;border:0;border-radius:8px;background:var(--main,#1a1c20);color:#fff;font:inherit;font-weight:600;cursor:pointer}"+
 ".ae-f button:disabled,.ae-f input:disabled{opacity:.6}"+
 ".ae-n{margin:0;padding:0 12px 10px;font-size:12px;color:#55555b}"+
@@ -91,13 +93,14 @@ function toggle(open){if(open&&!panel)build();if(!panel)return;panel.hidden=!ope
 if(open)input.focus();else btn.focus()}
 function wait(on){busy=on;input.disabled=on;send.disabled=on}
 function submit(e){if(e&&e.preventDefault)e.preventDefault();var text=String(input.value||"").trim().slice(0,500);
-if(!text||busy)return Promise.resolve();add("user",text);input.value="";wait(true);var m=add("assistant","\\u2026");
-return fetch("/s/chat",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sid:sid(),history:H.slice(-6),text:text})})
+if(!text||busy)return Promise.resolve();add("user",text);input.value="";wait(true);var m=add("assistant","\\u2026"),t;
+return Promise.race([fetch("/s/chat",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({sid:sid(),history:H.slice(-6),text:text,page:P})}),
+new Promise(function(y,n){t=setTimeout(function(){n(new Error("slow"))},20000)})])
 .then(function(r){if(!r.ok)throw new Error("status");return r.json()})
 .then(function(d){var reply=String(d&&d.reply||"").slice(0,600);if(!reply)throw new Error("empty");m.textContent=reply;
 H.push({role:"user",content:text},{role:"assistant",content:reply});if(H.length>12)H=H.slice(-12)})
 .catch(function(){m.textContent="Sorry, that didn't go through. Please try again in a moment."})
-.then(function(){wait(false);log.scrollTop=log.scrollHeight;input.focus()})}
+.then(function(){clearTimeout(t);wait(false);log.scrollTop=log.scrollHeight;input.focus()})}
 function start(){css();btn=el("button","","Questions? Ask us");btn.id="ae-chat-btn";btn.type="button";btn.setAttribute("aria-expanded","false");
 btn.setAttribute("aria-haspopup","dialog");document.addEventListener("keydown",function(e){if(e.key==="Escape"&&panel&&!panel.hidden)toggle(false)});btn.addEventListener("click",function(){toggle(!panel||panel.hidden)});document.body.appendChild(btn)}
 if(document.body)start();else document.addEventListener("DOMContentLoaded",start);
