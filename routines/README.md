@@ -187,3 +187,39 @@ only). A fire whose text names a week like `2026-W43` reviews that week instead.
 If it stops: the Weekly KPIs light on Setup → Health goes red after a failed fire, or 8 days without a heartbeat.
 Open claude.ai/code/routines, check `aetos-weekly-kpis` is on and its last run finished, then press Run now. If it's
 gone, make it again from this section and paste the new URL and token on Setup (section 6).
+
+### build (`aetos-build`)
+
+Writes the content for a paying client's new website once they send the onboarding form: the home page, one page
+per service and per area they cover, about, reviews and contact, with their real reviews and photos, and only facts
+it can prove (from their form, their research or their old site). It posts one document; the Control Room checks it
+(page set, lengths, links, no prices, no "SEO", every claim backed by a fact) and builds the site in the same look as
+their demo. You approve it on the Site page before anyone sees it. Prompt: `routines/build.md` (written in stage 10,
+`docs/rebuild/09-build.md`).
+
+1. Make the shared "Aetos" environment first if it doesn't exist yet (section 1): its `AETOS_AGENT` network secret
+   and `CONTROL_ROOM_URL` environment variable are all this Routine needs, nothing extra.
+2. claude.ai/code/routines → New task → Set up manually (section 2):
+   - **Name:** `aetos-build`.
+   - **Repository:** `NiFoGR/TheClaudeWay`.
+   - **Model:** Sonnet.
+   - **Environment:** "Aetos".
+   - **Prompt:** the whole contents of `routines/build.md`, pasted as it is (nothing to replace).
+   - **Triggers:** API trigger only. No schedule: it runs only when the Control Room fires it.
+3. Add the API trigger (section 3): Edit → in the Trigger row press + → API → Generate token (shown once: copy it
+   straight away), then copy the trigger's Fire URL (it ends in `/fire`).
+4. In the Control Room: Setup → Claude → the Build row → paste the URL and the token → Save → Test fire. Within a
+   few minutes the row says "Last ran just now". A test only posts the heartbeat: no site is written.
+
+What starts it: a client pressing Send on the onboarding form (`build: client <id>`); Ask Claude for changes on the
+Site page (`changes: client <id>`; Claude reads your note from the site); Build again on the Site page
+(`build: client <id>`); and, from stage 11, a monthly-care change you approved
+(`site update: client <id> task <task_id>`). If the Control Room refuses its content, Claude fixes every line it was
+told about and tries again, at most 4 times.
+
+If it stops: 3 hours after a fire with no content, a todo says "Claude hasn't built {name}'s site yet: press Build
+again on the Site page", and the Build light on Setup → Health goes red after a failed fire (it has no schedule, so
+silence alone is never red). Open claude.ai/code/routines, check `aetos-build` is on and look at its last run; if the
+fire itself failed, the Build row's link or token on Setup → Claude is wrong: paste them again, then press Build again
+(or send your changes again). If it's gone, make it again from this section and paste the new URL and token on Setup
+(section 6).

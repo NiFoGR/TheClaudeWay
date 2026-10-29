@@ -2,11 +2,11 @@
 // Task 17; "Add my email as a test lead" on the Replies page), so he can email his Aetos mailbox and see Claude's
 // replies arrive for real. The prospect is test:nik: stage emailed, greet_name "Nik", the first active cold mailbox
 // (oldest first), no leads row (Claude is shown DRILL_LEAD for it). Adding it again starts it afresh (stage emailed,
-// no lost reason) with the address given: its offered or booked test call is cancelled (so it frees Nik's day) and its
-// open Todos are dismissed. Unlike the drill its replies really go, so it needs a mailbox, and these are refused: an
-// address on the do-not-email list (the outbox would cancel every reply to it), one of our own mailboxes (Claude's
-// reply to it would come back in as a new email from the lead, and be answered again, forever) and a real lead's
-// address (its mail would link to two prospects). KPIs leave test: out.
+// no lost reason) with the address given: its offered or booked test call is cancelled (so it frees Nik's day), its
+// open Todos are dismissed and their dedupes freed. Unlike the drill its replies really go, so it needs a mailbox,
+// and these are refused: an address on the do-not-email list (the outbox would cancel every reply to it), one of our
+// own mailboxes (Claude's reply to it would come back in as a new email from the lead, and be answered again,
+// forever) and a real lead's address (its mail would link to two prospects). KPIs leave test: out.
 // 200 {ok, place_id, email, mailbox}; 422 {error} in plain English; 400 when the body isn't JSON. Behind the login
 // (_middleware.js). Tested in tests/reply-drill.test.mjs.
 import { isSuppressed } from "../../_lib/prospects.js";
@@ -35,7 +35,14 @@ const UPSERT_SQL = `INSERT INTO prospects (place_id, stage, stage_at, email, gre
     lost_reason = NULL, updated_at = ?2`;
 const CANCEL_CALLS_SQL = `UPDATE calls SET status = 'cancelled', updated_at = ?2
   WHERE place_id = ?1 AND status IN ('offered', 'confirmed')`;
-const DISMISS_TODOS_SQL = "UPDATE todos SET status = 'dismissed', done_at = ?2 WHERE place_id = ?1 AND status = 'open'";
+// Its open Todos are dismissed, and every dedupe it holds is freed as closeTodos frees one ("<dedupe>@<when>"), so a
+// fresh test files them again: a second "not now" gets its checkback:test:nik Todo instead of being swallowed by the
+// first one's dedupe (kept after a dismiss or done). A dedupe already freed (it holds "@") is left alone.
+const DISMISS_TODOS_SQL = `UPDATE todos SET
+    status = CASE WHEN status = 'open' THEN 'dismissed' ELSE status END,
+    done_at = CASE WHEN status = 'open' THEN ?2 ELSE done_at END,
+    dedupe = CASE WHEN dedupe IS NULL OR instr(dedupe, '@') > 0 THEN dedupe ELSE dedupe || '@' || ?2 END
+  WHERE place_id = ?1 AND (status = 'open' OR (dedupe IS NOT NULL AND instr(dedupe, '@') = 0))`;
 
 /** `context.now` (tests) or the time now. */
 export async function onRequestPost(context) {

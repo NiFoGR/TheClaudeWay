@@ -10,6 +10,7 @@ import { DRILL_CASES, DRILL_LEAD, gradeDrill } from "../functions/_lib/replyDril
 import { getSetting, setSecret, setSetting } from "../functions/_lib/settings.js";
 import * as drill from "../functions/api/replies/drill.js";
 import * as testProspect from "../functions/api/replies/test-prospect.js";
+import { addTodo } from "../functions/_lib/todo.js";
 import { fakeD1 } from "./helpers/fakeD1.mjs";
 
 const ORIGIN = "https://control.example";
@@ -272,6 +273,22 @@ test("POST /api/replies/test-prospect: Nik's own address as the test:nik lead", 
   assert.deepEqual(await all(DB, "SELECT id, status FROM calls ORDER BY id"), [{ id: "c-old", status: "done" }, { id: "c-test", status: "cancelled" }]);
   assert.equal((await one(DB, "SELECT status FROM todos WHERE id = 't-test'")).status, "dismissed");
   assert.equal((await one(DB, "SELECT stage FROM prospects WHERE place_id = 'test:nik'")).stage, "emailed");
+
+  // A fresh start frees the test lead's dedupes: a second "not now" files its check-back again (an open one and a done
+  // one would otherwise swallow it); a dedupe already freed and other leads' Todos are left alone.
+  await insert(DB, "todos", { id: "t-back", kind: "pick", place_id: "test:nik", title: "Check back", dedupe: "checkback:test:nik", created_at: EARLIER });
+  await insert(DB, "todos", { id: "t-done", kind: "escalation", place_id: "test:nik", title: "Done", status: "done", done_at: EARLIER, dedupe: "escalation:m-old", created_at: EARLIER });
+  await insert(DB, "todos", { id: "t-freed", kind: "call_time", place_id: "test:nik", title: "Freed", status: "done", done_at: EARLIER, dedupe: "call_time:m-x@2026-10-19T07:00:00Z", created_at: EARLIER });
+  await insert(DB, "todos", { id: "t-other", kind: "pick", place_id: "real9", title: "Real", dedupe: "checkback:real9", created_at: EARLIER });
+  assert.equal((await post({ email: "nik@gmail.com" })).status, 200);
+  assert.deepEqual(await all(DB, "SELECT id, status, dedupe FROM todos WHERE id IN ('t-back', 't-done', 't-freed', 't-other') ORDER BY id"), [
+    { id: "t-back", status: "dismissed", dedupe: "checkback:test:nik@2026-10-21T08:30:00Z" },
+    { id: "t-done", status: "done", dedupe: "escalation:m-old@2026-10-21T08:30:00Z" },
+    { id: "t-freed", status: "done", dedupe: "call_time:m-x@2026-10-19T07:00:00Z" },
+    { id: "t-other", status: "open", dedupe: "checkback:real9" },
+  ]);
+  await addTodo(DB, { kind: "pick", place_id: "test:nik", title: "Check back again", dedupe: "checkback:test:nik" });
+  assert.equal(await count(DB, "SELECT COUNT(*) n FROM todos WHERE dedupe = 'checkback:test:nik' AND status = 'open'"), 1);
 
   // One of our own mailboxes would answer itself forever; a real lead's address would link to two prospects.
   for (const address of ["nik@aetoswebsites.com", "Paused@AetosWebsites.com", "hello@aetoswebsites.com"]) {
