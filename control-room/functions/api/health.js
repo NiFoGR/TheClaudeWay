@@ -2,6 +2,7 @@
 // followed by every light a later stage registered, and what's still to set up. Importing tick.js also registers
 // those lights: it imports every stage's tick step, and each of those modules calls registerLight when it loads.
 import { healthFromDb } from "../_lib/health.js";
+import "../_lib/sites/health.js"; // registers the sites and chat lights (stage 10), whether or not tick.js does
 import { errorText } from "../_lib/tick.js";
 import { bad, db, json } from "../_lib/util.js";
 

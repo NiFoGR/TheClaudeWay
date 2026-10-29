@@ -1007,7 +1007,10 @@ CREATE TABLE IF NOT EXISTS care_reviews (
     `failed: []`; removing the iframe → `failed: ["map"]`; phone matched ignoring spaces. A stage-10-style page
     (title "Landscaping company in Warrington | Green Leaf – Patios, Turfing", H1 "Landscaping company in
     Warrington") with `service: "landscaper"`, `primary_category: "Landscaping company"` → `failed: []`; the same
-    page without `primary_category` → `failed` includes `"title"` and `"h1"`.
+    page without `primary_category` → `failed` includes `"title"` and `"h1"`. "LocalBusiness JSON-LD" means a node
+    whose `@type` is `LocalBusiness` or any type stage 10's `schemaType` returns (`_lib/sites/jsonld.js`: stage 10
+    writes the trade's own subtype, e.g. `RoofingContractor`, `HVACBusiness`), so the same page with
+    `"@type":"RoofingContractor"` → `failed: []`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/care-drafts.test.mjs` → cannot find module.
 - [ ] **Step 3: Implement `validateDraft`, `checkInterlinks`, `onPageCheck`, `wordCount` in `care-drafts.js`** —
   regex-based HTML reading (no DOM); case-insensitive matching; `validateDraft` calls `copyProblems` on every

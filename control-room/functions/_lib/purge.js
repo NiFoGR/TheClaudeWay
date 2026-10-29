@@ -9,6 +9,9 @@
 // never deleted (stage 1's research queue treats any research row as handled, so the lead is never researched, demoed
 // or emailed again on its own). Also stage 8's `calls-day:` Todos created before the cutoff and, once the month is finished, processed
 // inbound_raw rows received before it (always keeping the newest row: Setup's "Last email received" reads it by rowid).
+// Also, once the month is finished, client-site enquiries (stage 10's site_leads, contact form and chat) received
+// before the cutoff, with the enquiry emails sent to the business about them: every client site's privacy page says
+// "Enquiries are kept for 12 months." (docs/rebuild/09-build.md section 8). These are the only client rows it deletes.
 // What stays: suppression, clients, client_links, the scraped leads row, and every other Todo with no place_id.
 //
 // Once a month: the step does nothing until the first tick of a new UK month, works through everything due over the
@@ -21,7 +24,7 @@ export const PURGE_BATCH = 90; // leads per round
 const MAX_ROUNDS = 5;
 const ROUND_QUERIES = 7; // 1 select + a batch of 6
 const RUN_OVERHEAD = 2; // Part B's formula: the finishing write, and the tick's beat after this step
-const FINISH_QUERIES = 2; // the finishing batch: old inbound mail, then purge:month
+const FINISH_QUERIES = 4; // the finishing batch: old inbound mail, old enquiry emails, old enquiries, then purge:month
 const BEAT_QUERIES = 1; // the runner's tick beat, the query it always makes after the last step
 const NOTES = "Skipped: details deleted 12 months after last contact.";
 
@@ -51,9 +54,15 @@ const ROUND_SQL = [
   `INSERT INTO research (place_id, status, too_big, notes) SELECT j.value, 'skipped', 0, '${NOTES}' FROM json_each(?1) AS j WHERE 1 ON CONFLICT (place_id) DO UPDATE SET status = 'skipped', grade = NULL, points = NULL, grade_reason = NULL, angle = NULL, opener = NULL, owner = NULL, best_email = NULL, best_email_why = NULL, emails = NULL, copy = NULL, site_review = NULL, searched = NULL, too_big = 0, notes = '${NOTES}', queued_at = NULL, researched_at = NULL`,
 ];
 
-// The month's finishing batch: old processed inbound mail (never the newest row), then purge:month.
+// The month's finishing batch: old processed inbound mail (never the newest row), old enquiries, then purge:month.
 const INBOUND_SQL =
   "DELETE FROM inbound_raw WHERE processed_at IS NOT NULL AND received_at < ?1 AND rowid <> (SELECT MAX(rowid) FROM inbound_raw)";
+// Old client-site enquiries: their emails first (once the site_leads rows go, this subquery finds nothing). The email's
+// id is `enquiry:<lead id>` (sites/notify.js) and is also kept in site_leads.message_id.
+const ENQUIRY_MAIL_SQL = `DELETE FROM messages WHERE id IN (
+  SELECT message_id FROM site_leads WHERE created_at < ?1 AND message_id IS NOT NULL
+  UNION SELECT 'enquiry:' || id FROM site_leads WHERE created_at < ?1)`;
+const ENQUIRIES_SQL = "DELETE FROM site_leads WHERE created_at < ?1";
 const MONTH_SQL = "INSERT INTO settings (key, value) VALUES ('purge:month', ?1) ON CONFLICT (key) DO UPDATE SET value = excluded.value";
 
 /** UK midnight at the start of the same UK calendar date one year earlier (29 Feb → 28 Feb), as UTC ISO. */
@@ -95,11 +104,17 @@ async function run(ctx) {
   const maxRounds = Math.min(MAX_ROUNDS, Math.floor((ctx.budget.left() - RUN_OVERHEAD) / ROUND_QUERIES));
   if (!(maxRounds > 0)) return "deferred";
   const { purged, done } = await purgeOld(DB, now, { maxRounds });
-  // The finishing batch is 2 statements, and the tick's beat must still fit after it (the free plan's 50 queries).
+  // The finishing batch is 4 statements, and the tick's beat must still fit after it (the free plan's 50 queries).
   // When the last round used that room, the month is finished on the next tick (a select that finds nobody, then
   // this batch).
   if (done && ctx.budget.left() >= FINISH_QUERIES + BEAT_QUERIES) {
-    await DB.batch([DB.prepare(INBOUND_SQL).bind(purgeCutoff(now)), DB.prepare(MONTH_SQL).bind(month)]);
+    const cutoff = purgeCutoff(now);
+    await DB.batch([
+      DB.prepare(INBOUND_SQL).bind(cutoff),
+      DB.prepare(ENQUIRY_MAIL_SQL).bind(cutoff),
+      DB.prepare(ENQUIRIES_SQL).bind(cutoff),
+      DB.prepare(MONTH_SQL).bind(month),
+    ]);
     return purged ? `purged ${purged} leads` : "nothing to purge";
   }
   return purged ? `purged ${purged} leads, more next tick` : "deferred";

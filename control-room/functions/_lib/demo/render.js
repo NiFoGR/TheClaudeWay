@@ -12,8 +12,14 @@
 // Pure: no D1, no fetch, nothing runs at load (templates import this module back for the shared pieces). The looks:
 // templates/generic.js ("Everything else") and templates/landscaper.js ("Landscaper").
 // Tested in control-room/tests/demo-render.test.mjs.
+//
+// Stage 10 (09-build.md §7) renders paying clients' multi-page sites with the same looks in live mode: client-site data
+// from sites/sitedata.js, each template's page(), and the client-site shell further down (renderSitePage). Its only
+// scripts are the JSON-LD, the contact form's 3-line timer and the chat widget tag. Tested in sites-render.test.mjs.
 import { CHARCOAL } from "./colour.js";
 import { cleanText, h, safeHttps, shortName, telHref } from "./text.js";
+import { bodyHtml } from "../sites/body.js";
+import { ldJson } from "../sites/jsonld.js";
 import * as generic from "./templates/generic.js";
 import * as landscaper from "./templates/landscaper.js";
 
@@ -220,11 +226,254 @@ export function guaranteeStrip(data) {
   ].filter(Boolean).join("\n");
 }
 
-/** The function that draws `page` in live mode (stage 10 adds pages beyond home to the templates). */
+/** The function that draws `page` in live mode for DemoData without client-site pages (a demo lead's data). A client
+ * site's pages (data.live.pages, from sites/sitedata.js) are all drawn by the template's page(). */
 function pageOf(tpl, page) {
   if (page === "home") return tpl.home;
-  if (typeof page === "string" && PAGE_NAME.test(page) && typeof tpl[page] === "function") return tpl[page];
+  if (typeof page === "string" && page !== "page" && PAGE_NAME.test(page) && typeof tpl[page] === "function") return tpl[page];
   throw new Error(`The ${tpl.TEMPLATE.label} look has no ${JSON.stringify(String(page).slice(0, 40))} page.`);
+}
+
+// ---------------------------------------------------------------- client sites (stage 10, live mode only)
+//
+// A client site's DemoData (sites/sitedata.js) carries data.live.pages: every page of its SiteContent with its JSON-LD
+// and canonical URL. renderSite picks the page by path, the template's page(data, mode) lays it out with the pieces
+// below, and the shell adds the head (title, meta description, canonical, JSON-LD), the preview bar, the NAP footer,
+// the call bar and the chat tag. Nothing here runs for demos, so demo pages stay byte for byte the same.
+
+// The client-site parts (nav, call button, FAQ, map, contact form). Added to the page's CSS only for client sites.
+const SITE_CSS = `.home{display:flex;align-items:center;min-width:0;text-decoration:none}
+.top-call{display:inline-block;padding:10px 16px;border-radius:10px;background:var(--main);color:#fff;text-decoration:none}
+a.top-call{text-decoration-line:none}
+.nav{border-top:1px solid #e3e5e8;background:#fff}
+.top .nav .wrap{display:block;min-height:0;padding-top:0;padding-bottom:0}
+.nav ul{display:flex;flex-wrap:wrap;gap:0 4px;margin:0;padding:0;list-style:none}
+.nav a{display:block;padding:12px 10px;font-weight:600;text-decoration:none}
+.nav a[aria-current]{box-shadow:inset 0 -3px 0 var(--main)}
+.prose{max-width:720px}
+.prose p,.prose ul{margin:0 0 14px}
+.prose a,.faq a{text-decoration-color:var(--main);text-decoration-thickness:2px;text-underline-offset:3px}
+.cards a{display:block;text-decoration:none}
+.chips a{text-decoration:none}
+.faq{max-width:720px}
+.faq h3{margin:20px 0 6px;font-size:19px;line-height:1.3}
+.faq p{margin:0}
+.map{display:block;width:100%;height:320px;margin-top:20px;border:0;border-radius:12px;background:#e3e5e8}
+.reach{max-width:720px;margin:0;padding:0;list-style:none}
+.reach li{margin:0 0 8px}
+.hp{position:absolute;left:-10000px;width:1px;height:1px;overflow:hidden}
+.foot a{color:#fff}`;
+
+// The shell's look without the demo's Aetos parts (preview bar, guarantee strip): a client's page carries none of
+// them; Nik's preview adds the bar's rules back (PREVIEW_CSS).
+const AE_RULE = /\.ae-[^{}]*\{[^{}]*\}/g;
+const SITE_SHELL_CSS = SHELL_CSS.split("\n").filter((l) => !l.startsWith(".ae-")).map((l) => l.replace(AE_RULE, "")).join("\n");
+const PREVIEW_CSS = `.ae-bar{position:sticky;top:0;z-index:20;padding:8px 16px;background:#1a1c20;color:#fff;font-size:13px;line-height:1.4}
+.ae-bar p{margin:0}
+.ae-bar a{color:#c9a13b}`;
+
+const SITE_FILE = /^\/s\/f\/[0-9a-f]{32}$/;
+// The form's message limit: contact.js's MESSAGE_MAX (section 9). Not imported: contact.js pulls in the outbox.
+const MESSAGE_MAX = 2000;
+const NOTE_LIVE = "Works once the site is live.";
+const BACK = '<a href="/#/sites">Back to the Control Room</a>';
+
+/** Whether DemoData is a client site's (sites/sitedata.js): live mode with its pages. */
+const isSiteData = (data) => Array.isArray(data?.live?.pages) && Boolean(data.live.page) && typeof data.live.page === "object";
+
+// A client-site image URL: https, or one of the site's copied files (/s/f/<32 hex>, served on every host).
+const siteImage = (u) => (typeof u === "string" && SITE_FILE.test(u) ? u : safeHttps(u));
+
+/** The client site with `page` (a path, or "home" for "/") as its current page; throws for a path it hasn't. */
+function sitePage(data, page) {
+  const path = page === undefined || page === null || page === "home" ? "/" : page;
+  const found = data.live.pages.find((p) => p && p.path === path);
+  if (!found) throw new Error(`This site has no page ${JSON.stringify(String(path).slice(0, 80))}.`);
+  return { ...data, live: { ...data.live, page: found, ld: list(found.ld), canonical_url: str(found.canonical_url) } };
+}
+
+/** The site's photos in content order (pages[].photo indexes them); a photo it can't print is null. */
+export function sitePhotos(data) {
+  return list(data?.live?.photos).map((p) => (p && siteImage(p.url) ? { url: siteImage(p.url), alt: str(p.alt) } : null));
+}
+
+/** The current page's top photo: its own `photo`, else the first photo on the home page; null for none. */
+export function siteHeroPhoto(data) {
+  const photos = sitePhotos(data);
+  const p = data.live.page;
+  if (Number.isSafeInteger(p.photo) && photos[p.photo]) return photos[p.photo];
+  return p.key === "home" ? photos.find(Boolean) ?? null : null;
+}
+
+/** One photo with its alt text and real size: lazy, unless it's the page's top photo (fetchpriority high). */
+export function sitePhotoHtml(data, photo, { top = false, cls = "" } = {}) {
+  const src = siteImage(photo?.url);
+  if (!src) return "";
+  const s = data?.live?.photo_sizes?.[src];
+  const [w, hgt] = s && Number.isSafeInteger(s.w) && Number.isSafeInteger(s.h) && s.w > 0 && s.h > 0 ? [s.w, s.h] : [800, 600];
+  const load = top ? ' fetchpriority="high"' : ' loading="lazy"';
+  const alt = str(photo.alt) || `Work by ${str(data.business.name)}`;
+  return `<img${cls ? ` class="${h(cls)}"` : ""} src="${h(src)}" alt="${h(alt)}" width="${w}" height="${hgt}"${load} decoding="async" onerror="${PHOTO_FAILED}">`;
+}
+
+/** Their logo at 52 px high in its own proportions (lazy: only the top photo isn't), linking home; the name as the
+ * wordmark it falls back to. */
+function siteLogoHtml(data) {
+  const name = h(data.business.name);
+  const logo = siteImage(data.brand?.logo);
+  const href = h(str(data.live.logo_href) || "/");
+  if (!logo) return `<a class="home" href="${href}"><span class="wordmark">${name}</span></a>`;
+  const s = data.live.photo_sizes?.[logo];
+  const w = s && s.w > 0 && s.h > 0 ? Math.max(1, Math.min(200, Math.round((52 * s.w) / s.h))) : 160;
+  return `<a class="home" href="${href}"><img class="logo" src="${h(logo)}" alt="${name} logo" width="${w}" height="52" loading="lazy" decoding="async" onerror="${LOGO_FAILED}"><span class="wordmark" hidden>${name}</span></a>`;
+}
+
+// The nav item that is (or holds) the current page.
+function currentNav(page) {
+  if (page.key === "service") return "/services";
+  if (page.key === "area") return "/areas";
+  return page.path;
+}
+
+/** The site header: logo (home link), the phone as a call button, and the nav (Home … Contact). */
+export function siteHeader(data, tel) {
+  const phone = data.business.phone;
+  const ph = tel ? `<a class="top-ph top-call" href="${h(tel)}">Call ${h(phone)}</a>` : phone ? `<span class="top-ph">${h(phone)}</span>` : "";
+  const here = currentNav(data.live.page);
+  const items = list(data.live.nav).filter((n) => n && str(n.href).startsWith("/")).map((n) => {
+    const cur = n.path === here ? ' aria-current="page"' : "";
+    return `<li><a href="${h(n.href)}"${cur}>${h(n.label)}</a></li>`;
+  });
+  return `<header class="top"><div class="wrap">${siteLogoHtml(data)}${ph}</div><nav class="nav" aria-label="Main"><div class="wrap"><ul>${items.join("")}</ul></div></nav></header>`;
+}
+
+/** The current page's sections: [{h2, html}], each body as escaped paragraphs, lists and links (sites/body.js). */
+export function siteSections(data) {
+  return list(data.live.page.sections).map((s) => ({ h2: str(s?.h2), html: bodyHtml(str(s?.body), data.live.base) }))
+    .filter((s) => s.h2 || s.html);
+}
+
+/** The page's FAQ as plain questions and answers; "" without one. */
+export function siteFaqHtml(data) {
+  const faq = list(data.live.page.faq).filter((f) => f && str(f.q) && str(f.a));
+  if (!faq.length) return "";
+  return `<h2>Questions people ask</h2>\n<div class="faq">${faq.map((f) => `<h3>${h(f.q)}</h3>\n<p>${h(f.a)}</p>`).join("\n")}</div>`;
+}
+
+/** Links to the site's service or area pages: [{name, href}]. */
+export const siteLinks = (data, kind) => list(data.live[kind]).filter((l) => l && str(l.name) && str(l.href).startsWith("/"));
+
+/** Their reviews from the content (at most `max`), as stage 4 shows them; "" without any. */
+export function siteReviewsHtml(data, max = 12, { heading = true } = {}) {
+  const items = list(data.reviews).filter((r) => r && typeof r.rating === "number" && str(r.text)).slice(0, max);
+  if (!items.length) return "";
+  const cards = items.map((r) => `<figure class="rev">${starsHtml(r.rating)}<blockquote>“${h(r.text)}”</blockquote><figcaption>${h(r.author || "Google reviewer")}</figcaption></figure>`);
+  return `${heading ? "<h2>What customers say</h2>\n" : ""}<p class="sub">Reviews from Google</p>\n<div class="revs">${cards.join("")}</div>`;
+}
+
+/** "Leave us a Google review" as a button, when there's a review link; else "". */
+export function siteReviewLink(data) {
+  const url = safeHttps(data.live.footer?.review_url);
+  return url ? `<p><a class="btn" href="${h(url)}">Leave us a Google review</a></p>` : "";
+}
+
+/** The embedded Google map (home and contact): the full address when shown, else the town; "" with neither. */
+export function siteMapHtml(data) {
+  const q = cleanText(str(data.live.map_query), 300);
+  if (!q) return "";
+  const src = `https://maps.google.com/maps?q=${encodeURIComponent(q)}&output=embed`;
+  return `<iframe class="map" title="Map of ${h(q)}" src="${h(src)}" loading="lazy"></iframe>`;
+}
+
+/** How to reach them (the contact page): phone, email, the address or town, opening hours. */
+export function siteReachHtml(data, tel) {
+  const nap = data.live.footer?.nap ?? {};
+  const email = str(nap.email).trim();
+  const rows = [
+    tel ? `<li>Phone: <a href="${h(tel)}">${h(nap.phone)}</a></li>` : nap.phone ? `<li>Phone: ${h(nap.phone)}</li>` : "",
+    EMAIL.test(email) ? `<li>Email: <a href="mailto:${h(email)}">${h(email)}</a></li>` : "",
+    str(nap.address) ? `<li>${h(nap.address)}</li>` : "",
+    str(nap.hours) ? `<li>Opening hours: ${h(nap.hours)}</li>` : "",
+  ].filter(Boolean);
+  return rows.length ? `<ul class="reach">${rows.join("")}</ul>` : "";
+}
+
+/**
+ * The contact form (section 9): name (required), phone, email, "What do you need?", the hidden honeypot `website`,
+ * `t` (milliseconds since the page loaded, set by the 3-line script on submit) and `page`. Posts to
+ * data.live.form_action. In Nik's preview (no form action, a preview bar) the note "Works once the site is live."
+ * stands in for it; "" when there's neither.
+ */
+export function siteContactHtml(data) {
+  const action = formAction(data);
+  if (!action) return str(data.live.preview_bar) ? `<p class="note">${h(NOTE_LIVE)}</p>` : "";
+  return `<form class="quote" id="cf" method="post" action="${h(action)}"><fieldset>
+<label>Your name<input name="name" autocomplete="name" required></label>
+<label>Your phone number<input name="phone" type="tel" autocomplete="tel"></label>
+<label>Your email<input name="email" type="email" autocomplete="email"></label>
+<label>What do you need?<textarea name="message" rows="5" maxlength="${MESSAGE_MAX}"></textarea></label>
+<div class="hp" aria-hidden="true"><label>Leave this empty<input name="website" tabindex="-1" autocomplete="off"></label></div>
+<input type="hidden" name="t" value="">
+<input type="hidden" name="page" value="${h(data.live.page.path)}">
+<button type="submit">Send</button>
+</fieldset></form>
+<script>(function(){var s=Date.now(),f=document.getElementById("cf");
+f.addEventListener("submit",function(){f.elements.t.value=String(Date.now()-s);});})();</script>`;
+}
+
+// The client site's <footer>: name, phone, town or full address, opening hours, legal line, the review and privacy
+// links, "Website by Aetos Websites".
+function siteFooter(data, tel, year) {
+  const f = data.live.footer ?? {};
+  const nap = f.nap ?? {};
+  const name = h(data.business.name);
+  const phone = tel ? `<a href="${h(tel)}">${h(nap.phone)}</a>` : h(nap.phone);
+  const review = safeHttps(f.review_url);
+  const privacy = str(f.privacy_href).startsWith("/") ? f.privacy_href : "/privacy";
+  const links = [review ? `<a href="${h(review)}">Leave us a Google review</a>` : "", `<a href="${h(privacy)}">Privacy</a>`].filter(Boolean).join(" · ");
+  return [
+    '<footer class="foot"><div class="wrap">',
+    `<p><b>${name}</b>${nap.phone ? ` · ${phone}` : ""}${str(nap.address) ? ` · ${h(nap.address)}` : ""}</p>`,
+    str(nap.hours) ? `<p>Opening hours: ${h(nap.hours)}</p>` : "",
+    str(f.legal_line) ? `<p>${h(f.legal_line)}</p>` : "",
+    `<p>${links}</p>`,
+    `<p>© ${year} ${name} · Website by Aetos Websites</p>`,
+    "</div></footer>",
+  ].filter(Boolean).join("");
+}
+
+// A client site's whole page (renderSite in live mode with client-site data).
+function renderSitePage(data, tpl, mode, date) {
+  const { css, body } = tpl.page(data, mode);
+  const live = data.live;
+  const p = live.page;
+  const tel = callHref(data);
+  const canonical = safeHttps(live.canonical_url);
+  const ld = list(live.ld);
+  const base = /^(?:\/[A-Za-z0-9._~-]+)*$/.test(str(live.base)) ? str(live.base) : "";
+  const head = [
+    '<meta charset="utf-8">',
+    '<meta name="viewport" content="width=device-width,initial-scale=1">',
+    `<title>${h(p.title || data.business.name)}</title>`,
+    str(p.meta) ? `<meta name="description" content="${h(p.meta)}">` : "",
+    live.noindex === true ? '<meta name="robots" content="noindex">' : "",
+    canonical ? `<link rel="canonical" href="${h(canonical)}">` : "",
+    `<style>:root{--main:${colourOf(data)}}\n${SITE_SHELL_CSS}\n${css}\n${SITE_CSS}${str(live.preview_bar) ? `\n${PREVIEW_CSS}` : ""}</style>`,
+    ld.length ? `<script type="application/ld+json">${ldJson(ld)}</script>` : "",
+  ].filter(Boolean).join("\n");
+  const bar = str(live.preview_bar) ? `<div class="ae-bar"><p>${h(live.preview_bar)} · ${BACK}</p></div>` : "";
+  const call = tel ? `<a class="callbar" href="${h(tel)}">Call ${h(data.business.name)}</a>` : "";
+  const chat = live.chat === true && !bar ? `<script src="${h(base)}/s/chat.js" defer></script>` : "";
+  return `<!doctype html>
+<html lang="en-GB">
+<head>
+${head}
+</head>
+<body data-template="${h(tpl.TEMPLATE.id)}"${tel ? ' class="has-call"' : ""}>
+${[bar, body, siteFooter(data, tel, date.getUTCFullYear()), call, chat].filter(Boolean).join("\n")}
+</body>
+</html>
+`;
 }
 
 /**
@@ -232,6 +481,10 @@ function pageOf(tpl, page) {
  * strip, the disabled form, noindex/no-referrer, "Preview by Aetos Websites" and, when views are counted, the beacon.
  * Live mode (stage 10) has none of those: the form posts to data.live.form_action (no form without one) and the page
  * links its canonical URL. `now` only sets the footer's © year.
+ *
+ * A client site's data (sites/sitedata.js's siteData, with data.live.pages) in live mode is a whole multi-page site:
+ * `page` is a path ("/services/roof-repairs"; "home" or none is "/"), and the page gets its own title, meta
+ * description, canonical URL and JSON-LD, the nav, the NAP footer and, when on, the chat tag (section 7).
  */
 export function renderSite(data, { mode = "demo", page = "home", now = new Date() } = {}) {
   if (mode !== "demo" && mode !== "live") {
@@ -243,6 +496,10 @@ export function renderSite(data, { mode = "demo", page = "home", now = new Date(
   }
   const demo = mode === "demo";
   const tpl = templateFor(data.template);
+  if (!demo && isSiteData(data)) {
+    const day = now instanceof Date && Number.isFinite(now.getTime()) ? now : new Date();
+    return renderSitePage(sitePage(data, page), tpl, mode, day);
+  }
   const draw = demo ? tpl.home : pageOf(tpl, page);
   const slug = demo ? demoSlug(data) : "";
   const { css, body } = draw(data, mode);

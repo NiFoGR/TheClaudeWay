@@ -5,13 +5,13 @@ let schemaReady = false;
 
 // The free plan allows 50 D1 queries per invocation, and each statement in a batch may count as one. A migration
 // runs at most this many schema statements per call: with the version read, the sqlite_master read and the version
-// write that's 43, which leaves room for the request's own queries. A brand-new database (52 statements) finishes on
-// its next call; the live one (the old system's 29) needs only the 23 new ones, 26 queries in all.
+// write that's 43, which leaves room for the request's own queries. A brand-new database (62 statements after stage
+// 10) finishes on its next call; the live one (the old system's 29) needs only the 33 new ones, 36 queries in all.
 export const MIGRATION_MAX = 40;
 
-// Every SCHEMA statement is CREATE TABLE|INDEX IF NOT EXISTS <name> (schema.test.mjs checks), so what's missing can
-// be read from sqlite_master.
-const CREATES = /^\s*CREATE\s+(TABLE|INDEX)\s+IF\s+NOT\s+EXISTS\s+["`[]?(\w+)/i;
+// Every SCHEMA statement is CREATE TABLE|[UNIQUE] INDEX IF NOT EXISTS <name> (schema.test.mjs checks), so what's
+// missing can be read from sqlite_master.
+const CREATES = /^\s*CREATE\s+(?:UNIQUE\s+)?(TABLE|INDEX)\s+IF\s+NOT\s+EXISTS\s+["`[]?(\w+)/i;
 
 /** "table:<name>" or "index:<name>" for a CREATE … IF NOT EXISTS statement, else null. */
 export function schemaObject(sql) {

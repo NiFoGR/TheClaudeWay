@@ -1,7 +1,8 @@
 // The nav and the one route list (file 11 Task 11, docs/rebuild/11-todo-kpis.md "Money, Map Rank and navigation"):
 // public/js/nav.js's NAV (the 9 items in Part A's exact order), routeFor (every hash → {page, id, params}; old and
 // unknown routes open Todo), activeNav (which item is lit) and the Todo badge (gold count + red dot). nav.js is pure,
-// so this runs in node. Later stages (09's sites/site/<id>, 10's client/<id>/client/settings) add their routes here.
+// so this runs in node. Later stages (09's sites/site/<id>, 10's client/<id>/client/settings) add their routes here:
+// stage 10 (09-build.md Task 25) added #/sites and #/site/<client_id>, with no nav item.
 // Run: node --test control-room/tests/nav.test.mjs
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -51,6 +52,29 @@ test("every nav item routes to itself and has an icon", () => {
   assert.deepEqual(NAV.map((n) => n[0]), ["todo", "leads", "scraper", "maprank", "replies", "kpis", "money", "voice", "setup"]);
   // Demo and Call are routed, never nav items.
   assert.ok(!NAV.some((n) => n[0] === "demo" || n[0] === "call"));
+});
+
+// Stage 10 (docs/rebuild/09-build.md section 13, Task 25): the Sites list and one client's Site page are routed, never
+// nav items (they're linked from every build todo, Setup → "Client sites" and stage 11's client page).
+test("routes: the Sites list and a Site page, with no nav item", () => {
+  assert.equal(routeFor("#/sites").page, "sites");
+  assert.deepEqual([routeFor("#/site/c1").page, routeFor("#/site/c1").id], ["site", "c1"]);
+  assert.deepEqual(NAV.map((n) => n[1]), ["Todo", "Leads", "Scraper", "Map Rank", "Replies", "KPIs", "Money", "Voice", "Setup"]);
+  assert.ok(!NAV.some((n) => /site/i.test(n[0]) || /site/i.test(n[1])), "no Sites item");
+  // the todo links are "/#/site/<id>"; ids are decoded; a bare #/site is the list; a query is kept
+  assert.deepEqual([routeFor("/#/site/cl_test_0a1b2c3d4e5f").page, routeFor("/#/site/cl_test_0a1b2c3d4e5f").id], ["site", "cl_test_0a1b2c3d4e5f"]);
+  assert.equal(routeFor("#/site/c%2F1").id, "c/1");
+  assert.equal(routeFor("#/site").page, "sites");
+  assert.equal(routeFor("#/site/").page, "sites");
+  assert.equal(routeFor("#/sites?x=1").page, "sites");
+  assert.equal(routeFor("#/site/c1?at=domain").params.get("at"), "domain");
+  assert.equal(activeNav("sites"), null);
+  assert.equal(activeNav("site"), null);
+  // app.js dispatches both pages to sites.js, with no PAGES list
+  const app = js("app.js");
+  for (const fn of ["sitesPage", "sitePage"]) assert.match(app, new RegExp(`import \\{[^}]*\\b${fn}\\b[^}]*\\} from "\\./sites\\.js"`), fn);
+  assert.match(app, /sites: \(\) => sitesPage\(\)/);
+  assert.match(app, /site: \(\{ id \}\) => sitePage\(id\)/);
 });
 
 test("activeNav: the page's own item, a lead lights Leads, Demo and Call light nothing", () => {

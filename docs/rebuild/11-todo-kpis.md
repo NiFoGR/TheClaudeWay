@@ -458,8 +458,12 @@ The privacy notice (stage 0) promises: "If we contacted you and you didn't becom
   than the same 12-month cutoff (their `headers` still hold From and Subject), but always keeping the newest row,
   because Setup's "Last email received" reads it by rowid. Stage 8's day lists (`calls-day:<YYYY-MM-DD>` Todos) have
   a NULL `place_id` but name every lead called that day, so the same Todo delete also removes those created before
-  the cutoff. No other Todo with a NULL `place_id` (`setup`, `kpi`, `health`, …) is ever touched.
-- **What is kept:** `suppression` (so a "no thanks" or bounce is never emailed again), every client's rows, the
+  the cutoff. No other Todo with a NULL `place_id` (`setup`, `kpi`, `health`, …) is ever touched. Also stage 10's
+  client-site enquiries (`site_leads`, contact form and chat) received before the cutoff, with the enquiry emails
+  about them (`messages` id `enquiry:<site_leads id>`), because every client site's privacy page says "Enquiries are
+  kept for 12 months." (09-build.md section 8). These go in the month's finishing batch, with the old `inbound_raw`.
+- **What is kept:** `suppression` (so a "no thanks" or bounce is never emailed again), every client's rows (except
+  their sites' old enquiries, above), the
   scraped `leads` row (public business listing, owned by the scraper), and the blanked `research` row (no personal
   data; it only stops the lead being researched, demoed and emailed again), and every Todo with a NULL `place_id`
   except old `calls-day:` lists. Stage 3's card shows it as "Skipped:

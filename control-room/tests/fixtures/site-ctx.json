@@ -1,0 +1,111 @@
+{
+  "form": {
+    "business": {
+      "name": "Smith Roofing",
+      "phone": "01793 123456",
+      "email": "info@smithroofing.co.uk",
+      "address": "12 High St, Swindon SN1 1AA",
+      "show_address": "no",
+      "legal_line": "John Smith trading as Smith Roofing",
+      "leads_email": "john@smithroofing.co.uk"
+    },
+    "services": [
+      {
+        "name": "Roof repairs",
+        "on": true,
+        "own": false
+      },
+      {
+        "name": "Flat roofs",
+        "on": true,
+        "own": false
+      },
+      {
+        "name": "Chimney repairs",
+        "on": true,
+        "own": false
+      },
+      {
+        "name": "Guttering",
+        "on": false,
+        "own": false
+      }
+    ],
+    "free_quotes": "yes",
+    "emergency": "yes",
+    "hours": "Mon–Fri 8am–6pm",
+    "started": "2009",
+    "accreditations": "",
+    "guarantee": "10-year guarantee on new roofs",
+    "areas": [
+      "Swindon",
+      "Wroughton",
+      "Old Town"
+    ],
+    "about": "I'm John. I've been fixing roofs around Swindon since 2009 and I still do every job myself with a small team.",
+    "photos_note": "",
+    "domain": {
+      "has": "yes",
+      "name": "smithroofing.co.uk",
+      "registrar": "GoDaddy",
+      "can_login": "yes",
+      "email_on_it": "yes",
+      "choices": [
+        "",
+        "",
+        ""
+      ]
+    },
+    "gbp": {
+      "has": "yes",
+      "invite_sent": true
+    },
+    "review_link": "",
+    "notes": ""
+  },
+  "reviews": [
+    {
+      "author": "Dave Parker",
+      "rating": 5,
+      "text": "John came out the same week, found the slipped slates that were letting water into our back bedroom and fixed them in an afternoon. Tidy, polite and he sent photos of the work."
+    },
+    {
+      "author": "Sarah Khan",
+      "rating": 5,
+      "text": "We had our garage flat roof replaced. The team turned up when they said they would, kept the drive clear and the new roof has been bone dry through a very wet winter."
+    },
+    {
+      "author": "Mike Turner",
+      "rating": 5,
+      "text": "Our chimney stack was crumbling and dropping bits of brick into the garden. John rebuilt the top of it and fitted new flashing. Really pleased with the job and the clear explanation."
+    },
+    {
+      "author": "Emma Lewis",
+      "rating": 4,
+      "text": "Good work on our porch roof. Took a little longer than planned because of the rain, but John kept us updated the whole time."
+    },
+    {
+      "author": "Paul Green",
+      "rating": 5,
+      "text": "Quick to answer, honest about what needed doing and what could wait. Would use again."
+    }
+  ],
+  "brand": {
+    "logo": "https://smithroofing.co.uk/images/logo.png",
+    "colour": "#1e4f86",
+    "photos": [
+      "https://smithroofing.co.uk/images/slate-roof.jpg",
+      "https://smithroofing.co.uk/images/flat-roof.jpg",
+      "https://smithroofing.co.uk/images/ridge.jpg"
+    ]
+  },
+  "files": [
+    {
+      "id": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+      "kind": "photo",
+      "url": "/s/f/a1b2c3d4e5f60718293a4b5c6d7e8f90",
+      "alt": "Rebuilt brick chimney stack with new lead flashing in Swindon"
+    }
+  ],
+  "package": "full"
+}

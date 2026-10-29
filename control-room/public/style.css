@@ -781,3 +781,82 @@ details.lost .lost-cards { grid-template-columns: repeat(auto-fill, minmax(230px
   .nav a { min-height: 40px; }
   .nav-badge { margin-left: 2px; }
 }
+
+/* ---------------------------------------------------------------- Sites list and Site page (stage 10: sites.js + sitesview.js) */
+/* The list is one table (scrolls sideways inside its card on a phone); the Site page is a stack of cards, one per
+   section. The countdown is coloured by level: red under 48 h or late, amber live but late, green live on time, grey
+   otherwise. Gold only on Approve and put live. */
+.due { font-variant-numeric: tabular-nums; font-weight: 550; white-space: nowrap; }
+.due-red { color: var(--bad); }
+.due-amber { color: var(--warn); }
+.due-green { color: var(--good); }
+.due-grey { color: var(--text-2); }
+.sites-table td { overflow-wrap: anywhere; }
+.sites-table .biz { color: var(--text); font-weight: 600; }
+.site-host { font-size: 13px; color: var(--text-2); }
+.site-page { min-width: 0; }
+.site-page h1 .tag, .sites-table .tag { margin-left: 6px; }
+.site-head-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.site-card { min-width: 0; overflow-wrap: anywhere; }
+.site-card > p { margin: 0 0 12px; }
+.site-card .table-wrap { margin: 0 -20px 12px; }
+.site-card table th:first-child, .site-card table td:first-child { padding-left: 20px; }
+.site-pages td:first-child a { color: var(--text); text-decoration: underline; text-decoration-color: var(--line-2); text-underline-offset: 2px; }
+.site-links { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 0 12px; }
+.site-links .hint { margin: 0; }
+.site-buttons { margin: 4px 0 0; }
+.site-changes { margin-top: 16px; display: grid; gap: 8px; }
+.site-changes-wrap { margin-top: 16px; }
+.site-changes-wrap > summary { display: inline-flex; list-style: none; }
+.site-changes-wrap > summary::-webkit-details-marker { display: none; }
+.site-changes-wrap .site-changes { margin-top: 12px; }
+.site-changes label, .site-changes .hint { margin: 0; }
+.site-inline { margin: 0 0 14px; }
+.site-inline-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.site-inline-row input { flex: 1 1 200px; min-width: 0; }
+.site-steps { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 10px; }
+.site-step { padding: 12px 14px; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r); }
+.site-step.done .check-line span { color: var(--text-2); text-decoration: line-through; text-decoration-color: var(--text-3); }
+.site-step .check-line { align-items: flex-start; font-weight: 600; }
+.site-step .check-line input { margin-top: 3px; }
+.step-detail { margin: 6px 0 0 24px; font-size: 13px; color: var(--text-2); white-space: pre-wrap; }
+.step-detail .btn { margin-top: 6px; }
+.site-step .hint { margin: 6px 0 0 24px; }
+.site-check { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.dns-line { margin: 0; }
+.dns-line .hint { margin: 0 0 0 6px; }
+.site-open { margin: 12px 0 0; align-items: center; }
+.site-ticks { display: grid; gap: 6px; }
+.site-ticks .hint { margin: 0 0 6px 24px; }
+.site-qr-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 16px; margin: 0 0 14px; }
+.site-qr-row > div { display: grid; gap: 10px; flex: 1 1 220px; }
+.site-qr-row p { margin: 0; }
+.site-qr { width: 160px; height: 160px; background: #fff; border-radius: var(--r-sm); padding: 6px; }
+.site-msg-block + .site-msg-block { margin-top: 12px; }
+.site-msg-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-size: 13px; }
+.site-msg { margin: 0; padding: 10px 12px; background: var(--bg); border: 1px solid var(--line-2); border-radius: var(--r); white-space: pre-wrap; overflow-wrap: anywhere; font: 13.5px/1.55 var(--font); }
+.site-leads td { font-size: 13px; vertical-align: top; }
+.site-lead-msg { min-width: 200px; color: var(--text-2); }
+.nowrap { white-space: nowrap; }
+.site-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin: 0 0 14px; }
+.site-photo { margin: 0; background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.site-photo img { display: block; width: 100%; height: 120px; object-fit: cover; background: var(--bg); }
+.site-photo figcaption { display: flex; align-items: flex-start; justify-content: space-between; gap: 6px; padding: 8px; font-size: 12px; color: var(--text-2); }
+.site-add-photos input[type="file"] { height: auto; padding: 7px 10px; }
+.site-answers { grid-template-columns: minmax(120px, 200px) 1fr; }
+.site-answers dd { white-space: pre-wrap; }
+.site-refused { display: block; }
+.site-refused ul { margin: 6px 0 0; padding-left: 20px; font-size: 13px; overflow-wrap: anywhere; }
+.site-say { margin: 12px 0 0; }
+.site-say.hint { color: var(--text-2); font-size: 13px; }
+
+@media (max-width: 640px) {
+  .site-card { padding: 16px; }
+  .site-card .table-wrap { margin: 0 -16px 12px; }
+  .site-card table th:first-child, .site-card table td:first-child { padding-left: 16px; }
+  .site-page .btn { min-height: 40px; }
+  .site-step input[type="checkbox"], .site-ticks input[type="checkbox"], .site-card .check-line input[type="checkbox"] { width: 20px; height: 20px; }
+  .site-answers { grid-template-columns: minmax(0, 1fr); gap: 2px 0; }
+  .site-answers dd { margin-bottom: 8px; }
+  .site-qr-row { flex-direction: column; }
+}

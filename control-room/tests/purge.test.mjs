@@ -184,6 +184,34 @@ test("old processed inbound mail goes too, but never the newest row", async () =
   assert.deepEqual((await DB.prepare("SELECT place_id FROM prospects").all()).results.map((x) => x.place_id), ["fresh"]);
 });
 
+// Stage 10: every client site's privacy page says "Enquiries are kept for 12 months." (09-build.md section 8), so the
+// month's finishing batch also deletes site_leads received before the cutoff and the enquiry emails about them. The
+// client itself, its other mail and recent enquiries stay.
+test("client-site enquiries older than 12 months go, with their enquiry emails; recent ones and other client mail stay", async () => {
+  const DB = fakeD1();
+  await lead(DB, "pc");
+  await insert(DB, "clients", {
+    id: "c1", name: "Smith Roofing", place_id: "pc", package: "full", build_fee_pence: 195000, monthly_pence: 24900,
+    free_days: 60, paid_on: "2025-01-01", created_at: T,
+  });
+  const enquiry = (id, at, message_id) => insert(DB, "site_leads", {
+    id, client_id: "c1", source: "form", name: "Dave", phone: "07700 900123", message: "Leaking roof", page: "/contact",
+    notified_at: message_id ? at : null, message_id, created_at: at, updated_at: at,
+  });
+  await enquiry("old1", "2025-06-01T09:00:00Z", "enquiry:old1");
+  await enquiry("old2", "2025-10-21T22:59:59Z", null); // a second before the cutoff, never emailed
+  await enquiry("new1", "2025-10-21T23:00:00Z", "enquiry:new1"); // exactly at the cutoff: kept
+  await message(DB, "enquiry:old1", "pc", "system", "2025-06-01T09:00:00Z");
+  await message(DB, "enquiry:new1", "pc", "system", "2025-10-21T23:00:00Z");
+  await message(DB, "welcome:c1", "pc", "system", "2025-01-01T09:00:00Z"); // the client's own old mail stays
+  const counter = countingDB(DB);
+  assert.equal(await purgeStep.run({ DB: counter.DB, env: {}, now: NOW, budget: { left: () => 30 - counter.used() } }), "nothing to purge");
+  assert.deepEqual((await DB.prepare("SELECT id FROM site_leads ORDER BY id").all()).results.map((x) => x.id), ["new1"]);
+  assert.deepEqual((await DB.prepare("SELECT id FROM messages ORDER BY id").all()).results.map((x) => x.id), ["enquiry:new1", "welcome:c1"]);
+  assert.ok(await DB.prepare("SELECT id FROM clients WHERE id = 'c1'").first(), "the client stays");
+  assert.equal(await getSetting(DB, "purge:month"), "2026-10");
+});
+
 test("a backlog bigger than the budget says more next tick and finishes later", async () => {
   const DB = fakeD1();
   for (let i = 0; i < 95; i++) {

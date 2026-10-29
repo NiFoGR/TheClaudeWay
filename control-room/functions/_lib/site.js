@@ -176,8 +176,8 @@ function footer(business, contact, now) {
 
 /**
  * The landing page at `now` (the weekend deal on Saturday and Sunday, UK time). `extras` are the switches
- * offer:chatbot_live and offer:review_booster_live: the review lines show only while `reviews` is on, and nothing
- * here mentions the chatbot (stage 10 writes its lines, behind `chatbot`).
+ * offer:chatbot_live and offer:review_booster_live: the review lines show only while `reviews` is on, the chat
+ * assistant lines (stage 10, docs/rebuild/09-build.md section 11) only while `chatbot` is on.
  */
 export function renderLanding({ business, contactEmail, now = new Date(), extras = { chatbot: false, reviews: false } } = {}) {
   const contact = contactFor(contactEmail);
@@ -185,6 +185,7 @@ export function renderLanding({ business, contactEmail, now = new Date(), extras
   const offer = offerFor(now);
   const full = offer.full;
   const reviews = Boolean(extras?.reviews);
+  const chatbot = extras?.chatbot === true;
   // The struck-through price is the real weekday price (offer.js); screen readers hear "Was … now …".
   const was = full.wasBuild ? `<span class="sr">Was </span><s>${formatPounds(full.wasBuild)}</s> <span class="sr">now </span>` : "";
 
@@ -211,7 +212,7 @@ export function renderLanding({ business, contactEmail, now = new Date(), extras
 <ul class="gets">
 <li><strong>A website that wins work.</strong> Written for your trade and your town, with your own photos, your reviews and an easy way to call or message you. Live in 7 days.</li>
 <li><strong>Found on Google.</strong> We set up and look after your Google Business Profile and your site, so people searching for your service in your area find you first.</li>
-${reviews ? "<li><strong>More reviews, the honest way.</strong> Your Google review link, a QR card for jobs, and ready-to-send messages to ask every customer.</li>\n" : ""}<li><strong>Looked after every month.</strong> Hosting, updates and changes, plus a short monthly report on where you rank and how your reviews are growing.</li>
+${reviews ? "<li><strong>More reviews, the honest way.</strong> Your Google review link, a QR card for jobs, and ready-to-send messages to ask every customer.</li>\n" : ""}${chatbot ? "<li><strong>Never miss an enquiry.</strong> A chat assistant on your website answers questions and passes enquiries to you, day and night.</li>\n" : ""}<li><strong>Looked after every month.</strong> Hosting, updates and changes, plus a short monthly report on where you rank and how your reviews are growing.</li>
 </ul>
 </div>
 </section>
@@ -226,7 +227,7 @@ ${offer.weekend ? '<p class="tag">Weekend deal: ends Sunday midnight</p>\n' : ""
 <li>${BUILD_GUARANTEE}</li>
 <li>${GUARANTEE.headline}</li>
 <li>Google Business Profile set up and looked after</li>
-${reviews ? "<li>Review booster</li>\n" : ""}<li>Monthly care and report</li>
+${reviews ? "<li>Review booster</li>\n" : ""}${chatbot ? "<li>Chat assistant on your website, day and night</li>\n" : ""}<li>Monthly care and report</li>
 </ul>
 </div>
 <div class="card">

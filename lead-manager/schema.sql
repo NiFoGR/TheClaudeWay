@@ -464,6 +464,83 @@ CREATE TABLE IF NOT EXISTS onboarding (
   created_at   TEXT NOT NULL
 );
 
+-- Stage 10: one website per client, served by hostname from the same Pages project.
+CREATE TABLE IF NOT EXISTS client_sites (
+  client_id    TEXT PRIMARY KEY,
+  slug         TEXT NOT NULL UNIQUE,           -- preview /c/<slug>/, temporary link /w/<slug>/
+  place_id     TEXT,                           -- the lead (reviews, review link)
+  host         TEXT UNIQUE,                    -- canonical host, lower-case, e.g. www.smithroofing.co.uk; NULL until known
+  content      TEXT,                           -- JSON SiteContent v1 (09-build.md section 5)
+  status       TEXT NOT NULL DEFAULT 'draft',  -- draft | review | live | off
+  change_notes TEXT,                           -- Nik's "Ask Claude for changes", cleared when content is posted
+  domain       TEXT NOT NULL DEFAULT '{}',     -- JSON {mode, domain, registrar, email_on_it, choices[], nameservers[], steps: {id: done_at}}
+  review_url   TEXT,                           -- Google write-a-review link
+  host_check   TEXT,                           -- JSON {at, ok, detail, fails}
+  seen_at      TEXT,                           -- first https request served on the canonical host
+  is_test      INTEGER NOT NULL DEFAULT 0,     -- test client: noindex, chat ignores the offer switch
+  features     TEXT NOT NULL DEFAULT '{}',     -- JSON {chatbot?: false, review_booster?: false}; missing = on (setSiteFeature)
+  last_errors  TEXT,                           -- JSON [..] from the last refused content POST
+  approved_at  TEXT,
+  live_at      TEXT,
+  content_at   TEXT,
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS client_sites_status ON client_sites (status);
+
+-- Enquiries from client sites (contact form and chat).
+CREATE TABLE IF NOT EXISTS site_leads (
+  id          TEXT PRIMARY KEY,
+  client_id   TEXT NOT NULL,
+  source      TEXT NOT NULL,                   -- form | chat
+  name        TEXT,
+  phone       TEXT,
+  email       TEXT,
+  message     TEXT NOT NULL DEFAULT '',        -- form message, or the chat transcript
+  page        TEXT,                            -- path the visitor was on
+  session     TEXT,                            -- chat session id: one lead per chat
+  notified_at TEXT,                            -- when the email to the business was queued
+  message_id  TEXT,                            -- messages.id of that email
+  created_at  TEXT NOT NULL,
+  updated_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS site_leads_client ON site_leads (client_id, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS site_leads_session ON site_leads (client_id, session);
+
+-- Chat messages per site per UK day (limits, monthly report, health).
+CREATE TABLE IF NOT EXISTS chat_usage (
+  client_id  TEXT NOT NULL,
+  day        TEXT NOT NULL,                    -- UK date YYYY-MM-DD
+  messages   INTEGER NOT NULL DEFAULT 0,
+  fallbacks  INTEGER NOT NULL DEFAULT 0,
+  ai_errors  INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (client_id, day)
+);
+
+-- Photos and logos copied into D1 so sites never hot-link their old host.
+CREATE TABLE IF NOT EXISTS site_files (
+  id         TEXT PRIMARY KEY,                 -- 32 random hex chars, served at /s/f/<id>
+  client_id  TEXT NOT NULL,
+  kind       TEXT NOT NULL,                    -- photo | logo
+  mime       TEXT NOT NULL,                    -- image/jpeg | image/png | image/webp | image/gif
+  bytes      BLOB NOT NULL,                    -- ≤ 400 KB
+  size       INTEGER NOT NULL,
+  width      INTEGER NOT NULL,                 -- read from the image header (every <img> gets width/height)
+  height     INTEGER NOT NULL,
+  source_url TEXT,                             -- NULL for Nik's uploads
+  alt        TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS site_files_client ON site_files (client_id);
+
+-- Per-visitor counters (chat and contact form limits); pruned after 48 h.
+CREATE TABLE IF NOT EXISTS rate_hits (
+  key   TEXT NOT NULL,                         -- chat:<client_id>:<visitor> | form:<client_id>:<visitor>
+  win   TEXT NOT NULL,                         -- UTC hour "YYYY-MM-DDTHH"
+  count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (key, win)
+);
+
 -- Every Stripe webhook event seen, and what the handler did (stage 9): a repeat of a stored id changes nothing.
 CREATE TABLE IF NOT EXISTS stripe_events (
   id      TEXT PRIMARY KEY,   -- Stripe event id

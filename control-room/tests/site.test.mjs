@@ -134,6 +134,30 @@ test("middleware: /d/abc on the root host goes to its function with no cookie", 
   assert.equal(nexts.length, 1);
 });
 
+// Stage 10 (09-build.md Task 13): client-site photos and logos are served at /s/f/<id> on our host too (previews).
+test("middleware: /s/f/abc on the root host goes to its function with no cookie", async () => {
+  for (const method of ["GET", "HEAD"]) {
+    const { call, nexts } = site();
+    const res = await call("https://aetoswebsites.com/s/f/abc", { method });
+    assert.equal(res.status, 200, method);
+    assert.equal(res.headers.get("set-cookie"), null, method);
+    if (method === "GET") assert.equal(await res.text(), "from next");
+    assert.equal(nexts.length, 1, method);
+  }
+});
+
+// Stage 10 (09-build.md Task 23): the temporary public link to a client's site, /w/<slug>/…, is public on our host.
+test("middleware: /w/abc/ on the root host goes to its function with no cookie", async () => {
+  for (const method of ["GET", "HEAD"]) {
+    const { call, nexts } = site();
+    const res = await call("https://aetoswebsites.com/w/abc/", { method });
+    assert.equal(res.status, 200, method);
+    assert.equal(res.headers.get("set-cookie"), null, method);
+    if (method === "GET") assert.equal(await res.text(), "from next");
+    assert.equal(nexts.length, 1, method);
+  }
+});
+
 test("middleware: /api/agent/heartbeat on the root host is a 404", async () => {
   const { call, nexts } = site();
   const res = await call("https://aetoswebsites.com/api/agent/heartbeat", { method: "POST", body: "{}" });
@@ -262,8 +286,28 @@ test("landing: the review lines appear once each, and only with extras.reviews",
   const html = landing({ extras: { chatbot: false, reviews: true } });
   assert.equal(count(html, "Review booster"), 1);
   assert.equal(count(html, "More reviews, the honest way"), 1);
-  // The chatbot is stage 10's to write: nothing about it here even with the switch on.
-  assert.doesNotMatch(landing({ extras: { chatbot: true } }), /chatbot|chat assistant/i);
+  // The chat assistant lines are behind extras.chatbot alone (stage 10's test below).
+  assert.doesNotMatch(html, /chatbot|chat assistant/i);
+});
+
+test("landing: extras.chatbot adds the two chat assistant lines once each (stage 10, Task 27)", () => {
+  const html = landing({ extras: { chatbot: true, reviews: false } });
+  assert.equal(count(html, "Never miss an enquiry."), 1);
+  assert.equal(count(html, "Chat assistant on your website, day and night"), 1);
+  // "Never miss an enquiry." sits under "What you get"; the bullet in the Full Package card, not Website Only's.
+  const gets = html.slice(html.indexOf("<h2>What you get</h2>"), html.indexOf('id="prices"'));
+  assert.ok(gets.includes("<li><strong>Never miss an enquiry.</strong> A chat assistant on your website answers questions and passes enquiries to you, day and night.</li>"));
+  const fullCard = html.slice(html.indexOf("<h3>Full Package</h3>"), html.indexOf("<h3>Website Only</h3>"));
+  const websiteCard = html.slice(html.indexOf("<h3>Website Only</h3>"), html.indexOf("The 7 days start"));
+  assert.ok(fullCard.includes("<li>Chat assistant on your website, day and night</li>"));
+  assert.ok(!websiteCard.includes("Chat assistant"));
+  // After the reviews items when both switches are on.
+  const both = landing({ extras: { chatbot: true, reviews: true } });
+  assert.ok(both.indexOf("More reviews, the honest way") < both.indexOf("Never miss an enquiry."));
+  assert.ok(both.indexOf("<li>Review booster</li>") < both.indexOf("<li>Chat assistant on your website, day and night</li>"));
+  // Default extras, and anything but exactly true, still show nothing about a chat.
+  assert.doesNotMatch(landing(), /chatbot|chat assistant/i);
+  assert.doesNotMatch(landing({ extras: { chatbot: "1" } }), /chatbot|chat assistant/i);
 });
 
 test("landing footer: the trader line when both are filled, else just 'Aetos Websites'", () => {
@@ -485,7 +529,7 @@ test("rootHostFor: a database error gives the default and isn't cached", async (
 
 test("middleware: every public path on the root host reaches its function without a cookie", async () => {
   // A stage adding a public prefix adds it here too.
-  for (const path of ["/logo.png", "/favicon.png", "/apple-touch-icon.png", "/d/abc", "/d/abc/order", "/onboard/tok123", "/s/f/0123", "/s/chat.js", "/api/tick", "/api/tick?reason=cron"]) {
+  for (const path of ["/logo.png", "/favicon.png", "/apple-touch-icon.png", "/d/abc", "/d/abc/order", "/onboard/tok123", "/s/f/0123", "/s/chat.js", "/w/abc/", "/w/abc/about", "/api/tick", "/api/tick?reason=cron"]) {
     const { call, nexts } = site();
     const res = await call(`https://aetoswebsites.com${path}`);
     assert.equal(res.status, 200, path);
@@ -498,7 +542,7 @@ test("middleware: every public path on the root host reaches its function withou
 });
 
 test("middleware: everything else on the root host is the 404 page, even with the login cookie", async () => {
-  for (const path of ["/index.html", "/login.html", "/style.css", "/js/app.js", "/robots", "/api/leads", "/api/setup", "/api/agent/x", "/logout", "/d", "/onboard", "/s", "/privacy/x", "/anything"]) {
+  for (const path of ["/index.html", "/login.html", "/style.css", "/js/app.js", "/robots", "/api/leads", "/api/setup", "/api/agent/x", "/logout", "/d", "/onboard", "/s", "/w", "/c/abc/", "/privacy/x", "/anything"]) {
     for (const headers of [{}, { cookie: COOKIE }]) {
       const { call, nexts } = site();
       const res = await call(`https://aetoswebsites.com${path}`, { headers });
@@ -582,10 +626,30 @@ test("middleware: *.pages.dev hosts and paths public on every host never query D
   assert.equal((await call("https://abc123.goldbarwebsites.pages.dev/api/leads")).status, 401);
   assert.equal((await call("https://goldbarwebsites.pages.dev/api/agent/heartbeat")).status, 200);
   for (const path of ["/api/tick?reason=cron", "/api/tick?reason=health", "/d/abc", "/onboard/x", "/s/x", "/api/stripe/webhook", "/logo.png"]) {
-    assert.equal((await call(`https://control.aetoswebsites.com${path}`)).status, 200, path);
     assert.equal((await call(`https://aetoswebsites.com${path}`)).status, 200, path);
   }
   assert.equal(counted.used(), 0);
+  // Stage 10 (09-build.md Task 22): hosts under aetoswebsites.com other than site-test (control.aetoswebsites.com
+  // included) skip the client_sites lookup, and /api/*, which client sites never serve, skips it on every host, so
+  // the tick keeps its whole 50 on any host.
+  for (const path of ["/api/tick?reason=cron", "/api/tick?reason=health", "/api/stripe/webhook", "/d/abc", "/onboard/x", "/s/x", "/logo.png"]) {
+    assert.equal((await call(`https://control.aetoswebsites.com${path}`)).status, 200, path);
+  }
+  assert.equal(counted.used(), 0);
+  // A client's bare domain: a www host also costs stage 0's root-host read (it may be www.<root>), counted elsewhere.
+  for (const host of ["site-test.aetoswebsites.com", "smithroofing.co.uk"]) {
+    for (const path of ["/api/tick?reason=cron", "/api/tick?reason=health", "/api/stripe/webhook"]) {
+      const before = counted.used();
+      assert.equal((await call(`https://${host}${path}`)).status, 200, `${host}${path}`);
+      assert.equal(counted.used() - before, 0, `${host}${path}: /api/* never looks a host up`);
+    }
+    // The test client's host and a client's own domain are looked up (1 read); no row → stage 0's routing.
+    for (const path of ["/d/abc", "/onboard/x", "/s/x", "/logo.png"]) {
+      const before = counted.used();
+      assert.equal((await call(`https://${host}${path}`)).status, 200, `${host}${path}`);
+      assert.equal(counted.used() - before, 1, `${host}${path}: only the client_sites lookup`);
+    }
+  }
 });
 
 test("middleware: the Control Room host is otherwise unchanged (agent API, login, logged in)", async () => {
@@ -653,7 +717,7 @@ async function prefixStub(prefix) {
 }
 
 test("catch-all stubs: every public prefix has one, and it's the branded 404 page (GET, POST and HEAD)", async () => {
-  for (const prefix of ["d", "onboard", "s"]) assert.ok(PREFIX_STUBS.includes(prefix), `read ${prefix} from PUBLIC_PREFIXES`);
+  for (const prefix of ["d", "onboard", "s", "w"]) assert.ok(PREFIX_STUBS.includes(prefix), `read ${prefix} from PUBLIC_PREFIXES`);
   for (const prefix of PREFIX_STUBS) {
     const stub = await prefixStub(prefix);
     assert.equal(typeof stub, "function", prefix);
@@ -676,7 +740,7 @@ test("catch-all stubs: every public prefix has one, and it's the branded 404 pag
 });
 
 test("middleware + stubs: unbuilt /onboard/*, /s/* and bare /d/ are the 404 page on both hosts, never the Control Room", async () => {
-  for (const [path, prefix] of [["/s/x", "s"], ["/onboard/abc", "onboard"], ["/onboard/", "onboard"], ["/d/", "d"], ["/d/abc/foo", "d"]]) {
+  for (const [path, prefix] of [["/s/x", "s"], ["/onboard/abc", "onboard"], ["/onboard/", "onboard"], ["/d/", "d"], ["/d/abc/foo", "d"], ["/w/", "w"]]) {
     const stub = await prefixStub(prefix);
     for (const host of ["aetoswebsites.com", "goldbarwebsites.pages.dev", "control.aetoswebsites.com"]) {
       const env = { CONTROL_ROOM_PASSWORD: PASSWORD, DB: fakeD1() };

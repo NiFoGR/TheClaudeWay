@@ -1,10 +1,13 @@
 // Password gate for the whole Control Room. One password (CONTROL_ROOM_PASSWORD), a signed cookie for 30 days.
-// Before it, host routing: the root domain (site:root_host, default aetoswebsites.com) is the public website.
+// Before it, host routing: a host that isn't ours and has a client_sites row is that client's website
+// (_lib/sites/serve.js, stage 10); the root domain (site:root_host, default aetoswebsites.com) is the public website.
 import {
   DEFAULT_CONTACT, PRIVACY_UPDATED, ROBOTS, loadSiteSettings, renderLanding, renderNotFound, renderPrivacy, rootHostFor,
   siteResponse,
 } from "./_lib/site.js";
 import { readCookie, safeEqual, SESSION_COOKIE, sessionToken } from "./_lib/session.js";
+import { isOurHost } from "./_lib/sites/hosts.js";
+import { serveClientHost } from "./_lib/sites/serve.js";
 import { db } from "./_lib/util.js";
 
 // The login cookie (SESSION_COOKIE) and its token live in _lib/session.js, unchanged, so the demo beacon can tell Nik's
@@ -13,14 +16,16 @@ import { db } from "./_lib/util.js";
 // /api/stripe/webhook is called by Stripe, not you: it checks Stripe's signature instead of the login cookie.
 // /d/<slug> are the prospects' demo sites (public, unguessable links, never indexed).
 // /api/tick is called by the mail relay Worker's cron: it only does work that is already due, under a lease, and
-// reads nothing but ?reason. /onboard/<token> is a paying client's onboarding form (unguessable link), and /s/* are
-// the files, chat and contact form of client websites, which their visitors use without logging in.
+// reads nothing but ?reason. /onboard/<token> is a paying client's onboarding form (unguessable link), /s/* are
+// the files, chat and contact form of client websites, which their visitors use without logging in, and
+// /w/<slug>/ is the temporary link to a live client site (unguessable slug). Nik's preview /c/<slug>/ stays behind
+// the login.
 const PUBLIC_PATHS = new Set(["/login", "/login.html", "/style.css", "/favicon.png", "/logo.png", "/apple-touch-icon.png", "/robots.txt", "/api/stripe/webhook", "/api/tick"]);
 // Public on every host, the root domain included. A stage adding a public prefix adds it here (this one list serves
 // both hosts) and to the root-host list in tests/site.test.mjs. Each prefix has a catch-all
 // functions/<prefix>/[[path]].js that is the 404 page, so a path nothing answers yet never falls through to Pages'
 // single-page-app fallback (the Control Room's index.html, with 200, without a login).
-const PUBLIC_PREFIXES = ["/d/", "/onboard/", "/s/"];
+const PUBLIC_PREFIXES = ["/d/", "/onboard/", "/s/", "/w/"];
 
 const redirect = (to, headers = {}) => new Response(null, { status: 303, headers: { location: to, ...headers } });
 
@@ -76,8 +81,13 @@ async function publicSite(request, env, url) {
   return null;
 }
 
-export async function onRequest({ request, env, next }) {
+export async function onRequest(context) {
+  const { request, env, next } = context;
   const url = new URL(request.url);
+  // Stage 10: a client's website on their own domain (any host that isn't ours with a client_sites row), before the
+  // public site, the login gate and the password check. No row (null) → everything below, unchanged.
+  const host = url.hostname;
+  if (!isOurHost(host)) { const r = await serveClientHost(context); if (r) return r; }
   const site = await publicSite(request, env, url);
   if (site) return site;
   if (!env.CONTROL_ROOM_PASSWORD) {
@@ -97,7 +107,7 @@ export async function onRequest({ request, env, next }) {
     return redirect("/login", { "set-cookie": `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0${secure}` });
   }
   if (PUBLIC_PATHS.has(url.pathname)) return next();
-  // demo sites (prospects open these from our emails), onboarding forms and client-site files
+  // demo sites (prospects open these from our emails), onboarding forms, client-site files and temporary links
   if (PUBLIC_PREFIXES.some((prefix) => url.pathname.startsWith(prefix))) return next();
   // /api/agent/* is for Claude's Routines, which send a Bearer token instead of the login cookie: each function checks
   // it itself (requireAgent: the access key made on Setup → Claude, or a 24+ character OUTREACH_AGENT_TOKEN; the older

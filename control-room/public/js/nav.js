@@ -25,7 +25,9 @@ const decode = (s) => { try { return decodeURIComponent(s); } catch { return s; 
 
 /**
  * The hash → {page, id, params}. `params` is the query after "?" (URLSearchParams); `id` the decoded id of
- * #/lead/<id>, #/replies/<id> and #/call/<id> (else absent). #/lead/<id>/thread opens that lead's Replies thread.
+ * #/lead/<id>, #/replies/<id>, #/call/<id> and #/site/<client_id> (else absent). #/lead/<id>/thread opens that lead's
+ * Replies thread. #/sites (and a bare #/site) is stage 10's Sites list, #/site/<client_id> one client's Site page:
+ * routed, never nav items (docs/rebuild/09-build.md section 13).
  * "", "#/", "/#/", the old Home, Roadmap and Outreach links, and anything unknown open Todo.
  */
 export function routeFor(hash) {
@@ -43,6 +45,8 @@ export function routeFor(hash) {
   }
   if (first === "replies") return tail ? { page: "replies", id: decode(tail), params } : { page: "replies", params };
   if (first === "call" && tail) return { page: "call", id: decode(tail), params };
+  if (first === "sites") return { page: "sites", params };
+  if (first === "site") return tail ? { page: "site", id: decode(tail), params } : { page: "sites", params };
   return { page: "todo", params };
 }
 

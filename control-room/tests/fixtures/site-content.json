@@ -1,0 +1,469 @@
+{
+  "version": 1,
+  "keyword": "roofer Swindon",
+  "primary_category": "Roofing contractor",
+  "business": {
+    "name": "Smith Roofing",
+    "phone": "01793 123456",
+    "email": "info@smithroofing.co.uk",
+    "address": {
+      "street": "12 High St",
+      "town": "Swindon",
+      "postcode": "SN1 1AA"
+    },
+    "show_address": false,
+    "legal_line": "John Smith trading as Smith Roofing",
+    "hours": "Mon–Fri 8am–6pm",
+    "socials": [
+      "https://www.facebook.com/smithroofing"
+    ],
+    "trade": "roofer"
+  },
+  "theme": {
+    "main": "#1e4f86",
+    "logo": "https://smithroofing.co.uk/images/logo.png"
+  },
+  "facts": [
+    {
+      "text": "Started in 2009",
+      "source": "form"
+    },
+    {
+      "text": "10-year guarantee on new roofs",
+      "source": "form"
+    },
+    {
+      "text": "Free quotes",
+      "source": "form"
+    },
+    {
+      "text": "Emergency call-outs",
+      "source": "form"
+    },
+    {
+      "text": "Opening hours: Mon–Fri 8am–6pm",
+      "source": "form"
+    },
+    {
+      "text": "Works on slate and tiled roofs, flat roofs and chimneys",
+      "source": "https://smithroofing.co.uk/about"
+    }
+  ],
+  "pages": [
+    {
+      "key": "home",
+      "path": "/",
+      "title": "Roofing contractor in Swindon | Smith Roofing – Roof repairs, flat roofs",
+      "meta": "Roof repairs, flat roofs and chimney work across Swindon, Wroughton and Old Town. Free quotes from John, a local roofer. Call 01793 123456.",
+      "h1": "Roofing contractor in Swindon",
+      "intro": "Smith Roofing looks after roofs across Swindon, from a single slipped tile to a full flat roof on an extension. Call 01793 123456 and John will come out, look at the problem and tell you plainly what it needs.",
+      "sections": [
+        {
+          "h2": "Roof repairs",
+          "body": "Most calls we get start with a damp patch on a ceiling or a tile on the lawn after a windy night. A small fault left alone lets water into the timbers, so it is worth a look before it spreads.\n\nWe find where the water is really getting in, which is not always right above the stain, and fix that first. Read more about [roof repairs in Swindon](/services/roof-repairs)."
+        },
+        {
+          "h2": "Flat roofs",
+          "body": "Garages, dormers, porches and kitchen extensions across the town often have flat roofs that were laid quickly and have now had enough. Puddles that stay for days and blisters in the felt are the usual signs.\n\nWe strip the old covering, check the deck underneath and lay a new one that drains properly. See how we handle [flat roofs](/services/flat-roofs)."
+        },
+        {
+          "h2": "Chimney repairs",
+          "body": "Chimneys take the worst of the weather. Loose pots, crumbling mortar and tired lead flashing are behind a lot of leaks we are asked to trace in older homes.\n\nWe repoint, rebuild the top courses or renew the flashing so the stack stays solid. More on [chimney repairs](/services/chimney-repairs)."
+        },
+        {
+          "h2": "Where we work",
+          "body": "We are based in Swindon and cover the whole town and the villages around it. We are often up on roofs in [Wroughton](/areas/wroughton) and among the Victorian terraces of [Old Town](/areas/old-town).\n\nIf you are not sure whether you are on our patch, just ring and ask. A quick call costs nothing and saves you waiting on someone who cannot get to you."
+        },
+        {
+          "h2": "What you can expect",
+          "body": "- A free quote after we have seen the roof, not a guess over the phone\n- Photos of the problem so you can see what we see\n- A clear plan of what needs doing now and what can wait\n- Emergency call-outs when a storm leaves your home open to the rain\n- A 10-year guarantee on new roofs"
+        }
+      ],
+      "faq": [
+        {
+          "q": "How quickly can you come out?",
+          "a": "For a leak we try to visit within a day or two. For planned work we agree a start date with you and stick to it, weather allowing."
+        },
+        {
+          "q": "Do you charge to look at the roof?",
+          "a": "No. We come out, look at the problem and give you a free quote before any work starts."
+        },
+        {
+          "q": "Can you help after storm damage?",
+          "a": "Yes. We offer emergency call-outs to make a roof safe and watertight, then come back to finish the repair properly once the weather settles."
+        }
+      ],
+      "photo": 0
+    },
+    {
+      "key": "service",
+      "path": "/services/roof-repairs",
+      "name": "Roof repairs",
+      "title": "Roof repairs in Swindon | Smith Roofing",
+      "meta": "Leaking roof or slipped tiles in Swindon? John finds where the water gets in and fixes it properly. Free quotes, call 01793 123456.",
+      "h1": "Roof repairs in Swindon",
+      "intro": "A roof can look fine from the street and still be letting water in. We trace the fault, repair what is broken and leave the rest of the roof sound, so the same leak does not come back next winter.",
+      "sections": [
+        {
+          "h2": "What a roof repair involves",
+          "body": "Every repair starts with a proper look. We go up, check the tiles or slates around the problem, look at the valleys, the ridge and the flashing, and often check the loft from inside as well. Water travels along felt and timbers, so the stain on your ceiling can be a metre or two away from the real hole.\n\nOnce we know the cause we explain it to you in plain words, with photos. Then we replace broken or slipped tiles, rebed loose ridge tiles, patch torn felt and renew any lead that has split. On slate roofs we use matching slates and copper or stainless clips so the repair blends in and holds.\n\nSmall jobs are often done in a single visit. Bigger repairs, where several areas have failed at once, may need scaffolding and a few days on site, and we tell you that before we start."
+        },
+        {
+          "h2": "Signs your roof needs looking at",
+          "body": "- A damp patch or brown ring on an upstairs ceiling\n- Tiles or slates on the ground, or gaps you can see from the garden\n- Daylight showing through the roof when you are in the loft\n- Moss building up so thickly that it lifts the edges of tiles\n- Dripping or a musty smell in the loft after heavy rain\n\nIf you spot any of these, it is cheaper to deal with it now than after the water has soaked the timbers and the plaster."
+        },
+        {
+          "h2": "How we do the work",
+          "body": "We book a time that suits you and turn up when we say. Ladders and roof ladders go up carefully, and we protect gutters, plants and anything below the work area. If the job needs a tower or scaffold we arrange it and keep the access clear for you and your neighbours.\n\nOld and broken material comes down in bags, not thrown into your garden. At the end of each day we sweep up, check the gutters for debris and make the roof safe and watertight if the job runs over. When we finish, we show you photos of the repaired area so you know exactly what was done."
+        },
+        {
+          "h2": "What affects the cost of a repair",
+          "body": "No two repairs are the same, so we always quote after seeing the roof. The main things that change the price are how easy the area is to reach, whether we need scaffolding, the type of tile or slate, and how far the damage has spread underneath.\n\nA couple of slipped tiles on a bungalow are a very different job from a leaking valley on a three-storey house. We give you a written free quote that lists what we will do, so you can compare it fairly and decide in your own time."
+        },
+        {
+          "h2": "Why people around Swindon call us",
+          "body": "John has been repairing roofs in the town since 2009, and he still comes out to every job himself. You deal with the person who looks at your roof and does the work, not a call centre.\n\nWe would rather fix the small fault you called about than talk you into a new roof you do not need. When a roof really is past saving we say so honestly, and explain why."
+        },
+        {
+          "h2": "We also cover",
+          "body": "We carry out roof repairs all over Swindon and nearby. We are often working on cottages and bungalows in [Wroughton](/areas/wroughton) and on the tall terraces of [Old Town](/areas/old-town). If you would like us to take a look, [get in touch](/contact)."
+        }
+      ],
+      "faq": [
+        {
+          "q": "Can you repair a roof in the rain?",
+          "a": "We can make a leaking roof safe in poor weather with a temporary cover, but proper repairs to tiles, felt and lead are done when the roof is dry so they last."
+        },
+        {
+          "q": "Will a repair match my existing tiles?",
+          "a": "We match the colour and profile as closely as we can, using reclaimed tiles or slates where needed so the repair does not stand out."
+        },
+        {
+          "q": "Do I need to be home while you work?",
+          "a": "Not usually. We need access to the outside, and sometimes the loft for a few minutes at the start so we can see where the water is coming in."
+        },
+        {
+          "q": "How long does a typical repair take?",
+          "a": "Most small repairs take a few hours. Larger jobs that need scaffolding usually take two or three days, and we agree the timing with you first."
+        }
+      ],
+      "photo": 0
+    },
+    {
+      "key": "service",
+      "path": "/services/flat-roofs",
+      "name": "Flat roofs",
+      "title": "Flat roofs in Swindon | Smith Roofing",
+      "meta": "New flat roofs and flat roof repairs on garages, dormers and extensions in Swindon. Free quotes from a local roofer. Call 01793 123456.",
+      "h1": "Flat roofs in Swindon",
+      "intro": "Flat roofs on garages, porches, dormers and kitchen extensions take a beating from standing water and sun. We repair the ones worth saving and replace the ones that are not, with a covering that sheds water and lasts.",
+      "sections": [
+        {
+          "h2": "What the job involves",
+          "body": "A new flat roof is more than a fresh layer on top. We strip the old felt or covering back to the deck, check the boards for rot and replace any that are soft. Where water has been sitting in hollows we add firrings so the new roof falls towards the gutter.\n\nThen we lay the new covering. Depending on the roof, that might be a modern felt system, a single-piece rubber membrane or a fibreglass finish. We fit new trims and edge details, dress the covering up walls with proper upstands, and make sure the outlet or gutter takes the water away cleanly.\n\nFor smaller faults, such as a split along a joint or a blister in otherwise sound felt, a careful repair can buy a roof several more seasons. We tell you honestly which of the two makes sense."
+        },
+        {
+          "h2": "Signs your flat roof is failing",
+          "body": "- Puddles that are still there two or three days after rain\n- Bubbles, cracks or splits in the felt\n- Damp or staining on the ceiling under the roof\n- A spongy feel when you press on the deck near the edges\n- Gravel or chippings washing into the gutter\n\nFlat roofs often fail slowly and then all at once, so an early look can save you a ceiling."
+        },
+        {
+          "h2": "How we do it",
+          "body": "We start by agreeing a date and checking the forecast, because new coverings need a dry day to bond properly. On the day we protect the area around the roof, take off the old covering in sections and bag the waste as we go.\n\nIf the deck is sound the job is often finished in one or two days. Where boards need replacing we show you before we carry on. We leave the site clean, run water across the finished roof to check it drains, and send you photos of the new covering and the edges."
+        },
+        {
+          "h2": "What affects the cost",
+          "body": "The size of the roof is the obvious one, but it is not the only thing. The state of the deck, how many boards need replacing, the covering you choose and how easy the roof is to reach all change the price.\n\nRoofs with roof lights, vents or awkward wall junctions take longer to detail properly. We go through the options with you and put everything in a written free quote, so there are no surprises halfway through."
+        },
+        {
+          "h2": "Why locals choose us",
+          "body": "We have laid flat roofs on garages and extensions all over Swindon since 2009. John is on site for every job, so the person who quoted it is the person who checks it is right.\n\nNew roofs come with a 10-year guarantee. We explain how to keep the outlet clear and what to look out for, so your roof stays in good shape for longer."
+        },
+        {
+          "h2": "We also cover",
+          "body": "As well as Swindon itself, we often replace garage and extension roofs in [Wroughton](/areas/wroughton) and on the back additions behind the terraces in [Old Town](/areas/old-town). To book a visit, [contact us](/contact)."
+        }
+      ],
+      "faq": [
+        {
+          "q": "Which flat roof covering is best?",
+          "a": "It depends on the roof. Rubber suits simple shapes, fibreglass suits roofs with lots of detail, and modern felt is a good all-rounder. We explain the choice for your roof."
+        },
+        {
+          "q": "Can you go over my old felt?",
+          "a": "We rarely recommend it. Laying over old felt hides rot in the deck and traps moisture, so we strip back and check the boards first."
+        },
+        {
+          "q": "Can a flat roof be walked on?",
+          "a": "Only if it is built for it. If you want to use a roof as a balcony or for access, tell us at the quote and we will plan the deck and covering for that."
+        }
+      ],
+      "photo": 1
+    },
+    {
+      "key": "service",
+      "path": "/services/chimney-repairs",
+      "name": "Chimney repairs",
+      "title": "Chimney repairs in Swindon | Smith Roofing",
+      "meta": "Chimney repointing, rebuilds and new lead flashing in Swindon. We stop leaks around the stack for good. Free quotes, call 01793 123456.",
+      "h1": "Chimney repairs in Swindon",
+      "intro": "The chimney is the most exposed part of most roofs. When mortar crumbles or the lead around the base splits, rain finds its way down into bedrooms and lofts. We repair stacks so they stay solid and dry.",
+      "sections": [
+        {
+          "h2": "What chimney repairs involve",
+          "body": "We start with a close look at the stack from a roof ladder or scaffold. We check the pots and the flaunching that holds them, the mortar joints, the bricks themselves and the lead flashing where the stack meets the roof.\n\nCommon fixes are raking out and repointing the joints, resetting loose pots on new flaunching and fitting cowls or caps on chimneys you no longer use. Where the top courses of brick have frost damage we take them down and rebuild them with matching bricks.\n\nLeaks around the base of a stack are usually down to old or badly fitted lead. We replace it with properly stepped and dressed flashing, tucked into the brickwork and sealed, so the joint between chimney and roof stays watertight."
+        },
+        {
+          "h2": "Signs your chimney needs work",
+          "body": "- Bits of brick or mortar in the gutter or on the patio\n- A pot that leans or has cracked\n- Damp patches on the chimney breast inside the house\n- Lead that has lifted, split or come away from the bricks\n- Plants growing out of the stack\n\nA loose pot or brick can fall a long way, so it is worth acting quickly once you notice any of these."
+        },
+        {
+          "h2": "How we do it",
+          "body": "Most chimney work needs safe access, so we usually put up a small scaffold around the stack. We arrange it, agree the dates with you and make sure it does not block your neighbours.\n\nWe sheet the roof below the stack to protect the tiles, bag all the old mortar and brick as it comes down, and tidy up at the end of every day. When the work is finished we send you photos of the stack, the pots and the new flashing."
+        },
+        {
+          "h2": "What affects the cost",
+          "body": "The height and position of the stack decide how much scaffolding is needed, which is often a big part of the job. After that it depends on how much repointing or rebuilding is required and whether the flashing needs replacing.\n\nShared chimneys on terraces sometimes mean talking to the neighbours, and we can help with that. Every job gets a written free quote after we have seen the chimney up close."
+        },
+        {
+          "h2": "Why people choose us",
+          "body": "John has been working on chimneys around Swindon since 2009 and knows the brick and stone used on the older houses here. You get straight answers about what your stack needs and what it does not.\n\nIf a chimney is no longer used, we can talk you through capping it or taking it down below the roofline, so you are not paying to maintain something you do not need.\n\nWe also check the rest of the roof while the scaffold is up and tell you about anything worth fixing at the same time, so you only pay for access once."
+        },
+        {
+          "h2": "We also cover",
+          "body": "We repair chimneys on cottages in [Wroughton](/areas/wroughton) and on the tall Victorian stacks of [Old Town](/areas/old-town), as well as right across Swindon. To arrange a look at yours, [get in touch](/contact)."
+        }
+      ],
+      "faq": [
+        {
+          "q": "Do I need a scaffold for chimney work?",
+          "a": "Usually, yes. A small scaffold around the stack lets us work safely and do the job properly, rather than leaning off a ladder."
+        },
+        {
+          "q": "Can you take my chimney down?",
+          "a": "Yes. If you no longer use it, we can take it down below the roofline and tile over it, which removes future upkeep."
+        },
+        {
+          "q": "Why is my chimney breast damp?",
+          "a": "It is often rain getting in through worn mortar, a missing cap or failed flashing. We find the cause before we suggest a repair."
+        }
+      ],
+      "photo": 2
+    },
+    {
+      "key": "area",
+      "path": "/areas/wroughton",
+      "name": "Wroughton",
+      "photo": 1,
+      "title": "Roofing contractor in Wroughton | Smith Roofing",
+      "meta": "Roof repairs, flat roofs and chimney work in Wroughton, just south of Swindon. Free quotes from John at Smith Roofing on 01793 123456.",
+      "h1": "Roofing contractor in Wroughton",
+      "intro": "Wroughton is only a short drive from our base in Swindon, and we look after roofs all over the village, from the cottages near the church to the newer homes towards Overtown.",
+      "sections": [
+        {
+          "h2": "Roofs in Wroughton",
+          "body": "The village sits under the edge of the Marlborough Downs, close to Barbury Castle and the old airfield. That high, open ground means wind sweeps across the rooftops, and ridge tiles and verges on exposed roofs take a lot of strain in winter.\n\nAlong the High Street and the lanes around St John the Baptist church there are stone and brick cottages with steep roofs and tall chimneys. Out towards Lower Wroughton and Elcombe there are more bungalows and post-war semis, many with flat roof garages and extensions."
+        },
+        {
+          "h2": "Jobs we often do here",
+          "body": "On the older cottages we are usually asked to deal with slipped tiles, worn lead and tired mortar on stacks. Our [roof repairs](/services/roof-repairs) page explains how we track down a leak before fixing it.\n\nPorches and bay roofs on the cottages are another weak spot, because the lead where they meet the wall tends to crack after many hard frosts on this side of the downs.\n\nGarages and kitchen extensions across the village tend to have [flat roofs](/services/flat-roofs) that start to hold water after a few winters. And the tall stacks on the period houses often need [chimney repairs](/services/chimney-repairs) after years in the wind."
+        },
+        {
+          "h2": "Getting to you",
+          "body": "From Swindon we come down the A4361 and can usually be with you quickly for a leak. For planned work we agree a day with you and turn up when we say.\n\nBeing so close means we can pop back easily to check a repair after the next spell of heavy rain, which gives you peace of mind once the work is finished.\n\nSome lanes in the village are narrow, so we think about parking and where a skip or scaffold can go before the job starts. If you would like a visit, [contact us](/contact) and we will arrange a time."
+        }
+      ],
+      "faq": [
+        {
+          "q": "Do you charge extra to come to Wroughton?",
+          "a": "No. Wroughton is part of our normal area, so there is no extra charge for the journey and the quote is free."
+        },
+        {
+          "q": "Can you work on old stone cottages in the village?",
+          "a": "Yes. We are used to the older cottages here and take care to match the tiles, slates and mortar so repairs suit the building."
+        },
+        {
+          "q": "Do you handle roofs on the newer estates too?",
+          "a": "Yes. We work on all kinds of homes in the village, including the newer houses and bungalows on the edges of Wroughton."
+        }
+      ]
+    },
+    {
+      "key": "area",
+      "path": "/areas/old-town",
+      "name": "Old Town",
+      "photo": 0,
+      "title": "Roofing contractor in Old Town | Smith Roofing",
+      "meta": "Slate roof repairs, chimney work and flat roofs on Old Town's Victorian terraces in Swindon. Free quotes from Smith Roofing, 01793 123456.",
+      "h1": "Roofing contractor in Old Town",
+      "intro": "Old Town is the historic heart of Swindon on the hill above the railway town, and its streets of Victorian and Edwardian houses keep us busy all year round.",
+      "sections": [
+        {
+          "h2": "Roofs in Old Town",
+          "body": "Around Wood Street, Devizes Road and Victoria Road the houses are mostly tall terraces with Welsh slate roofs and tall shared chimneys. Off Bath Road and Goddard Avenue there are larger villas with bay windows, hipped roofs and plenty of lead work.\n\nMost of these homes went up when the railway works brought thousands of families to the town, and many still have their original roof timbers, cast iron gutters and decorative ridge tiles worth keeping.\n\nSlate roofs on houses this age are often still sound, but the nails holding each slate rust through over time. When that happens slates start to slide, and a careful repair with clips is often all that is needed rather than a whole new roof."
+        },
+        {
+          "h2": "Common jobs on Old Town houses",
+          "body": "Slipped slates, leaking valleys and worn lead around bay roofs are the jobs we see most here. Our page on [roof repairs](/services/roof-repairs) explains how we work out where the water is really getting in.\n\nThe tall stacks along the terraces take the full force of the weather, so [chimney repairs](/services/chimney-repairs) are common, from repointing to new flashing. Many back additions and dormers have [flat roofs](/services/flat-roofs) that need replacing once the felt starts to split."
+        },
+        {
+          "h2": "Working on busy streets",
+          "body": "Many streets in Old Town have on-street parking only, close to the shops and Old Town Gardens. We plan where the van and any scaffold will go, keep the pavement clear for people walking past and let neighbours know before we start.\n\nLofts in these terraces are often converted, so we take extra care with the ceilings below and agree with you which rooms we need to get into before the day.\n\nIf your roof shares a chimney or a valley with next door, we explain what that means for the work and can talk to your neighbours with you. To book a visit, [get in touch](/contact)."
+        }
+      ],
+      "faq": [
+        {
+          "q": "Can slate roofs in Old Town be repaired, not replaced?",
+          "a": "Often, yes. If the slates themselves are sound, we can refix slipped ones with clips and renew worn lead, which costs far less than a new roof."
+        },
+        {
+          "q": "What if my chimney is shared with next door?",
+          "a": "We look at the whole stack and explain who it affects. Shared work usually goes more smoothly when both neighbours agree the plan first."
+        }
+      ]
+    },
+    {
+      "key": "services",
+      "path": "/services",
+      "title": "Roofing services in Swindon | Smith Roofing",
+      "meta": "Roof repairs, flat roofs and chimney repairs for homes across Swindon and the villages around it. Free quotes. Call 01793 123456.",
+      "h1": "Our roofing services",
+      "intro": "We keep things simple: we fix roofs, replace flat roofs and look after chimneys for homeowners in and around Swindon. Here is what each job involves.",
+      "sections": [
+        {
+          "h2": "Roof repairs",
+          "body": "Slipped tiles, broken slates, leaks around valleys and loose ridge tiles. We find where the water is getting in and fix it so it stays fixed. [Read about roof repairs](/services/roof-repairs)."
+        },
+        {
+          "h2": "Flat roofs",
+          "body": "Garages, dormers, porches and extensions. We repair flat roofs that are worth saving and replace the rest with a covering that drains properly. [Read about flat roofs](/services/flat-roofs)."
+        },
+        {
+          "h2": "Chimney repairs",
+          "body": "Repointing, rebuilding the top of a stack, resetting pots and new lead flashing so the joint with the roof stays dry. [Read about chimney repairs](/services/chimney-repairs)."
+        },
+        {
+          "h2": "Not sure what you need?",
+          "body": "Tell us what you have spotted, whether that is a stain on a ceiling or a tile in the garden, and we will come and have a look. Every visit comes with a free quote."
+        }
+      ]
+    },
+    {
+      "key": "areas",
+      "path": "/areas",
+      "title": "Areas we cover around Swindon | Smith Roofing",
+      "meta": "Smith Roofing works across Swindon, Wroughton and Old Town. See where we cover and call 01793 123456 for a free quote on your roof.",
+      "h1": "Areas we cover",
+      "intro": "We are based in Swindon and spend most of our working week on roofs in the town and the villages close by.",
+      "sections": [
+        {
+          "h2": "Swindon",
+          "body": "The whole town, from the newer estates on the edges to the older streets near the centre. Most of our work is within a few miles of home."
+        },
+        {
+          "h2": "Wroughton",
+          "body": "The village just south of the town, under the downs. Cottages, bungalows and family homes with all kinds of roofs. [Roofing in Wroughton](/areas/wroughton)."
+        },
+        {
+          "h2": "Old Town",
+          "body": "The Victorian and Edwardian terraces on the hill, with their slate roofs and tall chimneys. [Roofing in Old Town](/areas/old-town)."
+        },
+        {
+          "h2": "Somewhere else nearby?",
+          "body": "Villages to the south and west of the town are usually fine too, and we are happy to travel a little further for bigger jobs such as a new flat roof or a chimney rebuild. If your town is not listed, ring us anyway. We will tell you straight away whether we can get to you, and if not we will say so rather than keep you waiting."
+        }
+      ]
+    },
+    {
+      "key": "about",
+      "path": "/about",
+      "title": "About Smith Roofing | Roofer in Swindon",
+      "meta": "Meet John Smith, the Swindon roofer behind Smith Roofing. Honest advice, tidy work and photos of every job. Call 01793 123456.",
+      "h1": "About Smith Roofing",
+      "intro": "I'm John. I've been fixing roofs around Swindon since 2009 and I still do every job myself with a small team.",
+      "sections": [
+        {
+          "h2": "How we work",
+          "body": "When you ring, you speak to me. I come out, look at the roof and tell you what I think it needs, in plain words. If a repair will do, I will say so. If the roof has had its day, I will show you why with photos rather than just telling you.\n\nWe turn up when we say, protect your garden and drive while we work, and leave the place tidy at the end of each day. When the job is done you get photos of what we did, so you know exactly what you paid for."
+        },
+        {
+          "h2": "What we look after",
+          "body": "We keep the business small on purpose, so I can look at every roof myself and stay on top of the details that make a repair last.\n\nOur work is mostly on homes: repairs to tiled and slate roofs, new flat roofs on garages and extensions, and chimney work from repointing to rebuilding the top of a stack.\n\nMost of our customers find us through friends and neighbours, and we would like to keep it that way. Read what people say on our [reviews](/reviews) page, or [get in touch](/contact) to arrange a visit."
+        }
+      ]
+    },
+    {
+      "key": "reviews",
+      "path": "/reviews",
+      "title": "Customer reviews | Smith Roofing, Swindon",
+      "meta": "Read what homeowners in Swindon say about Smith Roofing on Google: roof repairs, flat roofs and chimney work, in their own words.",
+      "h1": "What our customers say",
+      "intro": "These are reviews our customers left on Google, copied here word for word.",
+      "sections": []
+    },
+    {
+      "key": "contact",
+      "path": "/contact",
+      "title": "Contact Smith Roofing | Roofing contractor in Swindon",
+      "meta": "Call Smith Roofing on 01793 123456 or send a message for a free quote on roof repairs, flat roofs and chimneys around Swindon.",
+      "h1": "Contact Smith Roofing",
+      "intro": "The quickest way to reach us is to call 01793 123456. We are around Mon–Fri 8am–6pm, or you can leave a message using the form below.",
+      "sections": [
+        {
+          "h2": "What we can help with",
+          "body": "Tell us what you have noticed and roughly where it is. We handle [roof repairs](/services/roof-repairs), [flat roofs](/services/flat-roofs) and [chimney repairs](/services/chimney-repairs)."
+        },
+        {
+          "h2": "Where we come to",
+          "body": "We cover Swindon and the villages nearby, including [Wroughton](/areas/wroughton) and [Old Town](/areas/old-town). We will come out, have a look and give you a free quote."
+        }
+      ]
+    }
+  ],
+  "reviews": [
+    {
+      "author": "Dave Parker",
+      "rating": 5,
+      "text": "John came out the same week, found the slipped slates that were letting water into our back bedroom and fixed them in an afternoon. Tidy, polite and he sent photos of the work."
+    },
+    {
+      "author": "Sarah Khan",
+      "rating": 5,
+      "text": "We had our garage flat roof replaced. The team turned up when they said they would, kept the drive clear and the new roof has been bone dry through a very wet winter."
+    },
+    {
+      "author": "Mike Turner",
+      "rating": 5,
+      "text": "Our chimney stack was crumbling and dropping bits of brick into the garden. John rebuilt the top of it and fitted new flashing. Really pleased with the job and the clear explanation."
+    }
+  ],
+  "photos": [
+    {
+      "url": "https://smithroofing.co.uk/images/slate-roof.jpg",
+      "alt": "Slate roof repaired on a terraced house in Old Town, Swindon",
+      "w": 1200,
+      "h": 800
+    },
+    {
+      "url": "https://smithroofing.co.uk/images/flat-roof.jpg",
+      "alt": "New flat roof on a garage extension in Wroughton",
+      "w": 1200,
+      "h": 800
+    },
+    {
+      "url": "/s/f/a1b2c3d4e5f60718293a4b5c6d7e8f90",
+      "alt": "Rebuilt brick chimney stack with new lead flashing in Swindon",
+      "w": 1200,
+      "h": 900
+    }
+  ],
+  "redirects": [
+    {
+      "from": "/roofing-services.html",
+      "to": "/services/roof-repairs"
+    },
+    {
+      "from": "/contact-us.html",
+      "to": "/contact"
+    }
+  ]
+}

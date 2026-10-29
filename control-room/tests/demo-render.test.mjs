@@ -621,8 +621,8 @@ test("the landscaper template is the Landscaper look, version 1", () => {
   assert.equal(TEMPLATES.generic, generic);
   assert.deepEqual(Object.keys(TEMPLATES).sort(), ["generic", "landscaper"]);
   assert.ok(Object.isFrozen(TEMPLATES));
-  // A template's exported functions are its pages (live mode, stage 10): no helper may be exported by mistake.
-  for (const mod of [generic, landscaper]) assert.deepEqual(Object.keys(mod).sort(), ["TEMPLATE", "home"], mod.TEMPLATE.id);
+  // A template exports its demo home page and stage 10's client-site page(): no helper may be exported by mistake.
+  for (const mod of [generic, landscaper]) assert.deepEqual(Object.keys(mod).sort(), ["TEMPLATE", "home", "page"], mod.TEMPLATE.id);
   const { css, body } = landscaper.home(build(LEADS.full), "demo");
   assert.equal(typeof css, "string");
   assert.equal(count(css, "@media"), 1);                                    // mobile-first, one desktop block

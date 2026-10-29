@@ -1,6 +1,7 @@
 // Setup page, top to bottom: the health lights, the connections (Database, GitHub), mailboxes (Test login and
 // Send test email, the SMTP proof), the email DNS records, receiving replies (D-1), Claude's access key and Routines,
-// the business details (D-7) and Payments (Stripe: Connect Stripe). Every value from the server (addresses, names,
+// the business details (D-7), Payments (Stripe: Connect Stripe) and Client sites (stage 10: the chatbot connection,
+// the Pages address, your Google account for client profiles, the offer switches and the test client). Every value from the server (addresses, names,
 // errors, DNS records, Stripe's messages) goes through esc() before it touches the page; secrets are never sent here,
 // only "saved ✓".
 // The renderers (…Html, sendOutcome, loginText) are pure and exported, so tests/shell.test.mjs checks them without a
@@ -56,7 +57,7 @@ function note(n) {
   const cls = n.pending ? "muted" : n.ok ? "ok-text" : "bad-text";
   const how = n.how && n.text.endsWith(HOW);
   const text = how ? n.text.slice(0, -HOW.length) : n.text;
-  const link = n.link ? ` <a href="${esc(n.link)}" target="_blank" rel="noopener noreferrer">Open the session</a>` : "";
+  const link = n.link ? ` <a href="${esc(n.link)}" target="_blank" rel="noopener noreferrer">${esc(n.linkText || "Open the session")}</a>` : "";
   return `<span class="${cls}">${esc(text)}</span>${how ? `<a href="#/setup?at=cpu-how" data-scroll="cpu-how">${HOW}</a>` : ""}${link}`;
 }
 
@@ -395,9 +396,78 @@ export function stripeHtml(stripe, now = new Date(), notes = {}) {
       <ol class="steps">${STRIPE_CHECKLIST.map((t) => `<li>${t}</li>`).join("")}</ol></details>`);
 }
 
+// ---------------------------------------------------------------- 9. Client sites (stage 10)
+
+export const SWITCH_CONFIRM = {
+  chatbot: "Have the chat checks in 'Perfect when' (items 5 and 6) passed on the test site?",
+  review_booster: "Has the QR check in 'Perfect when' (item 7) passed?",
+};
+const SWITCH_LABEL = { chatbot: "AI receptionist (chatbot)", review_booster: "Review booster" };
+
+// One offer switch: On/Off, and the button to flip it. "Switch on" is disabled with the reason until it's ready.
+function switchRow(name, on, ready) {
+  const label = esc(SWITCH_LABEL[name]);
+  if (on) {
+    return `<div class="check"><span class="dot ok">✓</span><div>${label}: <span class="ok-text">on</span>
+      <div class="actions" style="margin-top:6px"><button type="button" class="btn secondary sm" data-cs-switch="${name}" data-off="1">Switch off</button></div></div></div>`;
+  }
+  const why = ready?.ready ? "" : `<div class="muted small">${esc(ready?.reason || "Not ready yet.")}</div>`;
+  return `<div class="check"><span class="dot no">–</span><div>${label}: <span class="muted">off</span>${why}
+    <div class="actions" style="margin-top:6px"><button type="button" class="btn sm" data-cs-switch="${name}" ${ready?.ready ? "" : "disabled"}>Switch on</button></div></div></div>`;
+}
+
+/**
+ * The Client sites section from /api/setup/sites (or {error}): the chatbot's Cloudflare account ID and token
+ * (write-only: only "saved ✓"), the model, the Pages address, your Google account for client profiles, the two offer
+ * switches (disabled with the reason until sitesReadiness says ready) and the test client. Pure, every value escaped.
+ */
+export function sitesHtml(sites, now = new Date(), notes = {}) {
+  const all = `<p class="hint"><a href="#/sites">All client sites</a></p>`;
+  if (!sites || typeof sites !== "object" || sites.error) {
+    return section("client-sites", "Client sites", `<div class="card"><p class="error" style="margin:0">${esc(`Couldn't read the Client sites settings: ${sites?.error || "no answer"}`)}</p></div>${all}`);
+  }
+  const sec = sites.secrets || {};
+  const saved = (set, missing) => (set ? "saved ✓ (leave empty to keep it)" : missing);
+  const last = sites.last_test;
+  const lastLine = notes["cs:chat"] ? note(notes["cs:chat"])
+    : last ? note({ ok: last.ok, text: `Last test ${agoOr(last.at, now)}: ${last.detail}` })
+    : `<span class="muted">${esc("Not tested yet.")}</span>`;
+  const status = (set) => (set ? `<span class="ok-text">saved ✓</span>` : `<span class="bad-text">not added</span>`);
+  const tc = sites.test_client;
+  const testClient = tc
+    ? `<p style="margin:0">${esc(`Test client: ${tc.host || "no address yet"} · ${tc.live_at ? `live since ${ukDay(tc.live_at)}` : "not live yet"}`)} · <a href="#/site/${encodeURIComponent(tc.client_id)}">Open its Site page</a></p>
+      <div class="actions" style="align-items:center"><button type="button" class="btn secondary" id="cs-test-delete">Delete test client</button>${note(notes["cs:test"])}</div>`
+    : `<p class="muted" style="margin:0">${esc("Make a test client to run a site end to end on site-test.aetoswebsites.com before switching anything on.")}</p>
+      <div class="actions" style="align-items:center"><button type="button" class="btn" id="cs-test-create">Create test client</button>${note(notes["cs:test"])}</div>`;
+  const ready = sites.readiness || {};
+  const sw = sites.switches || {};
+  return section("client-sites", "Client sites", `<form class="card setup-form" id="cs-form" autocomplete="off">
+      <div class="card-head" style="margin:0"><h2>Chatbot connection (Cloudflare Workers AI)</h2></div>
+      <p class="muted" style="margin:0">${esc("Cloudflare dashboard → your account ID, and an API token made with the 'Workers AI' template.")}</p>
+      <div class="field-row">
+        <div><label for="cs-account">Cloudflare account ID ${status(sec["cf_ai:account_id"])}</label><input id="cs-account" name="account_id" type="password" autocomplete="new-password" spellcheck="false" maxlength="64" placeholder="${esc(saved(sec["cf_ai:account_id"], "paste it from Cloudflare"))}"></div>
+        <div><label for="cs-token">API token ${status(sec["cf_ai:token"])}</label><input id="cs-token" name="token" type="password" autocomplete="new-password" spellcheck="false" maxlength="200" placeholder="${esc(saved(sec["cf_ai:token"], "paste the Workers AI token"))}"></div>
+      </div>
+      <div><label for="cs-model">Model name (empty = ${esc(sites.model_default)})</label><input id="cs-model" name="model" spellcheck="false" maxlength="100" value="${esc(sites.model)}" placeholder="${esc(sites.model_default)}"></div>
+      <div class="actions" style="align-items:center"><button type="button" class="btn secondary" data-cs-test="chat">Test</button>${lastLine}</div>
+      <div><label for="cs-pages">Pages address (empty = ${esc(sites.pages_host_default)})</label><input id="cs-pages" name="pages_host" spellcheck="false" maxlength="100" value="${esc(sites.pages_host)}" placeholder="${esc(sites.pages_host_default)}"></div>
+      <div class="actions" style="align-items:center"><button type="button" class="btn secondary" data-cs-test="pages">Test</button>${note(notes["cs:pages"])}</div>
+      <div><label for="cs-gbp">Your Google account for client profiles (clients invite it as Manager)</label><input id="cs-gbp" name="gbp_email" type="email" maxlength="254" value="${esc(sites.gbp_email)}" placeholder="you@gmail.com"></div>
+      <p class="error" hidden></p>
+      <div class="actions" style="align-items:center"><button class="btn" type="submit">Save</button>${note(notes["cs:save"])}</div>
+    </form>
+    <div class="card" style="margin-top:16px">
+      <div class="card-head" style="margin-bottom:6px"><h2>Show on the order page</h2></div>
+      <div class="checks">${switchRow("chatbot", sw.chatbot === true, ready.chatbot)}${switchRow("review_booster", sw.review_booster === true, ready.review_booster)}</div>
+      ${note(notes["cs:switch"])}
+    </div>
+    <div class="card setup-form" style="margin-top:16px">${testClient}</div>
+    ${all}`);
+}
+
 // ---------------------------------------------------------------- the page
 
-const notes = {}; // results shown under rows and forms ("mb:<id>", "rt:<name>", "dns:<domain>", "site", "stripe"), kept across redraws
+const notes = {}; // results shown under rows and forms ("mb:<id>", "rt:<name>", "dns:<domain>", "site", "stripe", "cs:<what>"), kept across redraws
 let current = null; // the last /api/setup status
 
 const head = (title) => `<div class="modal-head"><h2>${esc(title)}</h2><button type="button" class="icon-btn" data-close aria-label="Close">${icon("x")}</button></div>`;
@@ -442,10 +512,11 @@ export async function setupPage(params) {
 }
 
 async function render() {
-  const [setup, health, stripe] = await Promise.all([
+  const [setup, health, stripe, sites] = await Promise.all([
     api("/api/setup"),
     api("/api/health").catch((err) => ({ error: err.message })),
     api("/api/stripe/setup").catch((err) => ({ error: err.message })),
+    api("/api/setup/sites").catch((err) => ({ error: err.message })),
   ]);
   current = setup.status || null;
   const now = new Date();
@@ -462,9 +533,11 @@ async function render() {
     ${s ? [mailboxesHtml(s, now, notes), dnsSections(s, now, notes), receivingHtml(s.receiving, now), claudeHtml(s, now, notes), businessHtml(s.business, notes)].join("")
       : section("status", "Mailboxes, DNS, Receiving replies, Claude and Business details", `<div class="card"><p class="error" style="margin:0">${esc(setup.status_error || "Couldn't read the setup status.")}</p>
         <p class="hint">Fix the Database check above, then refresh this page.</p></div>`)}
-    ${stripeHtml(stripe, now, notes)}`;
+    ${stripeHtml(stripe, now, notes)}
+    ${sitesHtml(sites, now, notes)}`;
   if (s) bindStatus(s);
   on("#stripe-form", "submit", (form, e) => { e.preventDefault(); connectStripe(form); });
+  bindSites();
 }
 
 // Redraw in place after an action (no "Checking…" flash, the scroll position stays).
@@ -742,4 +815,77 @@ async function connectStripe(form) {
   } catch (err) {
     showError(form, err.message);
   }
+}
+
+// ---------------------------------------------------------------- Client sites handlers
+
+function bindSites() {
+  on("#cs-form", "submit", (form, e) => { e.preventDefault(); saveSites(form); });
+  on("[data-cs-test]", "click", (b) => testSites(b.dataset.csTest, b));
+  on("[data-cs-switch]", "click", (b) => flipSwitch(b.dataset.csSwitch, b.dataset.off === "1", b));
+  on("#cs-test-create", "click", (b) => createTestClient(b));
+  on("#cs-test-delete", "click", (b) => deleteTestClient(b));
+}
+
+// The secrets go to the server once and are never kept in the page: the fields are emptied after a save.
+async function saveSites(form) {
+  const field = (name) => form.elements.namedItem(name).value;
+  const body = Object.fromEntries(["account_id", "token", "model", "pages_host", "gbp_email"].map((k) => [k, field(k)]));
+  showError(form, "");
+  try {
+    await busy(form.querySelector("button[type=submit]"), "Saving…", () => api("/api/setup/sites", { method: "POST", body: JSON.stringify(body) }));
+    form.elements.namedItem("account_id").value = "";
+    form.elements.namedItem("token").value = "";
+    const reconnect = body.account_id.trim() || body.token.trim();
+    notes["cs:save"] = { ok: true, text: reconnect ? "Saved. Press Test to check the chatbot connection." : "Saved." };
+    delete notes["cs:chat"];
+    toast("Client sites settings saved.");
+    await refresh();
+  } catch (err) {
+    showError(form, err.message);
+  }
+}
+
+async function testSites(kind, button) {
+  const key = `cs:${kind}`;
+  try {
+    const r = await busy(button, "Testing…", () => api(`/api/setup/sites?test=${encodeURIComponent(kind)}`, { method: "POST", body: "{}" }));
+    notes[key] = { ok: r.ok === true, text: r.detail };
+  } catch (err) {
+    notes[key] = { ok: false, text: err.message };
+  }
+  await refresh();
+}
+
+async function flipSwitch(name, off, button) {
+  if (!off && !confirm(SWITCH_CONFIRM[name])) return;
+  try {
+    await busy(button, off ? "Switching off…" : "Switching on…",
+      () => api(`/api/setup/sites?switch=${encodeURIComponent(name)}${off ? "&off=1" : ""}`, { method: "POST", body: "{}" }));
+    notes["cs:switch"] = { ok: true, text: `${SWITCH_LABEL[name]} is ${off ? "off" : "on"} on the order page.` };
+  } catch (err) {
+    notes["cs:switch"] = { ok: false, text: err.message };
+  }
+  await refresh();
+}
+
+async function createTestClient(button) {
+  try {
+    const r = await busy(button, "Making…", () => api("/api/sites/test-client", { method: "POST", body: "{}" }));
+    notes["cs:test"] = { ok: true, text: "Test client made. Fill in its onboarding form on your phone:", link: safeUrl(r.onboard_url), linkText: "Open the form" };
+  } catch (err) {
+    notes["cs:test"] = { ok: false, text: err.message };
+  }
+  await refresh();
+}
+
+async function deleteTestClient(button) {
+  if (!confirm("Delete the test client? Its site, enquiries, photos and todos go too. Emails already sent stay in the history.")) return;
+  try {
+    await busy(button, "Deleting…", () => api("/api/sites/test-client", { method: "DELETE" }));
+    notes["cs:test"] = { ok: true, text: "Test client deleted." };
+  } catch (err) {
+    notes["cs:test"] = { ok: false, text: err.message };
+  }
+  await refresh();
 }

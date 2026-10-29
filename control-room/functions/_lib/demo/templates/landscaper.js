@@ -7,11 +7,16 @@
 // padded: only their data is shown, and the template's own words make no claims (no numbers, no "free quote", no
 // "best").
 //
-// Only TEMPLATE and home are exported: in live mode every exported function is a page (stage 10 adds more). Nothing
-// here touches render.js's exports at load time (the two modules import each other).
+// Only TEMPLATE, home and page are exported: page(data, mode) is a client site's page (stage 10, live mode only;
+// 09-build.md §7, at the end of this file). Nothing here touches render.js's exports at load time (the two modules
+// import each other).
 // Any change to what this renders must bump TEMPLATE.version, so Nik approves the new look before emails link to it;
 // the lock test in control-room/tests/demo-render.test.mjs fails until it's bumped.
-import { SERVICES_PLACEHOLDER, callHref, guaranteeStrip, hasQuote, logoHtml, photoHtml, photoList, quoteHtml, ratingHtml, starsHtml } from "../render.js";
+import {
+  SERVICES_PLACEHOLDER, callHref, guaranteeStrip, hasQuote, logoHtml, photoHtml, photoList, quoteHtml, ratingHtml, siteContactHtml,
+  siteFaqHtml, siteHeader, siteHeroPhoto, siteLinks, siteMapHtml, sitePhotoHtml, sitePhotos, siteReachHtml, siteReviewLink,
+  siteReviewsHtml, siteSections, starsHtml,
+} from "../render.js";
 import { h } from "../text.js";
 
 export const TEMPLATE = Object.freeze({ id: "landscaper", version: 1, label: "Landscaper" });
@@ -160,4 +165,86 @@ export function home(data, mode) {
   const sections = blocks.map(([id, html]) => (id === "strip" ? html
     : `<section class="sec${tone++ % 2 ? " alt" : ""}" id="${id}"><div class="wrap">\n${html}\n</div></section>`));
   return { css: CSS, body: [header(data, tel), "<main>", hero(data, photos, tel, quote), ...sections, "</main>"].join("\n") };
+}
+
+// ---------------------------------------------------------------- client sites (stage 10, live mode only)
+// page(data, mode) draws whichever page data.live.page is (renderSite picks it by path). Photos sell landscaping, so
+// on the home page Recent work comes straight after the hero, as in the demo; then the content's sections, what that
+// kind of page lists (service cards with the leaf, area links, reviews, contact details, map), its FAQ, and the
+// contact form last on home, service, area and contact pages. Only the client's own data; the words make no claims.
+
+const MAX_WORK = 6;
+const FORM_PAGES = new Set(["home", "service", "area", "contact"]);
+
+// The page's H1, intro, rating and buttons, its photo right of the text (desktop) or below the buttons (mobile).
+function siteHero(data, tel, quote) {
+  const p = data.live.page;
+  const photo = siteHeroPhoto(data);
+  const buttons = [
+    tel ? `<a class="btn" href="${h(tel)}">Call ${h(data.business.phone)}</a>` : "",
+    quote ? `<a class="btn btn-alt" href="#quote">${p.key === "contact" ? "Send a message" : "Ask for a quote"}</a>` : "",
+  ].join("");
+  const text = [
+    '<div class="hero-text">',
+    `<h1>${h(p.h1)}</h1>`,
+    p.intro ? `<p class="intro">${h(p.intro)}</p>` : "",
+    ratingHtml(data),
+    buttons ? `<div class="btns">${buttons}</div>` : "",
+    "</div>",
+  ].filter(Boolean).join("\n");
+  const art = photo ? sitePhotoHtml(data, photo, { top: true, cls: "hero-img" }) : HERO_ICON;
+  return `<section class="hero${photo ? "" : " hero-plain"}"><div class="wrap hero-grid">\n${text}\n${art}\n</div></section>`;
+}
+
+// A card with the leaf linking each service page; on /services also the ticked services without a page.
+function siteServices(data, { more = false, heading = "What we do" } = {}) {
+  const cards = siteLinks(data, "services").map((s) => `<li class="card">${CARD_ICON}<span><a href="${h(s.href)}">${h(s.name)}</a></span></li>`);
+  if (more) for (const s of data.live.more?.services ?? []) cards.push(`<li class="card">${CARD_ICON}<span>${h(s)}</span></li>`);
+  return cards.length ? `<h2>${h(heading)}</h2>\n<ul class="cards">${cards.join("")}</ul>` : "";
+}
+
+// Their home town, then a chip linking each area page; on /areas also the areas without a page of their own.
+function siteAreas(data, { more = false, map = "" } = {}) {
+  const town = data.business.town;
+  const chips = [town ? `<li>${h(town)}</li>` : "", ...siteLinks(data, "areas").map((a) => `<li><a href="${h(a.href)}">${h(a.name)}</a></li>`)];
+  if (more) for (const a of data.live.more?.areas ?? []) chips.push(`<li>${h(a)}</li>`);
+  const items = chips.filter(Boolean);
+  return items.length || map ? `<h2>Areas we cover</h2>\n${items.length ? `<ul class="chips">${items.join("")}</ul>` : ""}${map ? `\n${map}` : ""}` : "";
+}
+
+// Their photos except the page's top one, at most 6.
+function siteWork(data) {
+  const top = siteHeroPhoto(data);
+  const rest = sitePhotos(data).filter((p) => p && p.url !== top?.url).slice(0, MAX_WORK);
+  return rest.length ? `<h2>Recent work</h2>\n<div class="work">${rest.map((p) => sitePhotoHtml(data, p)).join("")}</div>` : "";
+}
+
+/** A client site's page (live mode): the shell adds the head, preview bar, footer, call bar and chat tag. */
+export function page(data, mode) {
+  const p = data.live.page;
+  const tel = callHref(data);
+  const form = FORM_PAGES.has(p.key) ? siteContactHtml(data) : "";
+  const sections = siteSections(data).map((s, i) => [`s${i + 1}`, `${s.h2 ? `<h2>${h(s.h2)}</h2>\n` : ""}<div class="prose">\n${s.html}\n</div>`]);
+  const map = siteMapHtml(data);
+  const before = {
+    home: [["work", siteWork(data)]],
+    contact: [["reach", `<h2>How to reach us</h2>\n${siteReachHtml(data, tel)}${map ? `\n${map}` : ""}`]],
+  }[p.key] ?? [];
+  const after = {
+    home: [["services", siteServices(data)], ["areas", siteAreas(data, { map })], ["reviews", siteReviewsHtml(data, 3)]],
+    services: [["services", siteServices(data, { more: true, heading: "All our services" })]],
+    areas: [["areas", siteAreas(data, { more: true })]],
+    about: [["work", siteWork(data)]],
+    reviews: [["reviews", `${siteReviewsHtml(data, 12, { heading: false })}${siteReviewLink(data) ? `\n${siteReviewLink(data)}` : ""}`]],
+  }[p.key] ?? [];
+  const blocks = [
+    ...before,
+    ...sections,
+    ...after,
+    ["faq", siteFaqHtml(data)],
+    ["quote", form ? `<h2>${p.key === "contact" ? "Send a message" : "Ask for a quote"}</h2>\n${form}` : ""],
+  ].filter(([, html]) => html);
+  let tone = 0; // white and sage take turns after the sage hero
+  const out = blocks.map(([id, html]) => `<section class="sec${tone++ % 2 ? " alt" : ""}" id="${id}"><div class="wrap">\n${html}\n</div></section>`);
+  return { css: CSS, body: [siteHeader(data, tel), "<main>", siteHero(data, tel, Boolean(form)), ...out, "</main>"].join("\n") };
 }
