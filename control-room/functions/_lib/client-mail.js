@@ -116,10 +116,12 @@ export function paymentFailedEmail({ business, greetName, amountDue, payUrl, sig
   return { subject: "Your Aetos Websites payment didn't go through", body: parts.join("\n\n") };
 }
 
-/** The sign name for every client email: the business:sender_name setting as stored, else "Nik" (blank counts as unset). */
+/**
+ * The sign name for every client email: the business:sender_name setting on one line (trimmed, so a stray space or
+ * line break can't spoil any caller's sign-off), else "Nik" (blank counts as unset).
+ */
 export async function senderName(DB) {
-  const stored = await getSetting(DB, SENDER_NAME, "");
-  return typeof stored === "string" && stored.trim() ? stored : DEFAULT_SIGN;
+  return oneLine(await getSetting(DB, SENDER_NAME, "")) || DEFAULT_SIGN;
 }
 
 /**

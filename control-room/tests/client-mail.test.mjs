@@ -174,6 +174,12 @@ test("sign-off fallback", async () => {
   assert.equal(await senderName(DB), "Nikiforos");
 });
 
+test("sender name is one trimmed line", async () => {
+  const DB = fakeD1();
+  await setSetting(DB, "business:sender_name", "  Nik\r\nP  ");
+  assert.equal(await senderName(DB), "Nik P");
+});
+
 test("falls back to cold", async () => {
   const DB = fakeD1();
   await addMailbox(DB, { id: "cold1" });
