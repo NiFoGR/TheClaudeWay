@@ -5,6 +5,7 @@ import test from "node:test";
 import { addMonths, googleCosts, ledger, loadMoney, packageNote, PACKAGES, summarise, toPence } from "../functions/_lib/money.js";
 import { formatPounds, MONTHLY_PENCE } from "../functions/_lib/offer.js";
 import { ukDate } from "../functions/_lib/ukTime.js";
+import { onRequest } from "../functions/_middleware.js";
 import * as offerRoute from "../functions/api/offer.js";
 import { fakeD1 as makeD1 } from "./helpers/fakeD1.mjs";
 
@@ -107,6 +108,15 @@ test("the weekend deal's note shows its own build price and free days", () => {
 
 test("/api/offer serves the packages", async () => {
   assert.deepEqual(await (await offerRoute.onRequestGet({})).json(), { packages: PACKAGES });
+});
+
+test("/api/offer needs the login like every other /api/ path", async () => {
+  const env = { CONTROL_ROOM_PASSWORD: "test-password-123", DB: makeD1() };
+  const request = new Request("https://goldbarwebsites.pages.dev/api/offer");
+  const next = () => offerRoute.onRequestGet({ request, env });
+  const res = await onRequest({ request, env, next });
+  assert.equal(res.status, 401);
+  assert.deepEqual(await res.json(), { error: "Not logged in" });
 });
 
 test("amounts typed in pounds become pence", () => {
