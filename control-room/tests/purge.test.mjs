@@ -260,7 +260,7 @@ test("a purged lead that was never researched gets the skipped row, so it's neve
   assert.deepEqual(await purgeOld(DB, NOW, { maxRounds: 5 }), { purged: 0, done: true });
 });
 
-// The runner always makes the tick beat after the last step, so finishing the month (2 statements) waits for a tick
+// The runner always makes the tick beat after the last step, so finishing the month (a batch of 5 statements) waits for a tick
 // with room for the beat too; it never spends the beat's query.
 test("finishing the month always leaves the tick's beat its query", async () => {
   const DB = fakeD1();
@@ -273,5 +273,22 @@ test("finishing the month always leaves the tick's beat its query", async () => 
   assert.ok(budget.left() >= 1, `left ${budget.left()}`);
   assert.equal(await getSetting(DB, "purge:month"), null);
   assert.equal(await purgeStep.run({ DB, env: {}, now: NOW, budget: { left: () => 10 } }), "nothing to purge");
+  assert.equal(await getSetting(DB, "purge:month"), "2026-10");
+});
+
+// A round runs only when some lead is due, so the month's finishing batch deletes old day lists too: a lead on a day list
+// can be purged in a month when the list isn't yet older than the cutoff (their last email came before the call day),
+// and in a later month with nobody to purge the list must still go. Other Todos without a lead stay.
+test("old day lists go even in a month with nobody to purge", async () => {
+  const DB = fakeD1();
+  await todo(DB, "setup:mailbox", "setup", null, "2025-01-01T09:00:00Z");
+  await todo(DB, "calls-day:2025-03-03", "call", null, "2025-03-03T06:00:00Z", { title: "Today's calls: 11:00 Mark (Old One Roofing)" });
+  await todo(DB, "calls-day:2026-10-20", "call", null, "2026-10-20T06:00:00Z");
+  await prospect(DB, "fresh", "emailed", "2026-10-01T09:00:00Z");
+  const counter = countingDB(DB);
+  assert.equal(await purgeStep.run({ DB: counter.DB, env: {}, now: NOW, budget: { left: () => 30 - counter.used() } }), "nothing to purge");
+  assert.deepEqual((await DB.prepare("SELECT dedupe FROM todos ORDER BY dedupe").all()).results.map((x) => x.dedupe),
+    ["calls-day:2026-10-20", "setup:mailbox"]);
+  assert.equal(counter.used(), 1 + 1 + 5, "the month check, one select, and the finishing batch of 5");
   assert.equal(await getSetting(DB, "purge:month"), "2026-10");
 });

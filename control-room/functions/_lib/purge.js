@@ -7,7 +7,8 @@
 // What goes: its prospects, messages and calls rows, the `sent:<message id>` style examples made from its first emails,
 // and every Todo with its place_id; its research row is blanked to a data-free `skipped` row (made when it has none),
 // never deleted (stage 1's research queue treats any research row as handled, so the lead is never researched, demoed
-// or emailed again on its own). Also stage 8's `calls-day:` Todos created before the cutoff and, once the month is finished, processed
+// or emailed again on its own). Also stage 8's `calls-day:` Todos created before the cutoff (in every round, and again
+// when the month is finished, so a month with no lead due still removes them) and, once the month is finished, processed
 // inbound_raw rows received before it (always keeping the newest row: Setup's "Last email received" reads it by rowid).
 // Also, once the month is finished, client-site enquiries (stage 10's site_leads, contact form and chat) received
 // before the cutoff, with the enquiry emails sent to the business about them: every client site's privacy page says
@@ -24,7 +25,7 @@ export const PURGE_BATCH = 90; // leads per round
 const MAX_ROUNDS = 5;
 const ROUND_QUERIES = 7; // 1 select + a batch of 6
 const RUN_OVERHEAD = 2; // Part B's formula: the finishing write, and the tick's beat after this step
-const FINISH_QUERIES = 4; // the finishing batch: old inbound mail, old enquiry emails, old enquiries, then purge:month
+const FINISH_QUERIES = 5; // the finishing batch: old day lists, old inbound mail, old enquiry emails, old enquiries, purge:month
 const BEAT_QUERIES = 1; // the runner's tick beat, the query it always makes after the last step
 const NOTES = "Skipped: details deleted 12 months after last contact.";
 
@@ -54,7 +55,10 @@ const ROUND_SQL = [
   `INSERT INTO research (place_id, status, too_big, notes) SELECT j.value, 'skipped', 0, '${NOTES}' FROM json_each(?1) AS j WHERE 1 ON CONFLICT (place_id) DO UPDATE SET status = 'skipped', grade = NULL, points = NULL, grade_reason = NULL, angle = NULL, opener = NULL, owner = NULL, best_email = NULL, best_email_why = NULL, emails = NULL, copy = NULL, site_review = NULL, searched = NULL, too_big = 0, notes = '${NOTES}', queued_at = NULL, researched_at = NULL`,
 ];
 
-// The month's finishing batch: old processed inbound mail (never the newest row), old enquiries, then purge:month.
+// The month's finishing batch: old day lists, old processed inbound mail (never the newest row), old enquiries, then
+// purge:month. The day lists go here too because a round only runs when some lead is due: without this, a month with
+// nobody to purge would keep a day list naming leads that were purged earlier (their last contact can be before it).
+const CALLS_DAY_SQL = "DELETE FROM todos WHERE place_id IS NULL AND substr(dedupe, 1, 10) = 'calls-day:' AND created_at < ?1";
 const INBOUND_SQL =
   "DELETE FROM inbound_raw WHERE processed_at IS NOT NULL AND received_at < ?1 AND rowid <> (SELECT MAX(rowid) FROM inbound_raw)";
 // Old client-site enquiries: their emails first (once the site_leads rows go, this subquery finds nothing). The email's
@@ -104,12 +108,13 @@ async function run(ctx) {
   const maxRounds = Math.min(MAX_ROUNDS, Math.floor((ctx.budget.left() - RUN_OVERHEAD) / ROUND_QUERIES));
   if (!(maxRounds > 0)) return "deferred";
   const { purged, done } = await purgeOld(DB, now, { maxRounds });
-  // The finishing batch is 4 statements, and the tick's beat must still fit after it (the free plan's 50 queries).
+  // The finishing batch is 5 statements, and the tick's beat must still fit after it (the free plan's 50 queries).
   // When the last round used that room, the month is finished on the next tick (a select that finds nobody, then
   // this batch).
   if (done && ctx.budget.left() >= FINISH_QUERIES + BEAT_QUERIES) {
     const cutoff = purgeCutoff(now);
     await DB.batch([
+      DB.prepare(CALLS_DAY_SQL).bind(cutoff),
       DB.prepare(INBOUND_SQL).bind(cutoff),
       DB.prepare(ENQUIRY_MAIL_SQL).bind(cutoff),
       DB.prepare(ENQUIRIES_SQL).bind(cutoff),
