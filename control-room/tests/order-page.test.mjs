@@ -87,6 +87,39 @@ test("weekday page", () => {
   assert.equal((html.match(/<button/g) ?? []).length, 2);
 });
 
+test("each card lists only its own lines, in Part A's order", () => {
+  for (const offer of [WEEKDAY, WEEKEND]) {
+    const html = order({ offer });
+    const cards = html.match(/<section class="plan( main)?">[\s\S]*?<\/section>/g) ?? [];
+    assert.equal(cards.length, 2, "two plan cards");
+    const [full, site] = cards;
+    assert.ok(full.includes("Full Package") && full.includes("plan main"), "the Full Package card has the gold border");
+    const items = (card) => [...card.matchAll(/<li>([\s\S]*?)<\/li>/g)].map((m) => m[1]);
+    assert.deepEqual(items(full), [
+      "Your new website, finished with your own logo, photos and details",
+      `${BUILD_GUARANTEE} ${BUILD_GUARANTEE_NOTE}`,
+      "We work on it every month to get you into Google's top 3 for your main service and town",
+      "Hosting included",
+      "A plain-English report every month",
+    ]);
+    assert.deepEqual(items(site), [
+      "Your new website, finished with your own logo, photos and details",
+      `${BUILD_GUARANTEE} ${BUILD_GUARANTEE_NOTE}`,
+      "Hosting included",
+    ]);
+    // Website Only is £1,750 one-off whatever the day: no monthly, no strike-through, no guarantee headline, no tag.
+    assert.ok(site.includes('<p class="price">£1,750</p>'));
+    assert.ok(site.includes("one-off. Nothing monthly."));
+    for (const s of ["£249", "<s>", "Nothing more to pay", GUARANTEE.headline, 'class="tag"', 'value="full"']) {
+      assert.ok(!site.includes(s), `Website Only card has no ${s}`);
+    }
+    assert.ok(site.includes('name="package" value="website"'));
+    assert.ok(site.includes(`name="seen" value="${offer.weekend ? "weekend" : "weekday"}"`));
+    assert.ok(full.includes(`<b>${GUARANTEE.headline}</b>`), "the guarantee headline is the bold line");
+    assert.ok(!full.includes('value="website"'));
+  }
+});
+
 test("FAQ 5 uses the guarantee wording", () => {
   for (const offer of [WEEKDAY, WEEKEND]) {
     const html = order({ offer });
@@ -285,6 +318,12 @@ test("ukLongDate", () => {
   assert.equal(ukLongDate("2026-12-18"), "Friday 18 December 2026");
   assert.equal(ukLongDate("2026-10-19"), "Monday 19 October 2026");
   assert.equal(ukLongDate("2027-01-01"), "Friday 1 January 2027");
+  // A calendar date has no time of day: the clock-change Sunday and a leap day print as themselves.
+  assert.equal(ukLongDate("2026-10-25"), "Sunday 25 October 2026");
+  assert.equal(ukLongDate("2028-02-29"), "Tuesday 29 February 2028");
+  assert.throws(() => ukLongDate("2027-02-29"), /YYYY-MM-DD/);
+  assert.throws(() => ukLongDate(null), /YYYY-MM-DD/);
+  assert.throws(() => ukLongDate("2026-12-18T00:00:00Z"), /YYYY-MM-DD/);
   assert.throws(() => ukLongDate("18/12/2026"), /YYYY-MM-DD/);
   assert.throws(() => ukLongDate("2026-02-30"), /YYYY-MM-DD/);
 });
