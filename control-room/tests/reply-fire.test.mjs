@@ -295,3 +295,52 @@ test("the Replies light: a reply that didn't send is red until a later email goe
   assert.equal((await replies("2026-10-20T10:10:00Z")).level, "green");
   const c = countingDB(DB); await waitingStats(c.DB, D("2026-10-20T10:10:00Z")); assert.equal(c.used(), 1); // still one statement
 });
+
+test("reply_fire: the last fire is found among a long log, and a run stays within its 7 queries", async () => {
+  const { DB, calls, fetchImpl } = await connected();
+  // a year of old fires (routine_fires is never purged); only the newest rows are read each tick
+  DB.raw.exec("BEGIN");
+  const ins = DB.raw.prepare("INSERT INTO routine_fires (id, routine, reason, http_status, at) VALUES (?, ?, 'x', 200, ?)");
+  for (let i = 0; i < 1200; i++) ins.run(`old${i}`, i % 2 ? "reply" : "research", "2026-10-13T08:00:00Z");
+  DB.raw.exec("COMMIT");
+  await waiting(DB, "2026-10-20T07:58:00Z");
+  const c = countingDB(DB);
+  assert.match(await runReplyFire({ DB: c.DB, env, now: D("2026-10-20T08:00:00Z"), fetchImpl }), /^fired \(1 waiting\)/);
+  assert.ok(c.used() <= 7, String(c.used()));
+  // the fire a minute ago is the newest row, so the next tick finds it and holds off
+  assert.match(await runReplyFire({ DB, env, now: D("2026-10-20T08:01:00Z"), fetchImpl }), /^skipped: fired under 2 minutes ago \(1 waiting\)$/);
+  assert.equal(calls.length, 1);
+});
+
+test("the Replies light: red adds the health todo once; grey (paused or at night) never does", async () => {
+  const DB = fakeD1();
+  const healthTodos = async () => (await DB.prepare("SELECT title, detail, status FROM todos WHERE dedupe = 'health:replies'").all()).results;
+  await waiting(DB, "2026-10-20T08:00:00Z");
+  await runTick({ DB }, "health", D("2026-10-20T08:21:00Z"));
+  const rows = await healthTodos();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].title, "A reply has waited 21 minutes.");
+  assert.equal(rows[0].detail, "Check the aetos-reply Routine is switched on (routines/README.md) and its URL and token are saved on Setup → Claude.");
+  assert.equal(rows[0].status, "open");
+
+  const DB2 = fakeD1();
+  await waiting(DB2, "2026-10-20T08:00:00Z");
+  await setSetting(DB2, "replies:paused", "1");
+  await runTick({ DB: DB2 }, "health", D("2026-10-20T09:00:00Z"));
+  await setSetting(DB2, "replies:paused", "0");
+  await runTick({ DB: DB2 }, "health", D("2026-10-20T22:45:00Z"));
+  assert.equal((await DB2.prepare("SELECT COUNT(*) AS n FROM todos WHERE dedupe = 'health:replies'").first()).n, 0);
+});
+
+test("reply_fire: mail that came in while paused is fired as soon as Claude's replies are turned back on", async () => {
+  const { DB, calls, fetchImpl } = await connected();
+  await setSetting(DB, "replies:paused", "1");
+  await waiting(DB, "2026-10-20T08:00:00Z");
+  assert.equal(await runReplyFire({ DB, env, now: D("2026-10-20T08:00:30Z"), fetchImpl }), "skipped: paused");
+  assert.equal(await runReplyFire({ DB, env, now: D("2026-10-20T08:30:00Z"), fetchImpl }), "skipped: paused");
+  assert.equal(calls.length, 0);
+  assert.equal((await DB.prepare("SELECT COUNT(*) AS n FROM routine_fires").first()).n, 0, "no fire is logged while paused");
+  await setSetting(DB, "replies:paused", "0");
+  assert.equal(await runReplyFire({ DB, env, now: D("2026-10-20T08:31:00Z"), fetchImpl }), "fired (1 waiting)");
+  assert.equal(calls.length, 1);
+});

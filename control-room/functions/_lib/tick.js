@@ -35,6 +35,7 @@ import "./research-db.js"; // no tick step: imported so its research health ligh
 import { beat } from "./routines.js";
 import { setSetting } from "./settings.js";
 import { pickStep } from "./shortlist-db.js";
+import { sitesStep } from "./sites/tick.js"; // also registers the sites and chat health lights
 import "./stripe.js"; // no tick step: imported so its Payments health light is registered
 import { db } from "./util.js";
 
@@ -72,6 +73,7 @@ export const STEPS = [
   // slot: calls (every 5 min; stage 8)
   { name: "calls", everyMinutes: 5, run: runCallsStep },
   // slot: sites (every 5 min; stage 10)
+  { name: "sites", everyMinutes: 5, run: sitesStep },
   // slot: care (every 10 min; stage 11)
   // slot: purge (monthly; file 11)
   purgeStep,
