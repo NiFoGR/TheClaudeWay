@@ -97,7 +97,8 @@ test("fulfils before the webhook", async () => {
   // one GET of that session, Stripe-Version pinned
   assert.equal(stripe.calls.length, 1);
   assert.equal(stripe.calls[0].method, "GET");
-  assert.equal(stripe.calls[0].path, "checkout/sessions/cs_1");
+  // with its subscription expanded: the first charge date is Stripe's own trial_end
+  assert.equal(stripe.calls[0].path, "checkout/sessions/cs_1?expand[]=subscription");
   assert.equal(stripe.calls[0].headers["stripe-version"], "2024-06-20");
   // the key never reaches the page
   assert.doesNotMatch(out.html, /sk_test_x|whsec_x/);
@@ -272,4 +273,59 @@ test("GET /d/:slug/thanks?session_id=…: the page, no-store, origin from the re
   const missing = await get("");
   assert.equal(missing.status, 404);
   assert.equal(stripe.calls.length, 1);
+});
+
+test("other slug: a session naming this lead in client_reference_id but another in metadata is refused", async () => {
+  // fulfilCheckout reads metadata.place_id first, so this would make a client for p9 if the page let it through
+  const DB = await seed();
+  const out = await thanks(DB, stripeWith(session({ metadata: { ...session().metadata, place_id: "p9" } })));
+  assert.equal(out.status, 404);
+  assert.ok(out.html.includes("We couldn't find that payment"));
+  assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM clients"), 0);
+  assert.equal(await count(DB, "SELECT COUNT(*) AS n FROM onboarding"), 0);
+});
+
+test("GET /d/:slug/thanks: the database failing still gives someone who paid the 'being confirmed' page", async (t) => {
+  const stripe = stripeWith(session());
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = stripe.fetchImpl;
+  const realError = console.error;
+  const logged = [];
+  console.error = (...args) => logged.push(args.join(" "));
+  t.after(() => { globalThis.fetch = realFetch; console.error = realError; });
+  const broken = { prepare() { throw new Error("D1_ERROR: network connection lost"); }, batch() { throw new Error("D1_ERROR: network connection lost"); } };
+  const get = (env, query) => thanksRoute({
+    env, params: { slug: SLUG }, request: new Request(`https://aetoswebsites.com/d/${SLUG}/thanks${query}`),
+  });
+  for (const env of [{}, { DB: broken }]) {
+    const res = await get(env, "?session_id=cs_1");
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get("cache-control"), "no-store");
+    const html = await res.text();
+    assert.ok(html.includes("Your payment is being confirmed."), html);
+    assert.doesNotMatch(html, /D1_ERROR|Bindings/);
+    // a made-up id gets no promise of a payment
+    const bogus = await get(env, "?session_id=x%3Cy");
+    assert.equal(bogus.status, 404);
+    assert.doesNotMatch(await bogus.text(), /being confirmed/);
+  }
+  assert.equal(stripe.calls.length, 0);
+  assert.ok(logged.length >= 1);
+});
+
+// Review fix: the date shown is the day Stripe really charges: its trial_end (the trial starts when they pay, not when
+// the payment page was opened), not session.created + the free days.
+test("the first charge date is Stripe's trial_end, from the expanded subscription; paid_on is when they paid", async () => {
+  const DB = await seed();
+  const trialEnd = Date.parse("2027-01-31T00:20:00Z") / 1000; // paid Mon 2 Nov 2026 00:20 + 90 days
+  const stripe = stripeWith(session({
+    created: Date.parse("2026-11-01T23:50:00Z") / 1000, amount_total: 175000,
+    metadata: { ...session().metadata, weekend: "1" },
+    subscription: { id: "sub_1", object: "subscription", trial_end: trialEnd, start_date: Date.parse("2026-11-02T00:20:00Z") / 1000 },
+  }));
+  const out = await thanks(DB, stripe, { now: new Date("2026-11-02T00:21:00Z") });
+  assert.equal(out.status, 200);
+  assert.ok(out.html.includes("The first £249 is taken on Sunday 31 January 2027."), out.html);
+  assert.equal((await one(DB, "SELECT paid_on FROM clients")).paid_on, "2026-11-02");
+  assert.equal((await one(DB, "SELECT stripe_subscription FROM client_links")).stripe_subscription, "sub_1");
 });
