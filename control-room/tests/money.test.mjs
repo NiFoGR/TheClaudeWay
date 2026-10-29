@@ -125,3 +125,21 @@ test("amounts typed in pounds become pence", () => {
   assert.ok(Number.isNaN(toPence("abc")));
   assert.ok(Number.isNaN(toPence("-5")));
 });
+
+// Setup's test client (stage 10, api/sites/test-client.js: notes TEST, a cl_test_ id, £0) is never a client here.
+test("loadMoney skips Setup's test client; a real client with notes TEST or a cl_test_-like id still counts", async () => {
+  const DB = makeD1();
+  const add = (id, notes) => DB.prepare(
+    `INSERT INTO clients (id, name, place_id, package, build_fee_pence, monthly_pence, free_days, paid_on, notes, created_at)
+     VALUES (?, ?, NULL, 'full', ?, ?, 60, '2026-10-20', ?, '2026-10-20T09:00:00Z')`,
+  ).bind(id, `Client ${id}`, id.startsWith("cl_test_") ? 0 : 195000, id.startsWith("cl_test_") ? 0 : 24900, notes).run();
+  await add("cl_test_ab12cd34ef56", "TEST");
+  let m = await loadMoney(DB, "2026-10-22");
+  assert.equal(m.summary.totalClients, 0);
+  assert.deepEqual(m.summary.clients, []);
+  assert.ok(!m.summary.months.some((mo) => "Website builds" in mo.breakdown.in), "no £0 Website builds entry");
+  await add("clxtestx1", "TEST"); // "_" is no wildcard: not the test client's id
+  await add("cl_test_real", "Paid by bank transfer"); // not notes TEST
+  m = await loadMoney(DB, "2026-10-22");
+  assert.equal(m.summary.totalClients, 2);
+});

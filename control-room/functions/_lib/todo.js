@@ -8,6 +8,7 @@
 // the lights, the open todos, the pipeline and the clients, and board.js turns the rows into cards and words.
 import { clientCards, leadLink, pipelineColumns, threadLink } from "./board.js";
 import { healthFromDb } from "./health.js";
+import { NOT_TEST_CLIENT } from "./sites/db.js";
 import { addUkDays, ukDate, ukDayStartUtc, ukToUtc } from "./ukTime.js";
 import { iso, now as nowIso } from "./util.js";
 
@@ -224,6 +225,7 @@ const PIPELINE_SQL = `SELECT p.place_id, p.stage, p.stage_at, p.views, p.last_vi
 // Every client with what its card needs (board.js's client row): onboarding, a failed card, the Map Rank row of their
 // place_id and their earliest open care/build todo. The CTE isn't called `care`: that name is stage 10's table, which
 // its Task 15 LEFT JOINs in this same statement (a CTE of the same name would hide it). Exported for that test.
+// Drill/test leads' clients and Setup's test client (NOT_TEST_CLIENT, stage 10) never get a card.
 export const CLIENTS_SQL = `WITH next_task AS (
     SELECT client_id, title, due_at,
       ROW_NUMBER() OVER (PARTITION BY client_id ORDER BY due_at IS NULL, due_at, id) AS n
@@ -237,7 +239,8 @@ export const CLIENTS_SQL = `WITH next_task AS (
   LEFT JOIN client_links cl ON cl.client_id = c.id
   LEFT JOIN lead_map_rank r ON r.place_id = c.place_id
   LEFT JOIN next_task k ON k.client_id = c.id AND k.n = 1
-  WHERE c.place_id IS NULL OR NOT (c.place_id LIKE 'drill:%' OR c.place_id LIKE 'test:%')`;
+  WHERE c.place_id IS NULL AND ${NOT_TEST_CLIENT("c")}
+    OR NOT (c.place_id LIKE 'drill:%' OR c.place_id LIKE 'test:%') AND ${NOT_TEST_CLIENT("c")}`;
 
 function boardNow(now) {
   const at = now instanceof Date ? new Date(now.getTime()) : new Date(now ?? NaN);

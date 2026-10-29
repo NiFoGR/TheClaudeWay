@@ -141,7 +141,7 @@ requested **2 days before** their due day (R6) and open as Nik's todo on the due
 | 3 | `w3.photos` | 15 | Nik | "Upload every photo they sent at onboarding (aim for 10+). Real job photos beat stock." | "Upload <name>'s photos to their Google profile" |
 | 3 | `w3.email` | 16 | Claude → Nik sends | Profile done; asks one thing: send a few photos of their work every week (reply to this email or WhatsApp). | "Approve week 3 update to <name>" |
 | 4 | `w4.email` | 23 | Claude → Nik sends | Overview: what's done on the profile (from tasks done), what's next (the website). | "Approve week 4 update to <name>" |
-| 5 | `w5.onpage_check` | 28 | System | Fetch the site home page and check: title has service (or the site's primary category, `client_sites.content.primary_category`) + town; H1 has service (or primary category) + town; business name, phone and postcode on the page; LocalBusiness JSON-LD; a Google Maps embed. All pass → done, no todo. Any fail → a site task `w5.site_fixes` (due the same day) listing the failures. | (on fail) "Fix <n> things on <name>'s site" |
+| 5 | `w5.onpage_check` | 28 | System | Fetch the site home page and check: title has service (or the site's primary category, `client_sites.content.primary_category`) + town; H1 has service (or primary category) + town; business name, phone and (when the client shows their address) postcode on the page; LocalBusiness JSON-LD; a Google Maps embed. All pass → done, no todo. Any fail → a site task `w5.site_fixes` (due the same day) listing the failures. | (on fail) "Fix <n> things on <name>'s site" |
 | 5 | `w5.email` | 30 | Claude → Nik sends | Website basics done (what was checked, in plain words). | "Approve week 5 update to <name>" |
 | 6 | `w6.inventory` | 35 | Claude → Nik approves | Pages the site has; pages Google has indexed (Claude searches `site:<domain>`; number or "unknown"); plan: one page per core service (≤ 5), an "Areas we serve" page + 5 area pages (from onboarding areas; if fewer than 5, say so), the interlinking map. Target 30+ indexed pages over time. | "Approve the new pages plan for <name>'s site" |
 | 6 | `w6.email` | 37 | Claude → Nik sends | What we mapped (playbook week 6/7 wording); asks one thing: confirm the 5 areas. | "Approve week 6 update to <name>" |
@@ -989,7 +989,8 @@ CREATE TABLE IF NOT EXISTS care_reviews (
     `ctx = {facts, slots: string[], newReviewIds: string[]}`
   - `checkInterlinks(pages: [{slug, kind: "service"|"area"|"home"|"contact", links: [{to_slug, anchor}]}]) → string[]`
   - `onPageCheck(html, {service, town, name, phone, postcode, primary_category}) → {passed: string[], failed:
-    string[]}` with the five checks named `"title"`, `"h1"`, `"nap"`, `"schema"`, `"map"`; `"title"` and `"h1"` pass
+    string[]}` with the five checks named `"title"`, `"h1"`, `"nap"`, `"schema"`, `"map"`; `postcode` may be null
+    (a home-based client: stage 10 shows the town only), and then `"nap"` checks only the name and phone; `"title"` and `"h1"` pass
     when they contain the town and either `service` or `primary_category` (stage 10's home H1 is "<Primary category>
     in <Town>")
   - `wordCount(text) → number`
@@ -1010,7 +1011,8 @@ CREATE TABLE IF NOT EXISTS care_reviews (
     page without `primary_category` → `failed` includes `"title"` and `"h1"`. "LocalBusiness JSON-LD" means a node
     whose `@type` is `LocalBusiness` or any type stage 10's `schemaType` returns (`_lib/sites/jsonld.js`: stage 10
     writes the trade's own subtype, e.g. `RoofingContractor`, `HVACBusiness`), so the same page with
-    `"@type":"RoofingContractor"` → `failed: []`.
+    `"@type":"RoofingContractor"` → `failed: []`. A stage-10-style home-based page (town only: no street or
+    postcode anywhere, JSON-LD address `{addressLocality, addressCountry}`) with `postcode: null` → `failed: []`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/care-drafts.test.mjs` → cannot find module.
 - [ ] **Step 3: Implement `validateDraft`, `checkInterlinks`, `onPageCheck`, `wordCount` in `care-drafts.js`** —
   regex-based HTML reading (no DOM); case-insensitive matching; `validateDraft` calls `copyProblems` on every
@@ -1107,7 +1109,9 @@ CREATE TABLE IF NOT EXISTS care_reviews (
     `client_sites.content.keyword` with the trailing town removed (case-insensitive) when it is set and ends with
     that town (R1), else the first `onboarding.form.services[]` with `on` (its `name`), else `leads.trade`;
     `invite_sent` = `form.gbp.invite_sent === true`. Care rows carry `primary_category` =
-    `client_sites.content.primary_category` (or null) for `onPageCheck`.
+    `client_sites.content.primary_category` (or null) for `onPageCheck`, and `postcode` =
+    `client_sites.content.business.address.postcode` when `client_sites.content.business.show_address === true`,
+    else null (stage 10 never shows a home-based client's postcode).
   - `applyCareAction(ctx, action, deps) → Promise<number>` (D1 statements used); `deps = {fire = fireRoutine, start =
     startWorkflow, pause = pauseFee, resume = resumeFee, fetchImpl = fetch}`
   - `runCare(ctx, deps = {}) → Promise<string>` (summary line; stops applying at 20 statements or when
@@ -1207,7 +1211,7 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
 
 **Interfaces:**
 - Consumes: `startCareScan`, `sendCareEmail`, `stopCare`, `setCareAccess`, `careContext` (Tasks 11–12),
-  `domainTransferText`, `TEMPLATES`, `renderTokens` (Task 7), `fireRoutine`, `setSetting`.
+  `domainTransferText`, `TEMPLATES`, `renderTokens` (Task 7), `fireRoutine`, `setSetting`, stage 10's `saveGbpEmail`.
 - Produces (the care API serves only the client page and Care settings; file 11's board shows clients):
   - `GET /api/care/:id` → `{client, care, scans, reviews, tasks (drafts rendered), emails, domain}`
   - `POST /api/care/:id {action}`: `access {on}` (calls `setCareAccess`; stage 10's "Invite accepted" checkbox posts
@@ -1217,6 +1221,9 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
     with `site update: client <c> task <t>`), `to_site` (`w3.faq` only: action becomes `site`), `redraft` (fires
     `monthly-care` once; 409 if fired < 10 min ago)
   - `GET/POST /api/care/settings` → `{nik_google_email, templates: {referral, nudge}: {subject, body, approved_at}}`
+    POST with a non-empty `nik_google_email` saves it through stage 10's `saveGbpEmail(DB, email)`
+    (`_lib/sites/onboard.js`), which checks it (400 "That doesn't look like an email address.") and closes
+    `setup:gbp-email`; never a raw `setSetting`.
 
 - [ ] **Step 1: Write the failing test** — `care-owner.test.mjs` (logged-in request helper from stage 0):
   - `access {on: "2026-11-11"}` with live 2026-11-09 at 2026-11-12 → care `active`, `guarantee 'running'`, 23 plan
@@ -1229,6 +1236,8 @@ Modify `control-room/functions/_lib/care-db.js`; Test `control-room/tests/care-a
     task and its todo `done`.
   - `GET /api/care/<id>` for a Website Only client → 404 "<name> is Website Only: there's no monthly care."
   - settings: editing the referral body clears its `approved_at`.
+  - settings: with an open `setup:gbp-email` todo, `POST /api/care/settings {nik_google_email: "Nik@Gmail.com"}`
+    saves `nik@gmail.com` and the todo is `done`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/care-owner.test.mjs` → 404.
 - [ ] **Step 3: Implement the routes** — day-0 set (`setCareAccess`) rebuilds tasks with `buildPlan` + the day-0
   `m.posts` row; errors exactly as the spec's sentences.
@@ -1471,7 +1480,7 @@ the guarantee before paying or right after says so.
   with `{"applied": true}`.
 - Routine `aetos-monthly-care`: schedule 1st of month 08:47 UK **and** an API trigger (overview §7), prompt starting
   with stage 0's preamble and using `$CONTROL_ROOM_URL`; URL + token on Setup → Claude.
-- Settings keys: `care:nik_google_email` (shared with stage 10's Setup field), `care:template:referral`,
+- Settings keys: `care:nik_google_email` (shared with stage 10's Setup field; both save it with stage 10's `saveGbpEmail`, which closes `setup:gbp-email`), `care:template:referral`,
   `care:template:nudge` (JSON `{subject, body}`), `care:template:<name>:approved`, `care:reviews:last`.
 
 **Assumed from other stages (exact shapes this file relies on):**
@@ -1508,7 +1517,8 @@ the guarantee before paying or right after says so.
   `review_url`; `site_leads (id, client_id, created_at, …)` for enquiries (care treats a missing table as "no data",
   never as zero); `setSiteFeature(DB, client_id, feature, on, now)` (`_lib/sites/db.js`) switching `chatbot` (and the
   review booster) off; the "Invite accepted" checkbox calls care's `access` action; the client site's home page
-  carries the on-page basics the `w5.onpage_check` looks for; the build Routine handles the `site update` payload
+  carries the on-page basics the `w5.onpage_check` looks for (the postcode appears only when
+  `content.business.show_address` is true; otherwise only the town is shown, so the check passes `postcode: null`); the build Routine handles the `site update` payload
   above.
 - File 11: `board.js` `clientCards(rows, now)` and `todo.js` `loadBoard(DB, env, now)` (Task 15 extends both; Task 18
   adds the `working_free` Monthly line to `clientCards`), `nav.js` `routeFor` (Task 15 adds the client routes),

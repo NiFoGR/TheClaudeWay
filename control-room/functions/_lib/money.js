@@ -4,6 +4,7 @@
 //           + any other money in. Costs = Google API (estimated from logged calls) + costs you add.
 // Forecast months only count what is already committed: active clients, monthly costs, average Google spend.
 import { formatPounds, PACKAGES } from "./offer.js";
+import { NOT_TEST_CLIENT } from "./sites/db.js";
 import { ukDate } from "./ukTime.js";
 
 // Google Places API (New) list prices, USD per 1,000 calls, and the free calls each SKU gets every month.
@@ -205,8 +206,9 @@ export function summarise({ clients = [], entries = [], payments = [], usage = [
 // `today` is the UK date: paid_on, failed_on and cancelled_on are UK dates, so a payment taken at 00:30 BST counts today.
 export async function loadMoney(DB, today = ukDate(new Date())) {
   const [clients, entries, usage, pipe, goal, payments] = await DB.batch([
+    // Setup's test client (stage 10) is never a client here
     DB.prepare(`SELECT clients.*, l.stripe_customer, l.failed_on FROM clients LEFT JOIN client_links l ON l.client_id = clients.id
-                ORDER BY clients.paid_on DESC, clients.created_at DESC`),
+                WHERE ${NOT_TEST_CLIENT("clients")} ORDER BY clients.paid_on DESC, clients.created_at DESC`),
     DB.prepare("SELECT * FROM money ORDER BY on_date DESC, created_at DESC"),
     DB.prepare("SELECT substr(created_at, 1, 7) AS month, sku, SUM(calls) AS calls FROM api_usage GROUP BY month, sku"),
     // the pipeline is prospects (stage 5 on), never the old leads.status; drill and test rows never count

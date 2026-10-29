@@ -363,3 +363,21 @@ test("the clients query leaves the name `care` free for stage 10's table (its Ta
   // The board's own care fields are unchanged by the name.
   assert.ok(rows.every((r) => "care_title" in r && "care_due_at" in r));
 });
+
+// Setup's test client (stage 10, api/sites/test-client.js: notes TEST, a cl_test_ id, place_id NULL) stays off the
+// board, through the onboarding, building and live stages; the Sites page still lists it.
+test("Setup's test client gets no client card; a real client with notes TEST does", async () => {
+  const db = seeded();
+  const add = (id, notes) => db.batch([
+    db.prepare(`INSERT INTO clients (id, name, place_id, package, build_fee_pence, monthly_pence, free_days, paid_on, notes, created_at)
+      VALUES (?, ?, NULL, 'full', 0, 0, 0, '2026-10-20', ?, '2026-10-20T09:00:00Z')`).bind(id, `Client ${id}`, notes),
+    db.prepare("INSERT INTO onboarding (client_id, token, status, live_at, created_at) VALUES (?, ?, 'live', '2026-10-21T09:00:00Z', '2026-10-20T09:00:00Z')")
+      .bind(id, `${id}-token`.padEnd(32, "t")),
+  ]);
+  await add("cl_test_ab12cd34ef56", "TEST");
+  await add("clxtest_9", "TEST"); // not the test client's id ("_" is no wildcard here)
+  const ids = (await loadBoard(db, ENV, NOW)).clients.cards.map((c) => c.client_id);
+  assert.ok(!ids.includes("cl_test_ab12cd34ef56"), ids.join(", "));
+  assert.ok(ids.includes("clxtest_9"), ids.join(", "));
+  assert.ok(ids.includes("c1"), "the real clients are still there");
+});
