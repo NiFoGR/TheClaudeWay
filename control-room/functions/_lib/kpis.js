@@ -86,7 +86,8 @@ export function inWeek(iso, start) {
 
 /** k out of n as {k, n, pct, early}: pct to one decimal (null when n is 0), early while n < MIN_SAMPLE. */
 export function rate(k, n) {
-  return { k, n, pct: n > 0 ? Math.round((1000 * k) / n) / 10 : null, early: n < MIN_SAMPLE };
+  // `!(n >= …)`: a missing or unreadable n is early too, never a confident-looking rate.
+  return { k, n, pct: n > 0 ? Math.round((1000 * k) / n) / 10 : null, early: !(n >= MIN_SAMPLE) };
 }
 
 // ---------------------------------------------------------------- crediting and the week's numbers (Task 5)
@@ -487,6 +488,20 @@ export function anonymise(text) {
     .slice(0, SAMPLE_BODY_MAX);
 }
 
+// loadKpiRows reads only the first 2 × SAMPLE_BODY_MAX characters of a sample body, so a body that long may end in the
+// middle of a phone number ("07700 90") that anonymise no longer recognises, and that fragment reaches the cut when the
+// addresses before it shrink to "[email]". Such a body loses its last word and any digits and phone punctuation just
+// before it. A loop, not a regex: /\S*$/ on a long unbroken word is quadratic.
+const PHONE_CHAR = /[\d\s().+-]/;
+function uncut(text) {
+  const t = String(text ?? "");
+  if (t.length < 2 * SAMPLE_BODY_MAX) return t;
+  let end = t.length;
+  while (end > 0 && !/\s/.test(t[end - 1])) end--;
+  while (end > 0 && PHONE_CHAR.test(t[end - 1])) end--;
+  return t.slice(0, end);
+}
+
 // At most SAMPLE_MAX items: up to half of them with an outcome (`hit`), the rest filled from the others, both earliest
 // first, then back in time order. A week with a few hits and many misses still shows Claude both.
 function pick(items, hit) {
@@ -516,15 +531,15 @@ export function kpiSamples(rows, start) {
   const replies = sent.filter((o) => o.row.kind === "reply" && o.row.author === "claude").map((o) => {
     const last = lastHumanBefore(P, o);
     const minutes = answerMinutes(P, o);
-    return { o, they_wrote: last ? anonymise(last.row.body) : "", minutes: minutes === null ? null : Math.round(minutes), moved_forward: movedForward(P, o) };
+    return { o, they_wrote: last ? anonymise(uncut(last.row.body)) : "", minutes: minutes === null ? null : Math.round(minutes), moved_forward: movedForward(P, o) };
   });
 
   return {
     first_emails: pick(firsts, (x) => x.viewed7 || x.replied).map(({ o, viewed7, replied, positive, bounced }) => ({
-      subject: anonymise(o.row.subject), body: anonymise(o.row.body), viewed7, replied, positive, bounced,
+      subject: anonymise(o.row.subject), body: anonymise(uncut(o.row.body)), viewed7, replied, positive, bounced,
     })),
     claude_replies: pick(replies, (x) => x.moved_forward).map(({ o, they_wrote, minutes, moved_forward }) => ({
-      they_wrote, claude_wrote: anonymise(o.row.body), minutes, moved_forward,
+      they_wrote, claude_wrote: anonymise(uncut(o.row.body)), minutes, moved_forward,
     })),
   };
 }

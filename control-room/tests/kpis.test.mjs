@@ -39,6 +39,8 @@ test("week edges: year end, week 53, the March clock change and stored-time form
   assert.equal(inWeek("2026-10-25 23:30:00", "2026-10-19"), true);    // no zone: UTC, whatever the machine's zone
   assert.equal(inWeek("2026-10-25", "2026-10-19"), true);             // a paid_on date
   assert.equal(inWeek(null, "2026-10-19"), false); assert.equal(inWeek("not a time", "2026-10-19"), false);
+  assert.deepEqual([rate(0, undefined).early, rate(0, undefined).pct, rate(3, NaN).early], [true, null, true]);
+  assert.deepEqual([rate(1, 3).pct, rate(1, 8).pct, rate(30, 30).pct, rate(29, 29).early], [33.3, 12.5, 100, true]);
 });
 
 test("hand-checked week 2026-W43", () => {
@@ -150,4 +152,49 @@ test("crediting edges: view windows, auto mail, escalations, even medians and re
   grow.messages.push(out("k7", "q7", "first", "nik", "2026-10-22T09:00:00Z"));
   assert.equal(computeWeek(grow, "2026-10-19").totals.sent, 10);
   assert.deepEqual(computeWeek({}, "2026-10-19").totals, { sent: 0, bounced: 0, human_replies: 0, positive_replies: 0, opt_outs: 0, calls_booked: 0, orders: 0, revenue_pence: 0 });
+});
+
+test("moved forward by a booked call or an order alone, at the window's edges, and calibration rows replace grades", () => {
+  const out = (id, place_id, kind, author, sent_at) => ({ id, place_id, direction: "out", kind, step: null, author, status: "sent", sent_at });
+  const inn = (id, place_id, intent, received_at) => ({ id, place_id, direction: "in", kind: "inbound", author: "them", status: "received", class: "human", intent, received_at });
+  const base = {
+    messages: [
+      out("f1", "z1", "first", "nik", "2026-10-19T09:00:00Z"), inn("h1", "z1", "not_interested", "2026-10-20T10:00:00Z"),
+      out("r1", "z1", "reply", "claude", "2026-10-20T10:05:00Z"),
+      out("f2", "z2", "first", "nik", "2026-10-19T09:00:00Z"), inn("h2", "z2", "question", "2026-10-20T09:40:00Z"), // before the reply
+      out("r2", "z2", "reply", "claude", "2026-10-20T10:00:00Z"),
+      out("f3", "z3", "first", "nik", "2026-10-19T09:00:00Z"), inn("h3", "z3", "not_interested", "2026-10-20T09:30:00Z"),
+      out("r3", "z3", "reply", "claude", "2026-10-20T10:00:00Z"), inn("h4", "z3", "interested", "2026-10-27T10:00:01Z"), // 7 days and 1 s on
+    ],
+    views: [],
+    calls: [
+      { place_id: "z1", status: "no_show", created_at: "2026-10-26T10:00:00Z" },   // booked, within 7 days of r1
+      { place_id: "z3", status: "done", created_at: "2026-10-20T09:00:00Z" },      // booked, but before r3
+    ],
+    orders: [{ place_id: "z2", paid_on: "2026-10-27", build_fee_pence: 175000 }], // the 7th UK day after r2
+    grades: { z1: "A+", z2: "A+", z3: "A+" },
+    research: [],
+    escalations: [],
+  };
+  const n = computeWeek(base, "2026-10-19");
+  assert.deepEqual(n.claude, { replies_sent: 3, moved_forward: rate(2, 3), median_minutes: 20, escalated: 0 }); // 5, 20, 30
+  assert.deepEqual(n.groups.find((g) => g.key === "reply:claude").replied, 1);   // h4 counts for r3's week, though it came later
+  assert.deepEqual([n.totals.human_replies, n.totals.positive_replies, n.totals.calls_booked, n.totals.orders], [3, 1, 1, 0]);
+  const next = computeWeek(base, "2026-10-26");
+  assert.deepEqual([next.totals.positive_replies, next.totals.calls_booked, next.totals.orders, next.totals.revenue_pence], [1, 1, 1, 175000]);
+  assert.deepEqual(n.grades[0].emailed, 3);
+
+  // loadKpiRows' all-time calibration rows replace `grades` (an empty list too); a lead first emailed after the week ended is left out.
+  const cal = {
+    ...base,
+    calibration: [
+      { grade: "C", first_ms: Date.parse("2026-10-20T08:00:00Z"), viewed: 1, replied: 0, won: 0 },
+      { grade: "C", first_ms: Date.parse("2026-10-25T23:59:00Z"), viewed: 0, replied: 1, won: 1 },   // Sun 23:59 GMT: in
+      { grade: "A", first_ms: Date.parse("2026-10-26T00:00:00Z"), viewed: 1, replied: 1, won: 1 },   // Mon 00:00: after
+      { grade: "Z", first_ms: Date.parse("2026-10-20T08:00:00Z"), viewed: 1, replied: 1, won: 1 },   // not a grade
+    ],
+  };
+  assert.deepEqual(computeWeek(cal, "2026-10-19").grades.map((x) => [x.grade, x.emailed, x.viewed.pct, x.replied.pct, x.won.pct]),
+    [["A+", 0, null, null, null], ["A", 0, null, null, null], ["B", 0, null, null, null], ["C", 2, 50, 50, 50], ["D", 0, null, null, null]]);
+  assert.equal(computeWeek({ ...base, calibration: [] }, "2026-10-19").grades[0].emailed, 0);
 });
