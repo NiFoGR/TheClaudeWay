@@ -261,14 +261,15 @@ async function storeAndApply(DB, row, { headers, text, cls: readAs, from, report
         `UPDATE prospects SET last_inbound_at = ?, updated_at = ?
          WHERE place_id = ? AND (last_inbound_at IS NULL OR last_inbound_at < ?)`,
       ).bind(msg.received_at, at, prospect.place_id, msg.received_at).run();
-      await applyStageEvent(DB, prospect.place_id, "inbound_human", at);
       // Stage 7's hook, only for mail linked to a prospect (outcome "human"; `now` is a Date, `msg` holds the
       // message's columns): a won prospect's or an opted-out one's email goes to Nik, a lead that said not now is
-      // reopened, and the follow-ups stop. Client-only and unknown-sender mail is fully handled by the
-      // escalation:client: and escalation:unknown: todos below: for it onHumanInbound would only return "unmatched",
-      // or (a client writing from another address, whose place_id is a won prospect) file a second, client-mail todo
-      // for the same email. A second try of a cut-off row runs the hook again for the same message, so like
-      // everything above it is safe to repeat.
+      // reopened, the rest get the inbound_human event (emailed, viewed or call_booked → replied), and the
+      // follow-ups stop. The stage event is the hook's alone: on a second try of this row after Claude or Nik
+      // answered the email (handled_at set) it fires none, so what they did (a call booked, a "not now") stands.
+      // Client-only and unknown-sender mail is fully handled by the escalation:client: and escalation:unknown: todos
+      // below: for it onHumanInbound would only return "unmatched", or (a client writing from another address, whose
+      // place_id is a won prospect) file a second, client-mail todo for the same email. A second try of a cut-off
+      // row runs the hook again for the same message, so like everything above it is safe to repeat.
       await onHumanInbound(DB, msg, now);
     } else {
       const kind = outcome === "client" ? "client" : "unknown";

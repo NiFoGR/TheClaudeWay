@@ -40,12 +40,18 @@ const NO_CONTACT = ["opt_out", "bounce"];
 const DETAIL_CHARS = 600; // their message in a todo, as text
 
 // The prospect, its lead's name and the client made from it (a lead paid at most once, but the oldest wins if not).
-const PROSPECT_SQL = `
-  SELECT p.stage, p.lost_reason, l.name AS lead_name, c.id AS client_id, c.name AS client_name
+const PROSPECT_FROM = `
   FROM prospects AS p
   LEFT JOIN leads AS l ON l.place_id = p.place_id
   LEFT JOIN (SELECT id, name FROM clients WHERE place_id = ?1 ORDER BY created_at, id LIMIT 1) AS c ON 1
   WHERE p.place_id = ?1`;
+const PROSPECT_SQL = `SELECT p.stage, p.lost_reason, l.name AS lead_name, c.id AS client_id, c.name AS client_name${PROSPECT_FROM}`;
+// The same, plus whether the message (?2) was already dealt with (handled_at: Claude's reply or escalation, Nik's own,
+// or a hand-off) and with what intent, and whether a confirmed call is still ahead (after ?3), in the one query: a
+// second try of a cut-off inbound row can come after that.
+const HOOK_SQL = `SELECT p.stage, p.lost_reason, l.name AS lead_name, c.id AS client_id, c.name AS client_name,
+    (SELECT handled_at FROM messages WHERE id = ?2) AS handled_at, (SELECT intent FROM messages WHERE id = ?2) AS handled_intent,
+    EXISTS (SELECT 1 FROM calls WHERE place_id = ?1 AND status = 'confirmed' AND slot_at > ?3) AS call_ahead${PROSPECT_FROM}`;
 const NO_REPLY_SQL = "UPDATE messages SET needs_reply = 0 WHERE id = ?";
 const CLIENT_SQL = "UPDATE messages SET needs_reply = 0, client_id = COALESCE(?, client_id) WHERE id = ?";
 // Stage 6's stop rules read last_inbound_at; it never moves backwards (as stage 0 writes it).
@@ -115,20 +121,50 @@ async function nikReadsTodo(DB, prospect, placeId, message, at) {
  * - prospect lost for opt_out or bounce: needs_reply = 0, an `optout-mail:<id>` todo → "opted_out";
  * - otherwise reopen (lost for a REOPEN_REASONS reason) or inbound_human, the follow-ups stopped and
  *   last_inbound_at set; the message keeps needs_reply = 1 for Claude → "replied".
+ * A message already handled (handled_at set: a second try after Claude or Nik dealt with it) files no todo and keeps
+ * whatever stage its handler set on purpose (a call booked, Nik's needs_nik, Claude's "not now"); it still stops the
+ * follow-ups and sets last_inbound_at. The stage event it missed still fires (see handledStage).
  */
+// The second try of a cut-off row Claude or Nik answered first: they answered it on the stage as it was before this
+// email (the hook's event never fired), so that event is fired now unless the answer itself moved the stage.
+// - emailed or viewed: nothing moved it (interested, question, price, more_info, a call offered): inbound_human.
+//   A call booked (call_booked), an escalation (needs_nik) or a "not now" (lost) is left as it is.
+// - lost for a REOPEN_REASONS reason: reopened unless this very email was answered "not now", "not interested" or an
+//   opt-out (its own said_no or opt_out). Then what the answer would have done on the reopened lead: a confirmed call
+//   still ahead → call_booked (call_confirmed), else an escalation intent → needs_nik.
+async function handledStage(DB, placeId, prospect, reopen, at) {
+  if (prospect.stage === "emailed" || prospect.stage === "viewed") {
+    await applyStageEvent(DB, placeId, "inbound_human", at);
+    return;
+  }
+  if (!reopen) return;
+  const event = intentEffects(prospect.handled_intent)?.event ?? null;
+  if (event !== null && event !== "escalate") return;
+  await applyStageEvent(DB, placeId, "reopen", at);
+  if (Number(prospect.call_ahead) === 1) await applyStageEvent(DB, placeId, "call_confirmed", at);
+  else if (event === "escalate") await applyStageEvent(DB, placeId, "escalate", at);
+}
+
 export async function onHumanInbound(DB, message, now) {
   const at = toDate(now);
   if (!message || typeof message.id !== "string" || !message.id) {
     throw new TypeError("onHumanInbound needs the stored message (its messages row, with its id).");
   }
   const placeId = message.place_id;
-  const prospect = placeId ? await DB.prepare(PROSPECT_SQL).bind(placeId).first() : null;
+  const prospect = placeId ? await DB.prepare(HOOK_SQL).bind(placeId, message.id, iso(at)).first() : null;
   if (!prospect) {
     await DB.prepare(NO_REPLY_SQL).bind(message.id).run();
     return "unmatched";
   }
+  // Already dealt with: stage 0 runs this again on a second try of a row cut off after it was stored, and Claude or
+  // Nik may have answered it in between. A read-it-yourself todo is then out of date, and so is a blind stage event:
+  // Claude's "not now" mustn't be reopened by the very email it answered, nor a call it booked undone. handledStage
+  // fires only the event the answer still needs. The follow-ups stay stopped and last_inbound_at is still set (both
+  // are safe to repeat).
+  const handled = Boolean(prospect.handled_at);
 
   if (nikReads(prospect)) {
+    if (handled) return prospect.stage === "won" ? "client" : "opted_out";
     const client = prospect.stage === "won";
     await (client ? DB.prepare(CLIENT_SQL).bind(prospect.client_id ?? null, message.id) : DB.prepare(NO_REPLY_SQL).bind(message.id)).run();
     await nikReadsTodo(DB, prospect, placeId, message, at);
@@ -136,7 +172,8 @@ export async function onHumanInbound(DB, message, now) {
   }
 
   const reopen = prospect.stage === "lost" && REOPEN_REASONS.includes(prospect.lost_reason);
-  await applyStageEvent(DB, placeId, reopen ? "reopen" : "inbound_human", at);
+  if (!handled) await applyStageEvent(DB, placeId, reopen ? "reopen" : "inbound_human", at);
+  else await handledStage(DB, placeId, prospect, reopen, at);
   await stopFollowups(DB, placeId, "replied", at);
   const received = Date.parse(message.received_at ?? "");
   if (!Number.isNaN(received)) {
@@ -204,7 +241,13 @@ const WAITING_SQL = `WITH failed AS (
   FROM messages AS m JOIN prospects AS p ON p.place_id = m.place_id
   WHERE ${WAITING_WHERE("m", "p")}`;
 // The last reply fire, failed attempts included (a broken Routine is tried at most every 2 minutes, not every tick).
-const LAST_FIRE_SQL = "SELECT MAX(at) AS at FROM routine_fires WHERE routine = 'reply'";
+// routine_fires has no index and is never purged, and this runs every tick: only the newest FIRES_LOOKED_AT rows by
+// rowid (insertion order) are read, as setupStatus.js and sites/ do, so the rows read stay bounded however long the log
+// grows. A reply fire older than that window counts as none, which can only be hours ago (every Routine is capped at
+// 30 fires an hour), so it is due anyway. ?1 = FIRES_LOOKED_AT.
+const FIRES_LOOKED_AT = 1000;
+const LAST_FIRE_SQL = `SELECT MAX(at) AS at FROM routine_fires
+  WHERE rowid > (SELECT COALESCE(MAX(rowid), 0) FROM routine_fires) - ?1 AND routine = 'reply'`;
 // The most a run costs: waitingStats 1, the last fire 1, fireRoutine up to 5 (2 secrets, the 429 hold, the log row
 // and a new hold after a 429). One more is kept for the tick's closing beat.
 const REPLY_FIRE_MAX = 7;
@@ -255,7 +298,7 @@ export async function runReplyFire({ DB, now, fetchImpl, budget } = {}) {
   if (!inUkWindow(at, REPLY_HOURS)) return "skipped: outside reply hours";
   if (!stats.waiting) return "skipped: nothing waiting";
 
-  const lastFireAt = asDate(await DB.prepare(LAST_FIRE_SQL).first("at"));
+  const lastFireAt = asDate(await DB.prepare(LAST_FIRE_SQL).bind(FIRES_LOOKED_AT).first("at"));
   if (!shouldFireReply({ ...stats, lastFireAt, now: at })) {
     if (!lastFireAt) return `skipped: not due (${stats.waiting} waiting)`; // never with today's rules
     const minutes = Math.floor((at.getTime() - lastFireAt.getTime()) / MINUTE_MS);
@@ -289,6 +332,9 @@ export const VOICE_SEEDS = Object.freeze([
 
 const INBOX_MAX = 10; // conversations per inbox
 const STRANDED_MAX = 10; // threads handed to Nik per inbox read (the rest on the next read)
+// The most D1 statements the sweep spends per read (handOffWaiting costs 2 + one Todo per waiting message), so the
+// whole request stays well inside the free plan's 50: the token 1, seedVoice up to 4, the two batches 7, this 20.
+const SWEEP_QUERIES = 20;
 const VOICE_SENT_MAX = 10; // Nik's own emails Claude copies the tone of
 const VOICE_MAX = 500; // examples and rules (the Voice page's own limit)
 const THREAD_BODY_MAX = 20000; // characters read per message: stripQuoted keeps at most 4,000 of the start
@@ -353,10 +399,11 @@ const CONVERSATIONS_SQL = `WITH w AS (
   ORDER BY w.first_at, p.place_id
   LIMIT ?1`;
 // The threads whose mail still waits though Claude may not answer it any more (handOffWaiting's sweep, for mail from
-// before a hand-off ran or from a path that changed the stage without one).
-const STRANDED_SQL = `SELECT DISTINCT m.place_id FROM messages AS m JOIN prospects AS p ON p.place_id = m.place_id
+// before a hand-off ran or from a path that changed the stage without one), with how many messages wait in each (what
+// handing it over costs).
+const STRANDED_SQL = `SELECT m.place_id, COUNT(*) AS n FROM messages AS m JOIN prospects AS p ON p.place_id = m.place_id
   WHERE m.direction = 'in' AND m.needs_reply = 1 AND NOT (${CLAUDE_ANSWERS("p")})
-  ORDER BY m.place_id LIMIT ${STRANDED_MAX}`;
+  GROUP BY m.place_id ORDER BY m.place_id LIMIT ${STRANDED_MAX}`;
 // Every message of those threads, oldest first. ?1 = JSON list of place_ids.
 const THREAD_SQL = `SELECT id, place_id, direction, kind, author, subject, substr(body, 1, ${THREAD_BODY_MAX}) AS body,
     status, class, needs_reply, COALESCE(sent_at, received_at, created_at) AS at, COALESCE(received_at, created_at) AS in_at
@@ -455,8 +502,9 @@ function callsOf(placeId, calls, at, sendAt) {
  * (offerFacts at send_at, with the chat assistant / reviews lines while offer:chatbot_live / offer:review_booster_live
  * are '1'), voice {examples, rules, sent}, conversations}. Conversations are oldest waiting first, at most `limit`
  * (10): {place_id, stage, reply_to, waiting, lead, research, links, thread, calls}. Thread text is their raw text with
- * the quoted history off (never rendered: whatever shows it escapes it). 2 D1 batches; the one write is the sweep: mail
- * still waiting in a thread Claude may no longer answer (CLAUDE_ANSWERS) is handed to Nik (handOffWaiting).
+ * the quoted history off (never rendered: whatever shows it escapes it). 2 D1 batches (7 statements); the one write is
+ * the sweep: mail still waiting in a thread Claude may no longer answer (CLAUDE_ANSWERS) is handed to Nik
+ * (handOffWaiting), at most SWEEP_QUERIES (20) statements a read.
  */
 export async function buildInbox(DB, now, { limit = INBOX_MAX } = {}) {
   const at = inboxNow(now, "buildInbox");
@@ -469,7 +517,14 @@ export async function buildInbox(DB, now, { limit = INBOX_MAX } = {}) {
     DB.prepare(CONVERSATIONS_SQL).bind(max),
     DB.prepare(STRANDED_SQL),
   ]);
-  for (const { place_id } of strandedRows.results ?? []) await handOffWaiting(DB, place_id, at);
+  // Within SWEEP_QUERIES: a thread that doesn't fit waits for a later read (it is never shown to Claude meanwhile).
+  let spent = 0;
+  for (const { place_id, n } of strandedRows.results ?? []) {
+    const cost = 2 + (Number(n) || 0);
+    if (spent + cost > SWEEP_QUERIES) continue;
+    spent += cost;
+    await handOffWaiting(DB, place_id, at);
+  }
   const setting = Object.fromEntries((settingRows.results ?? []).map((r) => [r.key, r.value]));
   const conv = convRows.results ?? [];
 
@@ -538,10 +593,17 @@ const NO_MAILBOX = "Couldn't send: this thread has no mailbox. Add one on Setup 
 const BAD_CALL = 'call must be {"action": "offer" or "confirm", "slot_at": "<a slot_at from calls>", "phone": "<optional>"}.';
 const NO_FREE = 'There are no free slots in the next 56 days: post it as proposes_time with asked_time "any time (no free slots)".';
 const DRILL_NOT_SENT = "drill: not sent";
+const REPLY_CHARS_MAX = 4000; // characters of Claude's text: 180 words is far less, so more is never an email
+const tooManyChars = (n) => `Too long: ${fmtCount(n)} characters (${fmtCount(REPLY_CHARS_MAX)} max).`;
+const NO_ADDRESS_ESCALATE = "Couldn't send: there's no address to reply to on that email. Escalate it as other so Nik reads it.";
+// The send step cancels a reply to a do-not-email address without a word, so it is refused here instead.
+const suppressedReply = (to, why) =>
+  `Couldn't send: ${to} is on the do-not-email list (${SUPPRESSED_WHY[why] ?? why}). Escalate it as other so Nik reads it.`;
 const offerChanged = (sendAt) =>
   `The offer changes before this goes out (it goes out ${ukStamp(sendAt)}): rewrite every price and free-days line from \`offer\` in this reply.`;
-// The intents that may carry a call, and which actions; call_request and confirms_slot must.
-const CALL_ACTIONS = { call_request: ["offer", "confirm"], proposes_time: ["confirm"], confirms_slot: ["confirm"] };
+// The intents that may carry a call, and which actions; call_request and confirms_slot must. call_request only offers
+// (the slot held 48 h): a call is booked only when they accepted one (confirms_slot) or named a free one (proposes_time).
+const CALL_ACTIONS = { call_request: ["offer"], proposes_time: ["confirm"], confirms_slot: ["confirm"] };
 const CALL_NEEDED = {
   call_request: 'Send the slot you offer: "call": {"action": "offer", "slot_at": "<calls.free_slots[0].slot_at>"}.',
   confirms_slot: 'Send the slot they accepted: "call": {"action": "confirm", "slot_at": "<the slot>", "phone": "<their number, if known>"}.',
@@ -575,10 +637,14 @@ const REPLY_SETTINGS_SQL = `SELECT key, value FROM settings
   WHERE key IN ('business:sender_name', 'offer:chatbot_live', 'offer:review_booster_live', 'replies:paused')`;
 // The live calls on the slot's UK day. ?1/?2 = the day as [start, end).
 const DAY_CALLS_SQL = "SELECT * FROM calls WHERE status IN ('offered', 'confirmed') AND slot_at >= ?1 AND slot_at < ?2";
-// Every write of the reply batch lands only while the message still waits and Nik isn't handling the thread, so two
-// Routine sessions answering the same message write one reply between them (the second gets 409).
+// Every write of the reply batch lands only while Claude may still answer the thread: Nik isn't handling it, and they
+// haven't paid, opted out or bounced since the checks (CLAUDE_ANSWERS). ?1 = place_id.
+const CLAUDE_MAY_ANSWER = `NOT EXISTS (SELECT 1 FROM prospects AS pa WHERE pa.place_id = ?
+    AND (pa.stage = 'needs_nik' OR NOT (${CLAUDE_ANSWERS("pa")})))`;
+// ...and only while the message still waits, so two Routine sessions answering the same message write one reply
+// between them (the second gets 409).
 const STILL_WAITING = `EXISTS (SELECT 1 FROM messages WHERE id = ? AND needs_reply = 1)
-  AND NOT EXISTS (SELECT 1 FROM prospects WHERE place_id = ? AND stage = 'needs_nik')`;
+  AND ${CLAUDE_MAY_ANSWER}`;
 // The note on a call cancelled because of their email.
 const CALL_OFF_NOTE = {
   not_now: "Cancelled by their email: they said not now.",
@@ -668,15 +734,17 @@ async function undoReply(DB, { replyId, ids, stamp }) {
  * Claude's reply to one waiting message (POST /api/agent/reply). Checks, in this order: unknown message 404, already
  * handled 409, a newer message waiting 409, Nik handling the thread 409 (a client's or an opted-out thread 409 too,
  * after its waiting mail is handed to Nik, and every post while Nik has paused Claude's replies),
- * an intent that isn't one of INTENTS or is an escalation 422, a missing body 422, replyGuard 422 ({error: "Reply
- * refused", reasons}, plus send_at and offer when the weekend deal starts or ends before it goes out), the call (its
- * shape, the slot's weekday named in the body, canHold with the next free slot) 422, proposes_time without asked_time
- * or without callTimeDue(send_at)'s promise 422, no mailbox 422. Every 422 has `reasons`.
+ * an intent that isn't one of INTENTS or is an escalation 422, a missing body 422, a body over 4,000 characters 422,
+ * replyGuard 422 ({error: "Reply refused", reasons}, plus send_at and offer when the weekend deal starts or ends before
+ * it goes out), the call (its shape, the slot's weekday named in the body, canHold with the next free slot) 422,
+ * proposes_time without asked_time or without callTimeDue(send_at)'s promise 422, no mailbox, no address to reply to
+ * or an address on the do-not-email list 422 (the last two say to escalate it as other). Every 422 has `reasons`.
  * Then one DB.batch: the reply queued in the thread (a drill's stored cancelled, "drill: not sent"; none for opt_out),
  * the earlier waiting messages and this one marked handled (this one with the intent). Then the call (offered or
  * booked), their open calls cancelled when they say no, not now or opt out, the intent's stage event (skipped with a
  * booking), its Todo (call_time due callTimeDue(send_at), or checkback +90 days), the
- * opt-out's suppression, and call_booked again when they have a confirmed call ahead.
+ * opt-out's suppression, and call_booked again when they have a confirmed call ahead. A second "not now" frees the
+ * dedupe of a check-back Nik already closed (a new one is added) or moves the open one to 90 days from now.
  * → {status, body}; 200's body is {ok, reply_id, status, due_at, call}.
  */
 export async function recordReply(DB, { message_id, intent, body, call, asked_time, now } = {}) {
@@ -704,6 +772,8 @@ export async function recordReply(DB, { message_id, intent, body, call, asked_ti
   const effects = intentEffects(intent);
   const text = typeof body === "string" ? body.replace(/\r\n?/g, "\n").trim() : "";
   if (effects.bodyRequired && !text) return refuse422(WRITE_SOMETHING);
+  // Before the guard's checks, which would otherwise run over all of it.
+  if (effects.bodyRequired && text.length > REPLY_CHARS_MAX) return refuse(422, REFUSED, [tooManyChars(text.length)]);
 
   const placeId = row.place_id;
   const senderName = setting["business:sender_name"] ?? "";
@@ -755,9 +825,15 @@ export async function recordReply(DB, { message_id, intent, body, call, asked_ti
 
   let reply = null;
   if (intent !== "opt_out") {
-    if (row.box_id == null && !isDrill(placeId)) return refuse422(NO_MAILBOX);
+    const to = String(row.from_addr || row.email || "").trim();
+    if (!isDrill(placeId)) {
+      if (row.box_id == null) return refuse422(NO_MAILBOX);
+      if (!to) return refuse422(NO_ADDRESS_ESCALATE);
+      const why = await isSuppressed(DB, to);
+      if (why) return refuse422(suppressedReply(to, why));
+    }
     const built = buildReply({
-      inbound: { place_id: placeId, from_addr: row.from_addr || row.email, subject: row.subject, message_id: row.message_id, refs: row.refs },
+      inbound: { place_id: placeId, from_addr: to || null, subject: row.subject, message_id: row.message_id, refs: row.refs },
       prospect: { mailbox_id: row.mailbox_id, subject: row.prospect_subject },
       mailbox: row.box_id == null ? null : { id: row.box_id, address: row.box_address },
       senderName,
@@ -777,12 +853,14 @@ export async function recordReply(DB, { message_id, intent, body, call, asked_ti
       WHERE id IN (SELECT value FROM json_each(?)) AND needs_reply = 1 AND ${STILL_WAITING}`)
       .bind(stamp, JSON.stringify(earlier), id, placeId),
     DB.prepare(`UPDATE messages SET needs_reply = 0, handled_at = ?, intent = ?
-      WHERE id = ? AND needs_reply = 1 AND NOT EXISTS (SELECT 1 FROM prospects WHERE place_id = ? AND stage = 'needs_nik')`)
+      WHERE id = ? AND needs_reply = 1 AND ${CLAUDE_MAY_ANSWER}`)
       .bind(stamp, intent, id, placeId),
   ]);
   if (!(written.at(-1).meta.changes > 0)) {
-    const stage = await DB.prepare("SELECT stage FROM prospects WHERE place_id = ?").bind(placeId).first("stage");
-    return refuse(409, stage === "needs_nik" ? NIK_HANDLING : ANSWERED);
+    // Another session answered it first, Nik took the thread, or they paid / opted out / bounced in between.
+    const latest = await DB.prepare("SELECT place_id, stage, lost_reason FROM prospects WHERE place_id = ?").bind(placeId).first();
+    if (latest?.stage === "needs_nik") return refuse(409, NIK_HANDLING);
+    return (latest && (await nikOnlyRefusal(DB, latest, at))) || refuse(409, ANSWERED);
   }
 
   let booked = null;
@@ -836,15 +914,24 @@ export async function recordReply(DB, { message_id, intent, body, call, asked_ti
     // The day they said it (overnight mail is answered the next morning).
     const said = new Date(row.received_at ?? NaN);
     const { m, d } = ukParts(Number.isNaN(said.getTime()) || said > at ? at : said);
-    await addTodo(DB, {
+    const todo = {
       kind: "pick",
       title: `Check back with ${business || "them"} (they said not now on ${d} ${MONTHS3[m - 1]})`,
       detail: theirWords(row, "They said not now."),
       link: `/#/lead/${encodeURIComponent(placeId)}`,
       place_id: placeId,
-      due_at: new Date(at.getTime() + CHECKBACK_MS),
+      due_at: iso(new Date(at.getTime() + CHECKBACK_MS)),
       dedupe: `checkback:${placeId}`,
-    });
+    };
+    // They said not now again (they wrote back after an earlier "not now"): the dedupe of a check-back Nik already
+    // closed is freed, so a new one is added, and one still open moves to 90 days from now with the new day.
+    await DB.batch([
+      DB.prepare("UPDATE todos SET dedupe = dedupe || '@' || COALESCE(done_at, ?1) WHERE dedupe = ?2 AND status <> 'open'")
+        .bind(stamp, todo.dedupe),
+      DB.prepare("UPDATE todos SET title = ?1, detail = ?2, due_at = ?3 WHERE dedupe = ?4 AND status = 'open'")
+        .bind(todo.title, todo.detail, todo.due_at, todo.dedupe),
+    ]);
+    await addTodo(DB, todo);
   }
   // They wrote before a booked call (inbound_human moved them to replied): it's still booked.
   if (!event && !booking && (await DB.prepare(FUTURE_CALL_SQL).bind(placeId, stamp).first("booked"))) {
@@ -914,6 +1001,7 @@ const NIK_MESSAGE_SQL = `SELECT m.id, m.place_id, m.direction, m.needs_reply, m.
   LEFT JOIN mailboxes b2 ON b2.id = m.mailbox_id
   WHERE m.id = ?1`;
 const SENDER_SQL = "SELECT value FROM settings WHERE key = 'business:sender_name'";
+const PAUSED_SQL = "SELECT value FROM settings WHERE key = 'replies:paused'";
 // The same words from Nik to the same email in the last few minutes (a double press of Send, or a retry after an
 // error once it was already queued): that reply is the answer, and nothing is queued twice. A cancelled or failed one
 // doesn't count, so pressing Send again after Cancel sends it.
@@ -922,6 +1010,11 @@ const NIK_DUPLICATE_SQL = `SELECT id, status, due_at FROM messages
     AND body = ? AND status IN ('queued', 'sending', 'sent') AND created_at >= ?
   ORDER BY created_at DESC LIMIT 1`;
 const NIK_DUPLICATE_MS = 10 * 60_000;
+// Claude's reply to the email Nik is answering (?1 place_id, ?2 their Message-ID), not cancelled or failed.
+const CLAUDE_JUST_ANSWERED_SQL = `SELECT id FROM messages
+  WHERE place_id IS ?1 AND direction = 'out' AND kind = 'reply' AND author = 'claude' AND in_reply_to = ?2
+    AND status IN ('queued', 'sending', 'sent') LIMIT 1`;
+const CLAUDE_JUST_ANSWERED = "Claude has just answered that email, so yours wasn't sent. Read the thread, then press Send again if it still needs saying.";
 const OPEN_NIK_TODOS_SQL = `SELECT COUNT(*) AS n FROM todos
   WHERE place_id = ? AND status = 'open' AND kind IN (${NIK_KINDS.map(() => "?").join(", ")})`;
 
@@ -949,16 +1042,18 @@ async function nikHandled(DB, placeId, at) {
  * now, link the thread) titled by escalationTitle, with Claude's reason and their words as the detail and the draft
  * as given (≤ 4,000 characters); the thread's waiting messages up to this one handled (this one with the intent); the
  * stage → needs_nik (event escalate). Nothing is sent. Allowed in a needs_nik thread (new mail there is escalated too).
- * 404 unknown message; 409 already handled, a newer message waiting, a client's or an opted-out thread; 422 {error,
- * reasons} for a wrong intent, no reason, no draft or one too long. → {status, body}; 200's body is {ok, todo_id}.
+ * 404 unknown message; 409 already handled, a newer message waiting, a client's or an opted-out thread, Claude's
+ * replies paused; 422 {error, reasons} for a wrong intent, no reason, no draft or one too long. → {status, body};
+ * 200's body is {ok, todo_id}.
  */
 export async function escalateMessage(DB, { message_id, intent, reason, draft, now } = {}) {
   const at = inboxNow(now ?? new Date(), "escalateMessage");
   const id = typeof message_id === "string" ? message_id.trim() : "";
   if (!id) return refuse(404, NO_MESSAGE);
-  const [rows, waitingRows] = await DB.batch([
+  const [rows, waitingRows, pausedRows] = await DB.batch([
     DB.prepare(REPLY_MESSAGE_SQL).bind(id),
     DB.prepare(REPLY_WAITING_SQL).bind(id),
+    DB.prepare(PAUSED_SQL),
   ]);
   const row = rows.results?.[0];
   if (!row || row.direction !== "in" || !row.place_id || row.prospect_id == null) return refuse(404, NO_MESSAGE);
@@ -967,6 +1062,9 @@ export async function escalateMessage(DB, { message_id, intent, reason, draft, n
   if (waiting.length && waiting.at(-1) !== id) return refuse(409, `A newer message is waiting from them: escalate ${waiting.at(-1)}.`);
   const nikOnly = await nikOnlyRefusal(DB, row, at);
   if (nikOnly) return nikOnly;
+  // Nik pressed Pause while a run was going: Claude posts nothing more, escalations included (as recordReply); the
+  // message keeps waiting on the Replies page, where Nik replies himself.
+  if (pausedRows.results?.[0]?.value === "1") return refuse(409, PAUSED);
 
   if (!ESCALATE_INTENTS.includes(intent)) return refuse422(NOT_ESCALATION);
   const why = clip(typeof reason === "string" ? reason.replace(/\s+/g, " ").trim() : "", REASON_MAX);
@@ -1003,8 +1101,9 @@ export async function escalateMessage(DB, { message_id, intent, reason, draft, n
  * cancelled, never sent. The message and the earlier waiting ones are handled, its Todos closed (done), and the stage
  * goes back to replied (nik_handled) when no other escalation or call_time Todo is open for the lead. The same words
  * to the same email again within 10 minutes (a double press, a retry) return the reply already queued, never a second.
- * 422 empty body / no mailbox / no address / a do-not-email address, 404 not an inbound message. → {status, body};
- * 200's body is {ok, reply_id, status, due_at}.
+ * 422 empty body / no mailbox / no address / a do-not-email address, 404 not an inbound message, 409 when Claude's
+ * reply to that waiting email landed while Nik's was being saved (his isn't queued; Send again sends it).
+ * → {status, body}; 200's body is {ok, reply_id, status, due_at}.
  */
 export async function sendAsNik(DB, { message_id, body, now } = {}) {
   const at = inboxNow(now ?? new Date(), "sendAsNik");
@@ -1047,18 +1146,26 @@ export async function sendAsNik(DB, { message_id, body, now } = {}) {
   const twin = drill ? null : await DB.prepare(NIK_DUPLICATE_SQL)
     .bind(placeId, fresh.to_addr, fresh.in_reply_to, fresh.body, iso(new Date(at.getTime() - NIK_DUPLICATE_MS))).first();
   const reply = twin ?? fresh;
-  if (!twin) await queueMessage(DB, fresh);
 
-  // This message and the earlier ones still waiting are answered; a newer one keeps waiting (for Claude).
+  // This message and the earlier ones still waiting are answered; a newer one keeps waiting (for Claude). They stop
+  // waiting before Nik's reply is queued, so a Claude reply racing it (its batch lands only while the message waits)
+  // gets 409 instead of a second email in the thread. His Todos close only once his reply is in.
   const waiting = (waitingRows.results ?? []).map((w) => w.id);
   const idx = waiting.indexOf(id);
   const answered = idx >= 0 ? waiting.slice(0, idx + 1) : Number(row.needs_reply) === 1 ? [id] : [];
   const stamp = iso(at);
-  await DB.batch([
-    DB.prepare(`UPDATE messages SET needs_reply = 0, handled_at = ?
-      WHERE id IN (SELECT value FROM json_each(?)) AND needs_reply = 1`).bind(stamp, JSON.stringify(answered)),
-    closeMessageTodos(DB, id, "done", stamp),
-  ]);
+  if (answered.length) {
+    const marked = await DB.prepare(`UPDATE messages SET needs_reply = 0, handled_at = ?
+      WHERE id IN (SELECT value FROM json_each(?)) AND needs_reply = 1`).bind(stamp, JSON.stringify(answered)).run();
+    // Fewer stopped waiting than were waiting a moment ago: Claude's reply to this email landed in between. Two emails
+    // in one thread at once look like a machine, so his isn't queued; pressing Send again sends it.
+    if (!twin && (marked.meta?.changes ?? 0) < answered.length && row.message_id
+      && (await DB.prepare(CLAUDE_JUST_ANSWERED_SQL).bind(placeId, row.message_id).first())) {
+      return refuse(409, CLAUDE_JUST_ANSWERED);
+    }
+  }
+  if (!twin) await queueMessage(DB, fresh);
+  await closeMessageTodos(DB, id, "done", stamp).run();
   await nikHandled(DB, placeId, at);
   return { status: 200, body: { ok: true, reply_id: reply.id, status: reply.status, due_at: reply.due_at } };
 }

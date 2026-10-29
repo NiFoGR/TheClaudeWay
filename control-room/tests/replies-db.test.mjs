@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { processInbound } from "../functions/_lib/mail/inbound-db.js";
 import { applyStageEvent } from "../functions/_lib/prospects.js";
-import { REOPEN_REASONS, onHumanInbound } from "../functions/_lib/replies-db.js";
+import { REOPEN_REASONS, escalateMessage, onHumanInbound, recordReply } from "../functions/_lib/replies-db.js";
 import { fakeD1 } from "./helpers/fakeD1.mjs";
 
 const NOW = new Date("2026-10-21T10:00:00Z");
@@ -282,4 +282,142 @@ test("processInbound: an opted-out lead writes back: Nik's todo, nothing waits f
   assert.equal((await one(DB, "SELECT needs_reply FROM messages WHERE id = 'raw1'")).needs_reply, 0);
   assert.equal((await one(DB, "SELECT title FROM todos WHERE dedupe = 'optout-mail:raw1'")).title,
     "Green Leaf Landscapes wrote back after opting out: read and reply yourself");
+});
+
+// --- Second review: a second try after the email was answered ----------------------------------------------------
+
+test("an email already handled (a second try after Claude answered it) fires no stage event and files no todo", async () => {
+  const DB = await seeded();
+  // Claude answered m4 "not now": the lead is lost (not_now) and m4 handled. Stage 0 runs the hook for m4 again.
+  await DB.prepare("UPDATE prospects SET stage = 'lost', lost_reason = 'not_now', next_followup_at = NULL WHERE place_id = 'p1'").run();
+  await DB.prepare("UPDATE messages SET needs_reply = 0, handled_at = '2026-10-21T08:45:00Z', intent = 'not_now' WHERE id = 'm4'").run();
+  assert.equal(await onHumanInbound(DB, m4, NOW), "replied");
+  assert.deepEqual({ ...(await one(DB, "SELECT stage, lost_reason, last_inbound_at FROM prospects")) },
+    { stage: "lost", lost_reason: "not_now", last_inbound_at: m4.received_at });
+  assert.equal((await one(DB, "SELECT needs_reply FROM messages WHERE id = 'm4'")).needs_reply, 0);
+  assert.equal((await one(DB, "SELECT status FROM messages WHERE id = 'fu1'")).status, "cancelled"); // still stopped
+
+  // Claude answered m1, then they opted out by a later email: no read-it-yourself todo for the answered one.
+  await DB.prepare("UPDATE prospects SET lost_reason = 'opt_out' WHERE place_id = 'p1'").run();
+  await DB.prepare("UPDATE messages SET needs_reply = 0, handled_at = '2026-10-21T08:20:00Z' WHERE id = 'm1'").run();
+  assert.equal(await onHumanInbound(DB, m1, NOW), "opted_out");
+  assert.equal((await all(DB, "SELECT id FROM todos")).length, 0);
+});
+
+test("processInbound: a row cut off after it was stored, answered by Claude (a call booked), then retried: the call stands", async () => {
+  const DB = await seeded();
+  await DB.prepare("DELETE FROM messages WHERE direction = 'in'").run();
+  const raw = withFrom(readFileSync(new URL("gmail-reply.eml", DIR), "utf8"), "Mark <mark@greenleaf.co.uk>");
+  await addRaw(DB, "raw1", raw);
+  // D1 fails on the hook's first query: the row is stored and left for a second try.
+  const flaky = {
+    ...DB,
+    prepare: (sql) => (/handled_at FROM messages WHERE id = \?2/.test(sql)
+      ? { bind: () => ({ first: async () => { throw new Error("D1 hiccup"); } }) }
+      : DB.prepare(sql)),
+  };
+  assert.deepEqual(await processInbound(flaky, NOW), { retry: 1 });
+  assert.equal((await one(DB, "SELECT needs_reply FROM messages WHERE id = 'raw1'")).needs_reply, 1);
+  assert.equal((await one(DB, "SELECT stage FROM prospects")).stage, "emailed");
+  // Before the next tick Claude answers it and books a call.
+  await DB.prepare("UPDATE messages SET needs_reply = 0, handled_at = '2026-10-21T10:02:00Z', intent = 'confirms_slot' WHERE id = 'raw1'").run();
+  await DB.prepare("UPDATE prospects SET stage = 'call_booked' WHERE place_id = 'p1'").run();
+  assert.deepEqual(await processInbound(DB, new Date("2026-10-21T10:05:00Z")), { human: 1 });
+  assert.equal((await one(DB, "SELECT stage FROM prospects")).stage, "call_booked");
+  assert.equal((await one(DB, "SELECT needs_reply FROM messages WHERE id = 'raw1'")).needs_reply, 0);
+  assert.equal((await one(DB, "SELECT status FROM messages WHERE id = 'fu1'")).status, "cancelled");
+});
+
+// --- Fixer: a cut-off row answered before the retry still moves the lead on --------------------------------------
+
+// The "call stands" set-up without the client (Claude may answer the thread) and with the thread's mailbox: raw1 is
+// stored, the hook's first query fails, so the row waits for a second try; the stage is whatever `stage` says.
+async function cutOff(stage = "emailed", lostReason = null) {
+  const DB = await seeded();
+  await DB.prepare("DELETE FROM messages WHERE direction = 'in'").run();
+  await DB.prepare("DELETE FROM clients").run();
+  await DB.prepare("UPDATE prospects SET stage = ?, lost_reason = ? WHERE place_id = 'p1'").bind(stage, lostReason).run();
+  await insert(DB, "mailboxes", { id: "mb1", address: "nik@aetoswebsites.com", display_name: "Nik", role: "cold", started_on: "2026-09-01", created_at: EARLIER });
+  const raw = withFrom(readFileSync(new URL("gmail-reply.eml", DIR), "utf8"), "Mark <mark@greenleaf.co.uk>");
+  await addRaw(DB, "raw1", raw);
+  const flaky = {
+    ...DB,
+    prepare: (sql) => (/handled_at FROM messages WHERE id = \?2/.test(sql)
+      ? { bind: () => ({ first: async () => { throw new Error("D1 hiccup"); } }) }
+      : DB.prepare(sql)),
+  };
+  assert.deepEqual(await processInbound(flaky, NOW), { retry: 1 });
+  assert.equal((await one(DB, "SELECT needs_reply FROM messages WHERE id = 'raw1'")).needs_reply, 1);
+  return DB;
+}
+const INTERESTED = "Thanks Mark, glad you like it. Press Order on the page when you're ready.";
+const RETRY_AT = new Date("2026-10-21T10:05:00Z");
+
+test("processInbound: a cut-off row Claude answered 'interested' before the retry: the lead becomes replied", async () => {
+  const DB = await cutOff("emailed");
+  const r = await recordReply(DB, { message_id: "raw1", intent: "interested", body: INTERESTED, now: new Date("2026-10-21T10:02:00Z") });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal((await one(DB, "SELECT stage FROM prospects")).stage, "emailed"); // the hook never ran
+  assert.deepEqual(await processInbound(DB, RETRY_AT), { human: 1 });
+  const p = await one(DB, "SELECT stage, lost_reason, last_inbound_at FROM prospects");
+  assert.equal(p.stage, "replied");
+  assert.equal(p.lost_reason, null);
+  assert.equal((await one(DB, "SELECT needs_reply FROM messages WHERE id = 'raw1'")).needs_reply, 0);
+  assert.equal((await one(DB, "SELECT status FROM messages WHERE id = 'fu1'")).status, "cancelled");
+  // viewed (they looked at the demo first) the same
+  const DB2 = await cutOff("viewed");
+  assert.equal((await recordReply(DB2, { message_id: "raw1", intent: "question", body: "Hi Mark,\n\nYes, you keep the website.", now: new Date("2026-10-21T10:02:00Z") })).status, 200);
+  assert.deepEqual(await processInbound(DB2, RETRY_AT), { human: 1 });
+  assert.equal((await one(DB2, "SELECT stage FROM prospects")).stage, "replied");
+});
+
+test("processInbound: said 'not now' earlier, writes back interested, cut off, Claude answers before the retry: reopened", async () => {
+  const DB = await cutOff("lost", "not_now");
+  const r = await recordReply(DB, { message_id: "raw1", intent: "interested", body: INTERESTED, now: new Date("2026-10-21T10:02:00Z") });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(await processInbound(DB, RETRY_AT), { human: 1 });
+  assert.deepEqual({ ...(await one(DB, "SELECT stage, lost_reason FROM prospects")) }, { stage: "replied", lost_reason: null });
+});
+
+test("processInbound: lost earlier, cut off, Claude answers this email 'not now' again before the retry: it stays lost", async () => {
+  const DB = await cutOff("lost", "not_interested");
+  const r = await recordReply(DB, { message_id: "raw1", intent: "not_now", body: "Hi Mark,\n\nNo problem. Would it be OK if I checked back in with you in 3 months?", now: new Date("2026-10-21T10:02:00Z") });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(await processInbound(DB, RETRY_AT), { human: 1 });
+  assert.equal((await one(DB, "SELECT stage FROM prospects")).stage, "lost");
+});
+
+test("processInbound: lost earlier, cut off, Claude escalates this email before the retry: reopened and with Nik", async () => {
+  const DB = await cutOff("lost", "not_now");
+  const r = await escalateMessage(DB, { message_id: "raw1", intent: "angry", reason: "They're upset about the emails.", draft: "Hi Mark,\n\nSorry about that.", now: new Date("2026-10-21T10:02:00Z") });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(await processInbound(DB, RETRY_AT), { human: 1 });
+  assert.deepEqual({ ...(await one(DB, "SELECT stage, lost_reason FROM prospects")) }, { stage: "needs_nik", lost_reason: null });
+});
+
+test("processInbound: cut off, Claude escalates before the retry (emailed): it stays with Nik", async () => {
+  const DB = await cutOff("emailed");
+  const r = await escalateMessage(DB, { message_id: "raw1", intent: "unclear", reason: "Not sure what they mean.", draft: "Hi Mark,\n\nCould you say a bit more?", now: new Date("2026-10-21T10:02:00Z") });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal((await one(DB, "SELECT stage FROM prospects")).stage, "needs_nik");
+  assert.deepEqual(await processInbound(DB, RETRY_AT), { human: 1 });
+  assert.equal((await one(DB, "SELECT stage FROM prospects")).stage, "needs_nik");
+});
+
+test("processInbound: lost earlier, cut off, Claude books their free time before the retry: reopened and call_booked", async () => {
+  const DB = await cutOff("lost", "not_now");
+  const r = await recordReply(DB, { message_id: "raw1", intent: "proposes_time", body: "Hi Mark,\n\nFriday 23 October at 11am works. I'll ring you then.", call: { action: "confirm", slot_at: "2026-10-23T10:00:00Z", phone: "07700 900123" }, now: new Date("2026-10-21T10:02:00Z") });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal((await one(DB, "SELECT status FROM calls")).status, "confirmed");
+  assert.deepEqual(await processInbound(DB, RETRY_AT), { human: 1 });
+  assert.deepEqual({ ...(await one(DB, "SELECT stage, lost_reason FROM prospects")) }, { stage: "call_booked", lost_reason: null });
+});
+
+test("processInbound: cut off, Claude offers a call (emailed) before the retry: replied, the offer kept", async () => {
+  const DB = await cutOff("emailed");
+  const r = await recordReply(DB, { message_id: "raw1", intent: "call_request", body: "Hi Mark,\n\nSoonest I can ring is Friday 23 October at 11am.", call: { action: "offer", slot_at: "2026-10-23T10:00:00Z" }, now: new Date("2026-10-21T10:02:00Z") });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(await processInbound(DB, RETRY_AT), { human: 1 });
+  assert.equal((await one(DB, "SELECT stage FROM prospects")).stage, "replied");
+  assert.equal((await one(DB, "SELECT status FROM calls")).status, "offered");
 });
