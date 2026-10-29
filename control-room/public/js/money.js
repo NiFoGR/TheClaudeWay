@@ -467,7 +467,7 @@ function editGoal() {
   const d = modal(`<form>${head("Monthly recurring goal")}
     <div class="modal-body">
       <div><label for="g-goal">Monthly retainer income you're aiming for (£)</label><input id="g-goal" inputmode="decimal" required value="${state.money.summary.goal / 100}"></div>
-      <p class="hint" style="margin:0">£5,000 a month is about 20 clients on £249/mo.</p>
+      ${packages().full?.monthly ? `<p class="hint" style="margin:0">£5,000 a month is about ${Math.round(500000 / packages().full.monthly)} clients on ${money(packages().full.monthly)}/mo.</p>` : ""}
       <p class="error" hidden></p>
     </div>${foot("Save")}</form>`);
   onSubmit(d, (form) => api("/api/money/goal", { method: "PUT", body: JSON.stringify({ goal: form.querySelector("#g-goal").value }) }));

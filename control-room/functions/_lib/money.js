@@ -4,6 +4,7 @@
 //           + any other money in. Costs = Google API (estimated from logged calls) + costs you add.
 // Forecast months only count what is already committed: active clients, monthly costs, average Google spend.
 import { formatPounds, PACKAGES } from "./offer.js";
+import { ukDate } from "./ukTime.js";
 
 // Google Places API (New) list prices, USD per 1,000 calls, and the free calls each SKU gets every month.
 // SKUs match lead-manager/aetos_leads/usage.py. Check https://developers.google.com/maps/billing-and-pricing/pricing
@@ -201,7 +202,8 @@ export function summarise({ clients = [], entries = [], payments = [], usage = [
 
 // ---------------------------------------------------------------- loading from D1
 
-export async function loadMoney(DB, today = new Date().toISOString().slice(0, 10)) {
+// `today` is the UK date: paid_on, failed_on and cancelled_on are UK dates, so a payment taken at 00:30 BST counts today.
+export async function loadMoney(DB, today = ukDate(new Date())) {
   const [clients, entries, usage, pipe, goal, payments] = await DB.batch([
     DB.prepare(`SELECT clients.*, l.stripe_customer, l.failed_on FROM clients LEFT JOIN client_links l ON l.client_id = clients.id
                 ORDER BY clients.paid_on DESC, clients.created_at DESC`),

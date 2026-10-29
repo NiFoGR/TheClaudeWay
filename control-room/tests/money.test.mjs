@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { addMonths, googleCosts, ledger, loadMoney, packageNote, PACKAGES, summarise, toPence } from "../functions/_lib/money.js";
 import { formatPounds, MONTHLY_PENCE } from "../functions/_lib/offer.js";
+import { ukDate } from "../functions/_lib/ukTime.js";
 import * as offerRoute from "../functions/api/offer.js";
 import { fakeD1 as makeD1 } from "./helpers/fakeD1.mjs";
 
@@ -65,6 +66,10 @@ test("summary: profit to date, MRR vs free period, forecast and pipeline", () =>
 
 test("summary carries packages", () => {
   assert.equal(summarise({ today: "2026-10-19" }).packages.full.build, 195000);
+});
+
+test("Money's today is the UK date (payments are dated in UK time)", async () => {
+  assert.equal((await loadMoney(makeD1())).summary.today, ukDate(new Date()));
 });
 
 test("Money and Setup pages: no payment links, no browser copy of the prices", () => {
