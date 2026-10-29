@@ -339,6 +339,21 @@ test("build:c1:stuck closing doesn't touch another client's (c10) todo", async (
   assert.equal((await todoOf(DB, "build:c10:stuck")).status, "open");
 });
 
+test("the client is checked before the body: unknown → 404 and unsent form → 409 even for a huge or broken body, nothing written", async () => {
+  const DB = await seed({ submitted: false });
+  const huge = fx();
+  huge.padding = "x".repeat(600_001);
+  const unknown = await post(DB, huge, { id: "nope" });
+  assert.deepEqual(unknown, { status: 404, body: { error: "No client with that id." } });
+  for (const body of [huge, "{not json"]) {
+    const res = await post(DB, body);
+    assert.deepEqual(res, { status: 409, body: { error: "The onboarding form hasn't been sent yet." } });
+  }
+  const site = await siteOf(DB);
+  assert.equal(site.last_errors, null, "no refusal stored on a site that can't be built yet");
+  assert.equal(site.content, null);
+});
+
 test("a Content-Length over 600,000 bytes → 413 before the body is read", async () => {
   const DB = await seed();
   const request = new Request(`${ORIGIN}/api/agent/build/c1/content`, {
@@ -366,4 +381,27 @@ test("two 'have a look' todos Nik closed in the same second don't block the next
   assert.equal(all.length, 4);
   assert.equal(new Set(all.map((t) => t.dedupe)).size, 4);
   assert.equal(all.filter((t) => t.status === "open" && t.dedupe === "build:c1:updated").length, 1);
+});
+
+test("Changes: the stored content (server /s/f/ URLs, w/h, logo_w/logo_h) posted back as it is is accepted, nothing fetched", async () => {
+  const DB = await seed();
+  assert.equal((await post(DB, fx())).status, 200);
+  const { body: got } = await get(DB);
+  assert.equal(got.site.status, "review");
+  await setSiteStatus(DB, "c1", "draft", NOW, { notes: "Make the home intro shorter" });
+  const { fetchImpl, calls } = fakeFetch();
+  const res = await post(DB, got.site.content, { fetchImpl });
+  assert.equal(res.status, 200, JSON.stringify(res.body));
+  assert.deepEqual(res.body, { ok: true, status: "review", pages: 11, warnings: [] });
+  assert.equal(calls.length, 0, "photos already copied aren't fetched again");
+  const site = await siteOf(DB);
+  assert.equal(site.change_notes, null, "change_notes cleared");
+  assert.deepEqual(JSON.parse(site.content), got.site.content);
+});
+
+test("a refused post leaves the stuck todo open", async () => {
+  const DB = await seed();
+  await addTodo(DB, { kind: "build", title: "Claude hasn't built Smith Roofing's site", client_id: "c1", dedupe: "build:c1:stuck" });
+  assert.equal((await post(DB, badTitle())).status, 400);
+  assert.equal((await todoOf(DB, "build:c1:stuck")).status, "open");
 });
