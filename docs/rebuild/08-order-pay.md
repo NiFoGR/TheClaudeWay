@@ -114,7 +114,7 @@ Stage 0 owns `_lib/offer.js` (`PACKAGES`, `MONTHLY_PENCE`, `offerFor`, `termsFor
 | `back` | `?back=1` (Stripe's cancel link) | `No payment was taken. Any questions? Just reply to our email.` | shown |
 | `busy` | 6th checkout for this slug within 60 min | `You've started a few payments in the last hour. Please wait a little and try again, or reply to our email and we'll help.` | shown |
 | `failed` | Stripe refused to open checkout | `Sorry, the payment page didn't open. Please try again in a few minutes. If it keeps happening, reply to our email and we'll sort it.` | shown |
-| `not_connected` | no Stripe key or webhook | `Online ordering is switching on shortly. Reply to our email and we'll send you a payment link.` | hidden |
+| `not_connected` | no Stripe key or webhook | `Online ordering is switching on shortly. Reply to our email and we'll send you a payment link.` | hidden (so the `setup:stripe` todo comes from the `order_page` beacon: a real prospect, not a bot, scanner or Nik, a first email gone, not already a client; drawing the page itself files nothing) |
 | `already_client` | a non-cancelled client exists for this `place_id` | `{Business} is already with us. Check your email for your onboarding form, or reply to it with any questions.` | hidden |
 
 - Unknown slug → stage 4's "preview ended" page, 404. Expired demo → the same page, 410 (order page and checkout
@@ -147,7 +147,8 @@ Stage 0 owns `_lib/offer.js` (`PACKAGES`, `MONTHLY_PENCE`, `offerFor`, `termsFor
       product_data: { name: `Website build: ${business}` } } } ],
   subscription_data: { trial_period_days: 60 /* 90 weekend */, metadata: { place_id, package: "full", weekend } } }
 // package "website"
-{ mode: "payment", customer_creation: "always", invoice_creation: { enabled: true },
+{ mode: "payment", customer_creation: "always",
+  invoice_creation: { enabled: true, invoice_data: { metadata: { aetos_build: "1" } } },   // tags the build invoice for invoice.paid
   line_items: [ { quantity: 1, price_data: { currency: "gbp", unit_amount: 175000,
       product_data: { name: `Website build: ${business}` } } } ],
   payment_intent_data: { metadata: { place_id, package: "website" } } }
@@ -164,8 +165,12 @@ Ignored unless `payment_status` is `paid` or `no_payment_required` and `metadata
 1. `client_id = "cl_" + session.id` (deterministic, so two runners can't make two clients).
 2. `clients` (INSERT OR IGNORE): `name` = `leads.name` (fallback `customer_details.name`, then email, then
    "New client"), `place_id`, `package` = `full` | `weekend` | `website`, `build_fee_pence` = `amount_total`,
-   `monthly_pence` and `free_days` from `termsFor`, `paid_on` = UK date of `session.created`, `notes` =
-   "email · phone".
+   `monthly_pence` and `free_days` from `termsFor`, `paid_on` = UK date they paid (the expanded subscription's
+   `start_date`, else the webhook event's `created`, else now on the thanks page; never `session.created`, which is
+   when the payment page was opened, up to 24 hours earlier), `notes` = "email · phone". The first charge date
+   (`firstChargeOn`, shown on the thanks page and in the welcome email) is the UK date of Stripe's own
+   `subscription.trial_end` (the thanks page fetches the session with `expand[]=subscription`; the webhook does `GET
+   subscriptions/<sub>`), else of paid time + `freeDays` × 24 hours, which is how Stripe counts `trial_period_days`.
 3. `client_links` (INSERT OR IGNORE): `stripe_customer`, `stripe_subscription` (full only), `email`.
 4. `payments` row id `build:<stripe_customer>`, category `Website builds`, `amount_pence` = `amount_total`,
    `paid_on` as above; on conflict update `name` only. (`invoice.paid` uses the same id for the build line, so
@@ -191,7 +196,12 @@ Ignored unless `payment_status` is `paid` or `no_payment_required` and `metadata
    pick/checkback…) close; Nik's open conversations and calls stay (a booked call becomes a welcome call; an
    escalated question, an `optout-mail:` read-it-yourself or a `call_time:` still needs his answer). Once stage 10 has
    moved the row past `sent`, a re-run (a thanks-page reload, a late Stripe redelivery) files nothing again.
-9. Another non-cancelled client already existed for this `place_id` → `payment` Todo "paid twice".
+9. Another non-cancelled client already existed for this `place_id` → `payment` Todo "paid twice", whose `detail`
+   names this order and the second action, because refunding the charge doesn't cancel its subscription:
+   `Refund this order's {£1,950} in Stripe (customer {cus}), then Money → the newer "{name}" row → Stopped paying.
+   That cancels its monthly plan in Stripe ({sub}); otherwise they pay {£249} twice a month, this one from {Friday 18
+   December 2026}.` Website Only (no subscription): `Refund this order's {£1,750} in Stripe (customer {cus}). The
+   refund shows on the Money page by itself.`
 
 ### Welcome email (kind `system`, author `system`, plain text)
 
@@ -231,7 +241,7 @@ Aetos Websites
 
 | Event | Does |
 | --- | --- |
-| `invoice.paid` | `amount_paid` 0 → nothing. Else per line: one-off lines → `build:<customer>` (`Website builds`), subscription lines → `<invoice id>:monthly` (`Monthly retainers`); split Stripe's fee pro rata from `invoice.charge` → balance transaction (missing → 0). On conflict update `fee_pence`. Clears `client_links.failed_on`. Subscription id read from `invoice.subscription` or `invoice.parent.subscription_details.subscription`. |
+| `invoice.paid` | `amount_paid` 0 → nothing. Else per line: subscription lines → `<invoice id>:monthly` (`Monthly retainers`); one-off lines → `build:<customer>` (`Website builds`) only on the checkout's own build invoice (`billing_reason` `subscription_create`, or `metadata.aetos_build` `"1"`, which the Website Only checkout sets), else `<invoice id>:oneoff` (`Other income`: an invoice Nik raises in Stripe, an item added to a monthly invoice, proration), so later one-off money is counted and never overwrites the build row; split Stripe's fee pro rata from `invoice.charge` → balance transaction (missing → 0). On conflict update `fee_pence` (every id is that invoice's own). A build invoice with no customer is ignored. Clears `client_links.failed_on`. Subscription id read from `invoice.subscription` or `invoice.parent.subscription_details.subscription`. |
 | `invoice.payment_failed` | Known client only. `client_links.failed_on` = UK date. `payment` Todo (dedupe `payment:failed:<invoice id>`); **only if that Todo is new**, the payment-failed email below to `client_links.email` (else `invoice.customer_email`). |
 | `customer.subscription.deleted` | `clients.cancelled_on` = UK date of `ended_at` (else `canceled_at`, else now), only if NULL; `payment` Todo. |
 | `charge.refunded` | `payments` row `refund:<charge id>`, category `Refunds`, `amount_pence` = −`amount_refunded` (on conflict update the amount, so partial refunds add up). |
@@ -295,7 +305,11 @@ will arrive by email in the next few minutes.`, status 200.
 - `invoice.paid` before `checkout.session.completed` → one build payment row; the name is corrected later.
 - Thanks page before webhook → thanks page fulfils; webhook later is a no-op apart from storing the event id.
 - Webhook replayed from Stripe's dashboard → `duplicate: true`, nothing changes.
-- Client pays twice (two tabs) → both recorded (money was taken), `payment` Todo to refund one.
+- Client pays twice (two tabs) → both recorded (money was taken), `payment` Todo to refund one; for the Full Package
+  its detail also says to press Stopped paying on the newer client on Money, which cancels that order's subscription
+  in Stripe (a refund alone leaves it running, and both would charge £249 after the free days).
+- Page opened Sunday 23:50, paid Monday 00:20 → `paid_on` Monday, first charge 90 days after Monday 00:20 (Stripe's
+  `trial_end`), not after Sunday.
 - Client cancels during the free days → `customer.subscription.deleted` → Money shows "Stopped", no charge happens.
 - Card fails on day 61 → one email per invoice (Stripe retries don't resend it), `payment` Todo; if all retries
   fail Stripe cancels → "Stopped".
@@ -333,10 +347,10 @@ will arrive by email in the next few minutes.`, status 200.
 | `build` | `build:new:<client_id>` | `New client: {name} — onboarding form sent` | `/#/money` |
 | `payment` | `payment:failed:<invoice id>` | `Card failed: {name} ({£249}). They've been emailed a link to pay; Stripe will retry.` (no email address: `Card failed: {name} ({£249}). We have no email address for them: send them the pay link yourself; Stripe will retry.`; no mailbox: `Card failed: {name} ({£249}). No mailbox yet, so nobody has emailed them: send the email in the "Send {name} this email yourself" todo; Stripe will retry.`) | `/#/money` |
 | `payment` | `payment:stopped:<client_id>` | `{name} stopped the monthly plan: switch off the extras (their site stays up)` | `/#/money` |
-| `payment` | `payment:double:<place_id>:<session id>` | `{name} paid twice: refund one in Stripe` | `/#/money` |
+| `payment` | `payment:double:<place_id>:<session id>` | `{name} paid twice: refund one in Stripe` + `detail` = which order to refund and, for the Full Package, Stopped paying on the newer client (Part A step 9) | `/#/money` |
 | `payment` | `payment:checkout:<place_id>` | `{name} tried to pay but Stripe refused: {error}` | `/#/setup` |
 | `hot` | `checkout:<place_id>` | `Call {name}: they opened the payment page but didn't pay` | `/#/lead/<place_id>` |
-| `setup` | `setup:stripe` | `Connect Stripe: {name} tried to order` | `/#/setup` |
+| `setup` | `setup:stripe` | `Connect Stripe: {name} tried to order` (filed by a real prospect's `order_page` beacon while Stripe isn't connected, or an order POST then) | `/#/setup` |
 | `setup` | `setup:system_mailbox` | `Add a system mailbox for client emails (welcome emails are going from a cold mailbox)` | `/#/setup` |
 | `setup` | `setup:welcome:<client_id>` | `Send {name} their onboarding link yourself (no mailbox yet)` + `detail` = To, Subject, blank line, the welcome email (link visible); `draft` = its body | `/#/money` |
 | `setup` | `setup:client-mail:<client_id>:payment-failed:<invoice id>` | `Send {name} this email yourself (no mailbox yet)` + `detail` = To, Subject, blank line, the payment-failed email (pay link visible); `draft` = its body | `/#/money` |
@@ -571,7 +585,7 @@ Produces `checkoutParams({pkg: "full"|"website", weekend: boolean, lead: {place_
     `success_url=https://x.test/d/smith-roofing/thanks?session_id={CHECKOUT_SESSION_ID}`,
     `cancel_url=https://x.test/d/smith-roofing/order?back=1`, `currency]=gbp`, `locale=en-GB`.
   - `full weekend`: `line_items[1][price_data][unit_amount]=175000`, `trial_period_days]=90`, `metadata[weekend]=1`.
-  - `website`: `mode=payment`, `customer_creation=always`, `invoice_creation[enabled]=true`, one line item `175000`,
+  - `website`: `mode=payment`, `customer_creation=always`, `invoice_creation[enabled]=true`, `invoice_creation[invoice_data][metadata][aetos_build]=1`, one line item `175000`,
     no `subscription_data`, no `recurring`.
   - `no email`: `email: null` → no `customer_email` key; with email → `customer_email=a@b.co.uk`.
   - `product name`: `line_items[1][price_data][product_data][name]=Website build: Smith Roofing`.
@@ -750,7 +764,7 @@ exists), `addTodo`, `recordEvent`, `sendClientMail`, `welcomeEmail`, `ukDate`, `
 Produces:
 ```js
 closeLeadTodos(DB, place_id, {exceptKinds = []} = {}) → Promise<number>        // in todo.js
-fulfilCheckout(DB, session, {now}) → Promise<{status: "ok"|"ignored", reason?, client_id, token,
+fulfilCheckout(DB, session, {now, completedAt?}) → Promise<{status: "ok"|"ignored", reason?, client_id, token,
                 created: boolean, terms, amountPaid, firstChargeOn: "YYYY-MM-DD"|null, place_id}>
 ```
 
@@ -785,7 +799,11 @@ fulfilCheckout(DB, session, {now}) → Promise<{status: "ok"|"ignored", reason?,
     afterwards `isSuppressed(DB, "mark@smithroofing.co.uk") === null` and the welcome `messages` row is `queued`.
   - `waiting mail handed to Nik`: an inbound `messages` row `m1` for `p1` with `needs_reply = 1` before the call →
     afterwards `needs_reply = 0`, its `client_id` is the new client's id, and an open todo `client-mail:m1` exists.
-  - `paid twice`: an existing client `cl_other` for `p1` → todo `payment:double:p1:cs_1`.
+  - `paid twice`: an existing client `cl_other` for `p1` → todo `payment:double:p1:cs_1`, its `detail` naming
+    `£1,950`, `cus_1`, Stopped paying and `sub_1` (Website Only: the refund sentence only).
+  - (review fix) page opened Sun 1 Nov 2026 23:50 GMT, paid Mon 00:20 (weekend) → `paid_on '2026-11-02'`,
+    `firstChargeOn '2027-01-31'`; paid 10 Feb 2027 23:30Z (60 days) → `'2027-04-12'`; an expanded subscription's
+    `trial_end` wins.
   - `no mailbox`: no mailboxes → no `messages` row; todo `setup:welcome:cl_cs_1`.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/stripe-fulfil.test.mjs` → `fulfilCheckout is not a function`.
 - [ ] **Step 3: Implement `fulfilCheckout(DB, session, {now})` in `_lib/stripe-events.js`** — the 9 steps of
@@ -829,7 +847,7 @@ handleWebhook(DB, env, {body, signature, now, fetchImpl}) → Promise<{status: 2
   - `bad signature`: → `{status: 400, json: {error: "Bad signature"}}`, no `stripe_events` row, no heartbeat change.
   - `replay`: the same signed `checkout.session.completed` event (id `evt_1`) twice → second
     `json.duplicate === true`; 1 client, 1 system message, 1 `stripe_events` row; heartbeat `stripe` `ok 1`.
-  - `invoice first`: `invoice.paid` `{id: "in_1", customer: "cus_1", amount_paid: 195000, charge: "ch_1", lines: {data: [{type: "invoiceitem", amount: 195000}, {type: "subscription", amount: 0}]}}`
+  - `invoice first`: `invoice.paid` `{id: "in_1", customer: "cus_1", amount_paid: 195000, charge: "ch_1", billing_reason: "subscription_create", lines: {data: [{type: "invoiceitem", amount: 195000}, {type: "subscription", amount: 0}]}}`
     with fake Stripe `GET charges/ch_1?expand[]=balance_transaction` → `{balance_transaction: {fee: 2950}}`, then the
     checkout → one `payments` row `build:cus_1` with `amount_pence 195000`, `fee_pence 2950`, `name 'Smith Roofing'`.
   - `monthly`: `invoice.paid` `{id: "in_2", parent: {subscription_details: {subscription: "sub_1"}}, amount_paid: 24900, lines: {data: [{type: "subscription", amount: 24900}]}}`
@@ -843,7 +861,7 @@ handleWebhook(DB, env, {body, signature, now, fetchImpl}) → Promise<{status: 2
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/stripe-events.test.mjs` → `handleWebhook is not a function`.
 - [ ] **Step 3: Implement `handleWebhook(...)` in `_lib/stripe-events.js`** — verify → `SELECT 1 FROM stripe_events WHERE id = ?`
   (duplicate → 200) → `handleEvent` → `INSERT OR IGNORE INTO stripe_events` + `beat(DB, "stripe", true, type)` → 200;
-  catch → `beat(DB, "stripe", false, message)` → 500. `invoice.paid` writes `build:<customer>` / `<invoice>:monthly`
+  catch → `beat(DB, "stripe", false, message)` → 500. `invoice.paid` writes `build:<customer>` (build invoice only) / `<invoice>:oneoff` / `<invoice>:monthly`
   with `ON CONFLICT(id) DO UPDATE SET fee_pence = excluded.fee_pence`. `webhook.js` returns `json(res.json, res.status)`.
   `lead-manager/tests/test_schema_sync.py`: add `"stripe_events"` to the table list in stage 0's
   `test_rebuild_tables_present` (stage 0's `test_leads.py` asserts `len(stmts) >= 52`, so the extra statement needs
@@ -910,7 +928,7 @@ Produces `thanksPage(DB, env, {slug, sessionId, origin, now, fetchImpl}) → Pro
   - `Stripe down`: fake returns 500 → `status 200`, `Your payment is being confirmed.`
   - `expired demo still thanks`: demo `expires_at` in the past → still 200 with the form link.
 - [ ] **Step 2: Run it to verify it fails** — `node --test control-room/tests/thanks.test.mjs` → `thanksPage is not a function`.
-- [ ] **Step 3: Implement `thanksPage(...)` in `_lib/checkout.js`** — validate id → `stripeApi("GET", "checkout/sessions/" + id)`
+- [ ] **Step 3: Implement `thanksPage(...)` in `_lib/checkout.js`** — validate id → `stripeApi("GET", "checkout/sessions/" + id + "?expand[]=subscription")` (the subscription's `trial_end` is the first charge date)
   → match `client_reference_id` to the demo's `place_id` → `fulfilCheckout` → `renderThanks` with
   `onboardUrl = origin + "/onboard/" + token`.
 - [ ] **Step 4: Run tests to verify they pass** — same command → PASS.
@@ -1010,7 +1028,8 @@ Then run the live checks 3–12 of "Perfect when" in Stripe test mode before sta
   `registerLight`); `order_click` / `ordered` events and kind `hot` todos with dedupe `checkout:<place_id>` for the
   hot-lead logic and KPIs (file 11). Stage 4's hot step closes only dedupes starting `hot:<place_id>:`, so it never
   closes these.
-- `payments` ids: `build:<stripe_customer>`, `<invoice>:monthly`, `refund:<charge>`; category `Refunds` (negative).
+- `payments` ids: `build:<stripe_customer>` (the checkout's build fee), `<invoice>:monthly`, `<invoice>:oneoff`
+  (other one-off money, category `Other income`), `refund:<charge>`; category `Refunds` (negative).
 
 **Needed from other stages (not fully defined in the overview)**
 - Stage 0 `_lib/offer.js` (Task 6): `PACKAGES` (with `PACKAGES.weekend.wasBuild = 195000`), `MONTHLY_PENCE`,

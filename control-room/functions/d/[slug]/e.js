@@ -8,13 +8,19 @@
 // or no first email gone out (demo-db.js's mayCount: then it can only be Nik or a leak). A prospect still `ready` whose
 // first email has gone counts: stage 6 records the send (ready → emailed) only on its next followups run, minutes
 // later, and they may tap the link as it arrives. A view goes to countView (one per 30 minutes, prospects.views, a
-// ready prospect's first_sent, emailed → viewed); order_page to mayCount, then recordEvent.
+// ready prospect's first_sent, emailed → viewed); order_page to mayCount, then recordEvent. Then (stage 9,
+// 08-order-pay.md's setup:stripe todo), while Stripe isn't connected the order page hides its buttons, so this beacon
+// is what tells Nik: a todo "Connect Stripe: {name} tried to order", filed once (dedupe setup:stripe), never for a
+// lead that is already a (non-cancelled) client.
 // D1: none for anything turned away before the database (body, user-agent, Nik); demoBySlug's batch of 4, then
-// countView's 1–7 (4–5 for a counted view, 7 when it moves a ready prospect on), or mayCount's 1 and recordEvent's 1.
+// countView's 1–7 (4–5 for a counted view, 7 when it moves a ready prospect on), or mayCount's 1 and recordEvent's 1
+// plus the Stripe key and webhook secret reads (2–3; not connected: the clients read and the todo insert, 2 more).
 // Tested in control-room/tests/demo-routes.test.mjs and tests/email-e2e.test.mjs.
 import { isBotUA } from "../../_lib/demo/bots.js";
 import { countView, demoBySlug, mayCount, recordEvent } from "../../_lib/demo-db.js";
 import { isOwnerRequest } from "../../_lib/session.js";
+import { stripeKey, webhookSecret } from "../../_lib/stripe.js";
+import { addTodo } from "../../_lib/todo.js";
 import { db } from "../../_lib/util.js";
 
 const MAX_BODY = 200; // bytes: {"kind":"order_page"} is 21
@@ -73,7 +79,23 @@ async function store({ request, env, params }) {
   if (!found || found.expired || !found.prospect) return;
   // A prospect with a first email gone (mayCount): countView checks it itself, as it reads the stage it moves.
   if (kind === "view") await countView(DB, found.demo, now);
-  else if (await mayCount(DB, found.demo)) await recordEvent(DB, found.demo, kind, now);
+  else if (await mayCount(DB, found.demo)) {
+    await recordEvent(DB, found.demo, kind, now);
+    await stripeTodo(DB, env, found.lead);
+  }
+}
+
+const CLIENT_SQL = "SELECT 1 AS yes FROM clients WHERE place_id = ? AND cancelled_on IS NULL LIMIT 1";
+
+// A real prospect has the order page open while Stripe isn't connected (no key, or no webhook secret): the page shows
+// "Online ordering is switching on shortly" with no buttons, so Nik is told who tried. Not for a client.
+async function stripeTodo(DB, env, lead) {
+  if ((await stripeKey(env, DB)) && (await webhookSecret(DB))) return;
+  if (await DB.prepare(CLIENT_SQL).bind(lead.place_id).first()) return;
+  await addTodo(DB, {
+    kind: "setup", title: `Connect Stripe: ${lead.name} tried to order`, link: "/#/setup", place_id: lead.place_id,
+    dedupe: "setup:stripe",
+  });
 }
 
 export async function onRequestPost(context) {

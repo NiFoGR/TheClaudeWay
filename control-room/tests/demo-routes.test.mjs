@@ -23,6 +23,7 @@ import { countView, EVENT_KINDS, mayCount } from "../functions/_lib/demo-db.js";
 import { offerFor } from "../functions/_lib/offer.js";
 import { renderOrder } from "../functions/_lib/order-page.js";
 import { page } from "../functions/_lib/page.js";
+import { setSecret } from "../functions/_lib/settings.js";
 import { isOwnerRequest, SESSION_COOKIE, sessionToken } from "../functions/_lib/session.js";
 import { countingDB } from "../functions/_lib/d1count.js";
 import { db } from "../functions/_lib/util.js";
@@ -627,10 +628,13 @@ test("the beacon's D1 cost: none for a bot, Nik or a bad body; at most 10 statem
   await beaconTo(r.DB)(CHROME);
   assert.equal(prospectRow(ready).stage, "viewed");
   assert.ok(r.used() <= 11, `a counted view on a ready prospect used ${r.used()}`);
-  // an order event: demoBySlug's 4, the may-count read and the insert
+  // an order event: demoBySlug's 4, the may-count read and the insert, then (stage 9) the Stripe key and webhook
+  // secret reads, to tell Nik if a prospect is on the order page while Stripe isn't connected
+  await setSecret(ready, "stripe_key", "sk_test_x");
+  await setSecret(ready, "stripe_webhook", "whsec_x");
   const o = countingDB(ready);
   await beaconTo(o.DB)(CHROME, '{"kind":"order_page"}');
-  assert.equal(o.used(), 6);
+  assert.equal(o.used(), 8);
 });
 
 test("the demo page's and the order page's own beacons post kinds the route stores", async (t) => {
@@ -796,4 +800,69 @@ test("isOwnerRequest: only a valid cr_session cookie is Nik", async () => {
   assert.equal(await isOwnerRequest(req(`cr_session=${await sessionToken("old-password")}`), env), false, "an old password's cookie");
   assert.equal(await isOwnerRequest(req(`cr_session=${token}`), {}), false, "no password set: nobody is Nik");
   assert.equal(await isOwnerRequest(req("cr_session=x"), { CONTROL_ROOM_PASSWORD: "" }), false, "an empty password");
+});
+
+// Stage 9 (08-order-pay.md, todo setup:stripe): the order page hides its buttons while Stripe isn't connected, so a
+// prospect can't press Order. Their order page beacon (a real prospect: not a bot or link scanner, not Nik, a live
+// demo, a first email gone) is what tells Nik, once, with the first such lead's name.
+const STRIPE_TODO = "SELECT kind, title, link, place_id, status FROM todos WHERE dedupe = 'setup:stripe'";
+const ORDER_PAGE = '{"kind":"order_page"}';
+
+test("Stripe not connected: a prospect on the order page files one 'Connect Stripe' todo naming them", async (t) => {
+  at(t, NOW);
+  const DB = await seed({ prospect: { stage: "emailed" } });
+  assert.equal((await beaconTo(DB)(CHROME, ORDER_PAGE)).status, 204);
+  assert.deepEqual(DB.raw.prepare(STRIPE_TODO).all().map((r) => ({ ...r })), [{
+    kind: "setup", title: "Connect Stripe: Green Leaf Landscapes Ltd tried to order", link: "/#/setup", place_id: PLACE, status: "open",
+  }]);
+  await beaconTo(DB)(CHROME, ORDER_PAGE);
+  assert.equal(DB.raw.prepare(STRIPE_TODO).all().length, 1, "a second beacon adds no second todo");
+  assert.deepEqual(events(DB), [`order_page ${NOW_ISO}`, `order_page ${NOW_ISO}`]);
+  // a view of the demo itself isn't an order attempt
+  const viewed = await seed({ prospect: { stage: "emailed" } });
+  await beaconTo(viewed)(CHROME, VIEW);
+  assert.equal(viewed.raw.prepare(STRIPE_TODO).all().length, 0);
+});
+
+test("Stripe not connected: a bot, Nik, a prospect with no first email or a client files no 'Connect Stripe' todo", async (t) => {
+  at(t, NOW);
+  const token = await sessionToken(PW);
+  const cases = [
+    ["a bot", async () => seed({ prospect: { stage: "emailed" } }), ["Googlebot/2.1", ORDER_PAGE]],
+    ["a link scanner", async () => seed({ prospect: { stage: "emailed" } }), ["Mozilla/5.0 (Windows NT 10.0) SafeLinks/1.0", ORDER_PAGE]],
+    ["Nik's cookie", async () => seed({ prospect: { stage: "emailed" } }), [CHROME, ORDER_PAGE, `${SESSION_COOKIE}=${token}`]],
+    ["no first email gone", async () => seed({ prospect: { stage: "ready" } }), [CHROME, ORDER_PAGE]],
+    ["an ended demo", async () => seed({ demo: { expires_at: "2026-10-01T00:00:00Z" }, prospect: { stage: "emailed" } }), [CHROME, ORDER_PAGE]],
+    ["already a client", async () => {
+      const DB = await seed({ prospect: { stage: "won" } });
+      DB.raw.prepare(`INSERT INTO clients (id, name, place_id, package, build_fee_pence, monthly_pence, free_days, paid_on, created_at)
+        VALUES ('cl_1', 'Green Leaf', ?, 'full', 195000, 24900, 60, '2026-10-01', '2026-10-01T09:00:00Z')`).run(PLACE);
+      return DB;
+    }, [CHROME, ORDER_PAGE]],
+  ];
+  for (const [label, make, args] of cases) {
+    const DB = await make();
+    assert.equal((await beaconTo(DB)(...args)).status, 204, label);
+    assert.equal(DB.raw.prepare(STRIPE_TODO).all().length, 0, label);
+  }
+});
+
+test("Stripe connected: a prospect on the order page files no 'Connect Stripe' todo", async (t) => {
+  at(t, NOW);
+  const DB = await seed({ prospect: { stage: "emailed" } });
+  await setSecret(DB, "stripe_key", "sk_test_x");
+  await setSecret(DB, "stripe_webhook", "whsec_x");
+  await beaconTo(DB)(CHROME, ORDER_PAGE);
+  assert.equal(DB.raw.prepare(STRIPE_TODO).all().length, 0);
+  assert.deepEqual(events(DB), [`order_page ${NOW_ISO}`]);
+  // the key in Cloudflare (STRIPE_SECRET_KEY) counts too, with the webhook secret
+  const cf = await seed({ prospect: { stage: "emailed" } });
+  await setSecret(cf, "stripe_webhook", "whsec_x");
+  await beaconTo(cf, SLUG, { STRIPE_SECRET_KEY: "sk_test_y" })(CHROME, ORDER_PAGE);
+  assert.equal(cf.raw.prepare(STRIPE_TODO).all().length, 0);
+  // a key with no webhook isn't connected
+  const half = await seed({ prospect: { stage: "emailed" } });
+  await setSecret(half, "stripe_key", "sk_test_x");
+  await beaconTo(half)(CHROME, ORDER_PAGE);
+  assert.equal(half.raw.prepare(STRIPE_TODO).all().length, 1);
 });
