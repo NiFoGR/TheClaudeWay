@@ -96,7 +96,7 @@ export function lightsHtml(lights, error = null) {
 
 const UK_CALL = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", weekday: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 
-/** "Tue 11:00" (UK) for a call's due_at, or "" when it can't be read. */
+/** "Tue 11:00" (UK) for a call's call_at, or "" when it can't be read. */
 function callTime(value) {
   const d = typeof value === "string" && value ? new Date(value) : null;
   if (!d || Number.isNaN(d.getTime())) return "";
@@ -126,12 +126,17 @@ export function todoItemHtml(item) {
   const sendable = SENDABLE.has(kind);
   const canSend = sendable && t.can_send === true && typeof t.draft === "string" && t.draft !== "";
 
+  // The call's time and the phone, unless the title already says them (stage 8's "Call Mark (…) Tue 11:00 · 07969 …").
+  // The time is call_at, set by the server only for a booked call's own Todo (dedupe call:<id>): stage 8's outcome
+  // question ("How did the call with … go?") is due 30 minutes after the call and the day list at 07:00 UK, and
+  // neither due time is a call time.
+  const title = str(t.title);
   const meta = [];
   if (kind === "call") {
-    const when = callTime(t.due_at);
-    if (when) meta.push(when);
+    const when = callTime(t.call_at);
+    if (when && !title.includes(when)) meta.push(when);
   }
-  if ((kind === "call" || kind === "hot") && str(t.phone)) meta.push(str(t.phone));
+  if ((kind === "call" || kind === "hot") && str(t.phone) && !title.includes(str(t.phone))) meta.push(str(t.phone));
 
   const parts = [`<div class="todo-title">${esc(t.title)}</div>`];
   if (meta.length) parts.push(`<div class="todo-meta">${esc(meta.join(" · "))}</div>`);

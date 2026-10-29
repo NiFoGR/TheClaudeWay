@@ -107,9 +107,23 @@ test("rows by kind: hot, call time, health, client mail, no lead, outside links"
   assert.match(outside, /href="https:\/\/dashboard\.stripe\.com\/"[^>]*target="_blank"/);
   assert.doesNotMatch(todoItemHtml({ id: "j", kind: "setup", title: "x", link: "javascript:alert(1)" }), /href="javascript/);
 
-  const call = todoItemHtml({ id: "t", kind: "call", title: "Call Ian", phone: "07969 123456", due_at: "2026-10-27T11:00:00Z", place_id: "pc", thread_link: "/#/replies/pc", link: "/#/call/c1" });
+  const call = todoItemHtml({ id: "t", kind: "call", title: "Call Ian", phone: "07969 123456", due_at: "2026-10-27T11:00:00Z", call_at: "2026-10-27T11:00:00Z", place_id: "pc", thread_link: "/#/replies/pc", link: "/#/call/c1" });
   assert.match(call, /Tue 11:00/);                                   // GMT on 27 Oct
-  assert.match(todoItemHtml({ id: "t", kind: "call", title: "x", due_at: "2026-10-22T10:00:00Z" }), /Thu 11:00/); // BST
+  assert.match(todoItemHtml({ id: "t", kind: "call", title: "x", due_at: "2026-10-22T10:00:00Z", call_at: "2026-10-22T10:00:00Z", place_id: "pc" }), /Thu 11:00/); // BST
+  // Stage 8's call-outcome Todo is due 30 minutes after the call (no call_at): its due time is not the call's time.
+  const outcome = todoItemHtml({ id: "o", kind: "call", title: "How did the call with Ian (Peak) go?", due_at: "2026-10-27T11:30:00Z", call_at: null, place_id: "pc", phone: "07969 123456", link: "/#/call/c1" });
+  assert.doesNotMatch(outcome, /11:30/);
+  assert.match(outcome, /<div class="todo-meta">07969 123456<\/div>/);
+  assert.match(outcome, /href="tel:07969123456"/);
+  // Stage 8's own titles: the booked call's title already has the time and number (shown once, not twice), and the
+  // day list (no lead, due 07:00 UK) gets no "Tue 07:00" line that would read as a call at 7am.
+  const booked = todoItemHtml({ id: "b", kind: "call", title: "Call Ian (Peak) Tue 11:00 · 07969 123456", phone: "07969 123456", due_at: "2026-10-27T11:00:00Z", call_at: "2026-10-27T11:00:00Z", place_id: "pc", thread_link: "/#/replies/pc" });
+  assert.equal(booked.match(/Tue 11:00/g).length, 1);
+  assert.doesNotMatch(booked, /todo-meta/);
+  assert.match(booked, /href="tel:07969123456"/);
+  const day = todoItemHtml({ id: "d", kind: "call", title: "Today's calls: 11:00 Ian, 14:00 Sam", due_at: "2026-10-27T07:00:00Z", call_at: null, link: "/#/call/c1" });
+  assert.doesNotMatch(day, /07:00|todo-meta|tel:/);
+  assert.match(day, /href="\/#\/call\/c1"[^>]*>Open call</);
 });
 
 test("pipeline: header counts, Hot tag, grade, next line, thread link past ready, more, empty column, Lost", () => {
