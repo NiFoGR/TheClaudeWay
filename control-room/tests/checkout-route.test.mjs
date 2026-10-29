@@ -286,7 +286,9 @@ test("order page notices: already a client and not connected hide the buttons", 
   const page = await orderPage(off, {}, { slug: SLUG, back: false, now: MONDAY });
   assert.ok(page.html.includes(ORDER_NOTICES.not_connected));
   assert.doesNotMatch(page.html, /<button/);
-  assert.equal(off.raw.prepare("SELECT COUNT(*) AS n FROM todos").get().n, 0, "only an order attempt files the todo");
+  // drawing the page files nothing (a scanner or Nik's own preview loads it too): a real prospect's order page beacon
+  // (d/[slug]/e.js) or an order POST files setup:stripe
+  assert.equal(off.raw.prepare("SELECT COUNT(*) AS n FROM todos").get().n, 0, "the page itself files no todo");
 });
 
 test("loadOrder: what the page needs, never the key", async () => {
@@ -412,4 +414,34 @@ test("POST /d/:slug/checkout: a body over 2000 bytes is a bad package, never rea
   assert.equal(res.status, 400);
   assert.equal(stripe.calls.length, 0);
   assert.equal(clicks(DB).length, 0);
+});
+
+test("a burst of checkouts arriving together still opens at most 5", async () => {
+  // The limit is checked in the same statement that records the order_click, so POSTs racing each other can't all
+  // read "fewer than 5 so far" and each open a checkout.
+  const DB = await seed();
+  const stripe = okStripe();
+  const outs = await Promise.all(Array.from({ length: 8 }, () => checkout(DB, stripe)));
+  assert.equal(outs.filter((o) => o.redirect === SESSION.url).length, 5);
+  assert.deepEqual(outs.filter((o) => !o.redirect).map((o) => o.status), [429, 429, 429]);
+  assert.equal(stripe.calls.length, 5);
+  assert.equal(clicks(DB).length, 5);
+});
+
+test("an unknown slug is stage 4's 404 page, as GET /d/:slug sends it", async () => {
+  const DB = await seed();
+  const stripe = okStripe();
+  for (const out of [
+    await orderPage(DB, {}, { slug: "no-such-demo", back: false, now: MONDAY }),
+    await checkout(DB, stripe, { slug: "no-such-demo" }),
+  ]) {
+    assert.equal(out.status, 404);
+    assert.match(out.html, /This page doesn&#39;t exist\./);
+    assert.doesNotMatch(out.html, /preview has ended|we made for/);
+  }
+  // a bad package on an unknown slug is refused before anything else, with no order page to show
+  const bad = await checkout(DB, stripe, { slug: "no-such-demo", pkg: "enterprise" });
+  assert.equal(bad.status, 400);
+  assert.match(bad.html, /This page doesn&#39;t exist\./);
+  assert.equal(stripe.calls.length, 0);
 });
