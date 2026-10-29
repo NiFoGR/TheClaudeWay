@@ -160,3 +160,26 @@ test("a table with no early cell has no early note", () => {
   const g = sectionOf(kpisHtml({ ...payloadFor2026W43, numbers: { ...payloadFor2026W43.numbers, grades } }), "Do the grades predict sales?");
   assert.ok(!g.includes("too early to tell") && g.includes("If A+ isn't doing better than B"), g);
 });
+
+// ---------------------------------------------------------------- review fixes
+
+test("a group named like an Object property is labelled <kind> (<author>), never undefined", () => {
+  const n = payloadFor2026W43.numbers;
+  const g = { key: "constructor", kind: "constructor", author: "x", sent: 1, bounced: 0, viewed: 0, replied: 0, positive: 0, opted_out: 0 };
+  const html = kpisHtml({ ...payloadFor2026W43, numbers: { ...n, groups: [g] } });
+  assert.ok(html.includes("constructor (x)") && !html.includes("undefined"), html);
+});
+
+test("the CSS: grey early numbers, tables scroll in their card, 2 tiles per row on a phone, review styles its own", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const css = await readFile(new URL("../public/style.css", import.meta.url), "utf8");
+  assert.match(css, /\.early \{ color: var\(--text-3\); \}/);
+  assert.match(css, /\.table-scroll \{ overflow-x: auto;/);
+  const phone = css.slice(css.indexOf("@media (max-width: 640px)", css.indexOf("KPIs page")));
+  assert.match(phone.slice(0, phone.indexOf("\n}")), /\.kpi-tiles \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\); \}/);
+  // The review card's class isn't .review: that's the lead drawer's Google reviews (leadview.js), whose look it would change.
+  const html = kpisHtml({ ...payloadFor2026W43, analysis: { text: "Fine.", created_at: "2026-10-25T18:52:00Z" } });
+  assert.ok(html.includes('class="card kpi-review"') && !/class="([^"]*\s)?review[\s"]/.test(html));
+  const kpiCss = css.slice(css.indexOf("KPIs page (stage 11"), css.indexOf("nav: the Todo badge"));
+  assert.ok(!/\.review(?![\w-])/.test(kpiCss), "the KPIs CSS restyles .review");
+});

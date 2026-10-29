@@ -245,7 +245,8 @@ function groupsTable(n) {
   if (!groups.length) return "";
   const body = groups.map((g) => {
     const key = `${str(g.kind)}:${str(g.author)}`;
-    const known = GROUPS[str(g.key) || key];
+    const name = str(g.key) || key;
+    const known = Object.hasOwn(GROUPS, name) ? GROUPS[name] : null; // never Object.prototype's "constructor" etc.
     const label = known ? known.label : esc(`${str(g.kind) || "?"} (${str(g.author) || "?"})`);
     return `<tr><td class="biz">${label}</td><td class="muted">${known ? known.goal : ""}</td>${outcomeCells(g)}</tr>`;
   }).join("");
@@ -303,7 +304,7 @@ function reviewCard(p) {
   const text = a ? String(a.text ?? "") : "";
   if (!text.trim()) return section("Claude's review", `<div class="card"><p class="muted review-none">${NO_REVIEW}</p></div>`);
   const when = ukWritten(a.created_at);
-  return section("Claude's review", `<div class="card review">${mdLite(text)}${when ? `<p class="hint">Written ${esc(when)}</p>` : ""}</div>`);
+  return section("Claude's review", `<div class="card kpi-review">${mdLite(text)}${when ? `<p class="hint">Written ${esc(when)}</p>` : ""}</div>`);
 }
 
 // Nothing sent and nothing happened: no email, reply, bounce, opt-out, call, order or escalation that week.
