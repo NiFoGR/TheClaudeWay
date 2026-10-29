@@ -8,6 +8,7 @@ import { buildInbox, seedVoice } from "../functions/_lib/replies-db.js";
 import { DRILL_LEAD } from "../functions/_lib/replyDrill.js";
 import { setSecret, setSetting } from "../functions/_lib/settings.js";
 import { onRequestGet } from "../functions/api/agent/inbox.js";
+import { countingDB } from "../functions/_lib/d1count.js";
 import { fakeD1 } from "./helpers/fakeD1.mjs";
 
 const TOKEN = randomBytes(32).toString("base64url");
@@ -297,4 +298,60 @@ test("a real lead with no demo gets no demo or order link (never a made-up one)"
   DB.raw.prepare("DELETE FROM demos").run();
   const c = (await buildInbox(DB, D(NOW))).conversations[0];
   assert.deepEqual(c.links, { demo: null, order: null, landing: "https://aetoswebsites.com" });
+});
+
+test("D1 budget: a read with many stranded threads stays inside 50 statements and hands the rest over on later reads", async () => {
+  const DB = await seeded();
+  // 12 clients' threads with 3 messages each still waiting (the stage moved without a hand-off): 5 statements each
+  for (let i = 0; i < 12; i++) {
+    const id = `w${String(i).padStart(2, "0")}`;
+    await insert(DB, "leads", lead(id, `Client ${id}`));
+    await insert(DB, "prospects", prospect(id, { stage: "won" }));
+    for (let j = 0; j < 3; j++) await insert(DB, "messages", inbound(`${id}-${j}`, id, `2026-10-21T07:0${j}:00Z`));
+  }
+  const waitingIn = async () => (await all(DB, `SELECT DISTINCT place_id FROM messages
+    WHERE direction = 'in' AND needs_reply = 1 AND place_id LIKE 'w%'`)).length;
+  const counter = countingDB(DB);
+  const res = await onRequestGet({ request: req("/api/agent/inbox", TOKEN), env: { DB: counter.DB }, now: D(NOW) });
+  assert.equal(res.status, 200);
+  assert.ok(counter.used() <= 50, `used ${counter.used()} D1 statements`);
+  assert.equal((await res.json()).conversations.length, 1);   // only p1: clients are never shown to Claude
+  assert.equal(await waitingIn(), 8);                          // 4 threads handed over (20 statements), the rest wait
+  assert.equal((await all(DB, "SELECT id FROM todos WHERE dedupe LIKE 'client-mail:w%'")).length, 12);
+  for (let read = 0; read < 2; read++) await buildInbox(DB, D(NOW));
+  assert.equal(await waitingIn(), 0);
+  assert.equal((await all(DB, "SELECT id FROM todos WHERE dedupe LIKE 'client-mail:w%'")).length, 36);
+});
+
+test("reading the inbox hands mail still waiting in a client's, opted-out or bounced thread to Nik, once", async () => {
+  const DB = await seeded();
+  await insert(DB, "clients", {
+    id: "cl2", place_id: "p2", name: "Won Plumbing", package: "full", build_fee_pence: 195000, monthly_pence: 24900,
+    free_days: 60, paid_on: "2026-10-19", created_at: EARLIER,
+  });
+  await insert(DB, "messages", inbound("w2", "p2", "2026-10-21T08:01:00Z"));               // paid while it waited
+  await insert(DB, "leads", lead("p3", "Opted Out Roofing"));
+  await insert(DB, "prospects", prospect("p3", { stage: "lost", lost_reason: "opt_out" }));
+  await insert(DB, "messages", inbound("w3", "p3", "2026-10-21T08:02:00Z"));
+  await insert(DB, "leads", lead("p4", "Bounced Heating"));
+  await insert(DB, "prospects", prospect("p4", { stage: "lost", lost_reason: "bounce" }));
+  await insert(DB, "messages", inbound("w4", "p4", "2026-10-21T08:03:00Z"));
+  const inbox = await buildInbox(DB, D(NOW));
+  assert.deepEqual(inbox.conversations.map((c) => c.place_id), ["p1"]);
+  const rows = await all(DB, "SELECT id, needs_reply, handled_at, client_id FROM messages WHERE id IN ('w2', 'w3', 'w4') ORDER BY id");
+  assert.deepEqual(rows, [
+    { id: "w2", needs_reply: 0, handled_at: NOW, client_id: "cl2" },
+    { id: "w3", needs_reply: 0, handled_at: NOW, client_id: null },
+    { id: "w4", needs_reply: 0, handled_at: NOW, client_id: null },
+  ]);
+  const todos = async () => (await all(DB, "SELECT dedupe, kind, title FROM todos WHERE dedupe IN ('client-mail:w2', 'optout-mail:w3', 'optout-mail:w4') ORDER BY dedupe"));
+  assert.deepEqual(await todos(), [
+    { dedupe: "client-mail:w2", kind: "escalation", title: "Your client Won Plumbing emailed: read and reply yourself" },
+    { dedupe: "optout-mail:w3", kind: "escalation", title: "Opted Out Roofing wrote back after opting out: read and reply yourself" },
+    { dedupe: "optout-mail:w4", kind: "escalation", title: "Bounced Heating wrote back after opting out: read and reply yourself" },
+  ]);
+  // p1's mail still waits for Claude, and a second read changes nothing
+  assert.deepEqual((await all(DB, "SELECT id FROM messages WHERE needs_reply = 1 ORDER BY id")).map((r) => r.id), ["m1", "m2"]);
+  await buildInbox(DB, D(NOW));
+  assert.equal((await todos()).length, 3);
 });
