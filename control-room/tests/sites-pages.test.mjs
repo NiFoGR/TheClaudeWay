@@ -77,7 +77,11 @@ test("sitemap: a well-formed urlset, the UK date across the clocks going back, n
   assert.equal(renderSitemap(fx(), HOST, "2026-10-24T23:30:00Z").split("<lastmod>2026-10-25</lastmod>").length - 1, 11);
   // In GMT the UK date is the UTC date.
   assert.ok(renderSitemap(fx(), HOST, "2026-10-26T23:30:00Z").includes("<lastmod>2026-10-26</lastmod>"));
-  for (const at of [null, undefined, "", "not a date"]) {
+  // SQLite's own datetime() text has no zone and is UTC: 23:30 on the 24th is still the 25th in the UK.
+  assert.ok(renderSitemap(fx(), HOST, "2026-10-24 23:30:00").includes("<lastmod>2026-10-25</lastmod>"));
+  assert.ok(renderSitemap(fx(), HOST, new Date("2026-10-24T22:30:00Z")).includes("<lastmod>2026-10-24</lastmod>"));
+  assert.ok(renderSitemap(fx(), HOST, Date.parse("2026-10-24T23:30:00Z")).includes("<lastmod>2026-10-25</lastmod>"));
+  for (const at of [null, undefined, "", "not a date", NaN, new Date("nope")]) {
     const plain = renderSitemap(fx(), HOST, at);
     assert.equal(locsOf(plain).length, 11, String(at));
     assert.doesNotMatch(plain, /<lastmod>/, String(at));
@@ -133,6 +137,9 @@ test("privacy: the full address when shown, the chat lines when chat is on, the 
   assert.ok(t.includes("John Smith trading as Smith Roofing, 12 High St, Swindon SN1 1AA"));
   assert.ok(t.includes("contact form or the chat"));
   assert.ok(t.includes("Chats are not kept unless you leave your details."));
+  // widget.js keeps its random session id in sessionStorage: the page says so when the chat is on.
+  assert.ok(t.includes("The chat keeps a random code in your browser until you close the tab"));
+  assert.doesNotMatch(textOf(renderPrivacy(fx(), data())), /random code/);
   assert.ok(t.includes("Google Maps"));
   const noTown = fx();
   noTown.business.address.town = "";

@@ -48,6 +48,16 @@ function hostOf(host, what) {
   return h;
 }
 
+// content_at as a Date: an ISO time (what sites/db.js stores), a Date or epoch ms. SQLite's own "YYYY-MM-DD HH:MM:SS"
+// has no zone and is UTC, so it is read as UTC (new Date() would read it as local time); null for anything else.
+function timeOf(v) {
+  if (v instanceof Date) return v;
+  if (typeof v === "number") return Number.isFinite(v) ? new Date(v) : null;
+  if (typeof v !== "string" || !v.trim()) return null;
+  const s = v.trim();
+  return new Date(/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(s) ? `${s.replace(" ", "T")}Z` : s);
+}
+
 /**
  * /sitemap.xml: every page in the content (never /privacy), `<loc>https://{host}{path}</loc>` and, when `contentAt`
  * (client_sites.content_at) is a real time, `<lastmod>` = its UK date. Paths that aren't page paths, and repeats, are
@@ -56,7 +66,7 @@ function hostOf(host, what) {
 export function renderSitemap(content, host, contentAt) {
   checkContent(content);
   const origin = `https://${hostOf(host, "The sitemap")}`;
-  const at = contentAt instanceof Date ? contentAt : typeof contentAt === "string" && contentAt ? new Date(contentAt) : null;
+  const at = timeOf(contentAt);
   const lastmod = at && Number.isFinite(at.getTime()) ? `<lastmod>${ukDate(at)}</lastmod>` : "";
   const paths = [];
   for (const p of content.pages) {
@@ -127,7 +137,12 @@ export function renderPrivacy(content, data, { now = new Date() } = {}) {
     },
     {
       h2: "Cookies and tracking",
-      body: `This website sets no cookies and uses no tracking.${map ? " The map on this website is from Google Maps, which works under Google's own privacy policy." : ""}`,
+      body: [
+        "This website sets no cookies and uses no tracking.",
+        // True of widget.js: its random session id lives in sessionStorage, which the browser clears with the tab.
+        chat ? "The chat keeps a random code in your browser until you close the tab, so it can follow your conversation." : "",
+        map ? "The map on this website is from Google Maps, which works under Google's own privacy policy." : "",
+      ].filter(Boolean).join(" "),
     },
     { h2: "Who handles your enquiry", body: `Website by Aetos Websites, which processes enquiries for ${name}.` },
     { h2: "Your data", body: `To ask for your data to be deleted, ${ask}.` },
