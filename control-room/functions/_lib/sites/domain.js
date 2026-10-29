@@ -13,7 +13,8 @@ import { canonicalHost } from "./hosts.js";
 export const PAGES_PROJECT = "goldbarwebsites";
 
 // One line, at most 200 characters (a todo title is one line; form text can hold CR/LF or be very long).
-const line = (s) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, 200).trim();
+// Cut by code point, so an emoji or other astral character at the cut is never split into half a pair.
+const line = (s) => Array.from(String(s ?? "").replace(/\s+/g, " ").trim()).slice(0, 200).join("").trim();
 
 // The bare domain as hosts are stored and matched (lower-case punycode, no scheme, path or www.), so the steps name
 // exactly the host the client_sites row and the DNS check use. Input that isn't a domain is shown as typed.

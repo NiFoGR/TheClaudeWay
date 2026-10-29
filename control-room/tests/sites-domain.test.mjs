@@ -121,4 +121,7 @@ test("edge cases: unknown mode, missing form, email answer missing, typed URLs a
   assert.ok(byId(steps("nameservers", { registrar: "" }), "ns_email").detail
     .includes("the company they bought the domain from"));
   assert.ok(byId(steps("buy", { name: "x".repeat(500) }), "buy").title.length < 260);
+  // The cut never leaves half of an emoji (a lone surrogate) at the end of the name.
+  const cut = byId(steps("buy", { name: `${"x".repeat(199)}\u{1F600}tail`, choices: [] }), "buy").title;
+  assert.equal(cut, `Buy a domain for ${"x".repeat(199)}\u{1F600}`);
 });
